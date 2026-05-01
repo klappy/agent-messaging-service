@@ -65,7 +65,7 @@ Agents already think in tokens. Models emit tokens. Models consume tokens. Speak
 - [`POC-INFRA.md`](./POC-INFRA.md) — deployable shape, MCP edge wrapper, topology
 - [`POC-PLAN.md`](./POC-PLAN.md) — week-one execution plan, success criteria, demo script
 - [`PATTERNS.md`](./PATTERNS.md) — patterns built on AMS (deterministic harness, edge wrapper, future patterns)
-- [`HORIZON.md`](./HORIZON.md) — *The Durable Thread* — what AMS plus a harness makes possible after the PoC
+- [`HORIZON.md`](./HORIZON.md) — comprehensive catalog of use cases AMS unlocks and things to build on top of it
 - [`ESSAY.md`](./ESSAY.md) — *We Were the Wire* — the foundational essay
 - [`GLOSSARY.md`](./GLOSSARY.md) — terms and definitions
 - [`journal/`](./journal/) — DOLCHE artifacts: decisions, learnings, constraints, encodings

@@ -213,7 +213,7 @@ The post-PoC roadmap, in rough order:
 - [`POC-INFRA.md`](./POC-INFRA.md) — Deployable shape, MCP wrap, topology.
 - [`POC-PLAN.md`](./POC-PLAN.md) — Day-by-day execution plan.
 - [`PATTERNS.md`](./PATTERNS.md) — Patterns built on AMS (deterministic harness, edge wrapper).
-- [`HORIZON.md`](./HORIZON.md) — *The Durable Thread* — what AMS plus a harness makes possible after the PoC.
+- [`HORIZON.md`](./HORIZON.md) — comprehensive catalog of use cases AMS unlocks and things to build on top of it.
 - [`ESSAY.md`](./ESSAY.md) — *We Were the Wire* — the foundational essay.
 - [`GLOSSARY.md`](./GLOSSARY.md) — Vocabulary.
 - [`journal/`](./journal/) — DOLCHE artifacts capturing decisions, learnings, constraints, encodings.
