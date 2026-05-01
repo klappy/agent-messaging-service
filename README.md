@@ -62,6 +62,7 @@ Agents already think in tokens. Models emit tokens. Models consume tokens. Speak
 - [`ESSAY.md`](./ESSAY.md) — *We Were the Wire* — the public-facing essay
 - [`PROTOCOL.md`](./PROTOCOL.md) — the wire protocol (HTTP + WebSocket)
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — implementation choices for the reference build
+- [`PATTERNS.md`](./PATTERNS.md) — patterns that emerge once AMS exists (deterministic harness, observability sinks, federation, etc.)
 - [`POC-PLAN.md`](./POC-PLAN.md) — week-one execution plan, success criteria, demo script
 - [`GLOSSARY.md`](./GLOSSARY.md) — terms and definitions
 

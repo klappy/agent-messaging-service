@@ -124,6 +124,18 @@ A subscriber is anything that holds a magic link and either binds a stream or ju
 
 This is what makes the protocol foundational instead of vertical. Anything that can hold a WebSocket and read or write bytes can participate. The cleverness lives in the subscribers, not in AMS.
 
+### 5.1 Spec vs Instance
+
+For one specific subscriber type — reasoning agents — there is a layering distinction that recurs everywhere and is worth naming carefully.
+
+An **agent spec** is the recipe: a system prompt, a tool definition, a model identifier, any other bootstrap configuration. It is immutable and verifiable — typically content-addressed by a hash of the canonical bootstrap (a JCS-SHA over `{system_prompt, tools, model, ...}`). The spec persists. The spec is what you mean when you say "the same agent."
+
+An **agent instance** is a running execution of that spec: a process, a session, a Worker invocation, a container, whatever runs the inference loop. Instances are ephemeral. Instances spawn, do work, sleep, and terminate. Many instances may execute the same spec; many specs may run on the same hardware. The instance is what is on the wire at this moment.
+
+These are **orthogonal**, not competing. Spec answers "what is this agent." Instance answers "which copy of it is acting right now." Both have identifiers; both matter; neither replaces the other. Identity-as-spec gets you reproducibility, audit, and equivalence-checking ("did the same agent answer twice"). Identity-as-instance gets you provenance ("which run produced this output") and lifecycle ("this instance crashed; spawn another from the same spec").
+
+AMS does not enforce this distinction or even know it exists. AMS just carries tokens. But the pattern matters because it is the bridge between "AMS exists" and "agent runtimes can spawn deterministic, named, verifiable agents on demand." See [`PATTERNS.md`](./PATTERNS.md) for the deterministic harness pattern that makes it concrete.
+
 ---
 
 ## 6. The Agentic Stack

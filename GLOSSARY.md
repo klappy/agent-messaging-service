@@ -26,9 +26,15 @@ When in doubt, use these terms exactly. Synonyms invite drift.
 
 **Emitter.** Anything that writes tokens to a stream. The owner of that stream's account is the only entity that may emit on it.
 
-**Federation.** Hypothetical future capability: two AMS instances cooperating so that a conversation can span both. Not in the PoC. Will require its own protocol layer.
+**Federation.** Hypothetical future capability: two AMS instances cooperating so that a conversation can span both. Not in the PoC. Will require its own protocol layer. The thing standing between AMS-as-intranet and AMS-as-internet for agents.
+
+**Harness (deterministic harness).** A subscriber pattern: a process that listens to a magic link, reads or fetches an *agent spec*, spawns an *instance* of that spec, pipes the conversation tokens into the instance, and emits the instance's output back on its own stream. Not part of the protocol; a worked example of what AMS unlocks. See [`PATTERNS.md`](./PATTERNS.md) §1.
 
 **Hosted instance.** A running deployment of AMS that other parties pay to use. Covenant runs the reference hosted instance. Other organizations may run their own.
+
+**Instance (agent instance).** A running execution of an *agent spec*. Ephemeral. Many instances may execute the same spec; a single host may run many instances of different specs. Identified by a UUID minted at spawn. Distinct from the *spec*, which is the immutable recipe; see also *spec*. Discussed in [`AMS.md`](./AMS.md) §5.1 and [`PATTERNS.md`](./PATTERNS.md) §1.
+
+**Intranet (for agents).** The current ambition of AMS: a single hosted instance that lets agents within reach of that instance talk to each other. The internet-for-agents framing requires *federation*, which is unsolved; see *federation*.
 
 **Inverted inbox.** Conceptual contrast. Email and chat assume writers push into your inbox and you sort the clutter. AMS inverts that: you own your stream, others choose to listen. No inbox, no clutter.
 
@@ -45,6 +51,8 @@ When in doubt, use these terms exactly. Synonyms invite drift.
 **Reference implementation.** The Cloudflare-Workers-based AMS instance shipping under Covenant. Open source. Other implementations are expected and welcome.
 
 **Stream.** A single writer's real-time output within a conversation. Owned by exactly one account. Identified by `stream_id`, optionally named via `stream_name`. An account may eventually own multiple streams in the same conversation; the PoC enforces one.
+
+**Spec (agent spec).** The immutable recipe for an agent: a canonical bootstrap of `{system_prompt, tools, model, ...}`, typically content-addressed by a JCS-SHA hash. The spec is what you mean when you say "the same agent." Distinct from the *instance*, which is the ephemeral execution. See [`AMS.md`](./AMS.md) §5.1 and [`PATTERNS.md`](./PATTERNS.md) §1.
 
 **Subscriber.** Anything connected to a conversation and reading tokens from streams. A subscriber may also be an emitter (if it owns a stream in the same conversation) or read-only (if not).
 

@@ -20,6 +20,7 @@ Quality scores come from oddkit's encode evaluation (`weak | adequate | strong`)
 ## Files
 
 - [`2026-05-01-ams-foundation.tsv`](./2026-05-01-ams-foundation.tsv) — 26 artifacts encoding the foundational AMS design dialogue. Source: design conversation with Claude on May 1, 2026, post documentation phase, pre PoC implementation.
+- [`2026-05-01-ams-orchestration-foundation.tsv`](./2026-05-01-ams-orchestration-foundation.tsv) — 9 artifacts capturing the spec-vs-instance layering, the deterministic harness pattern, and the intranet-vs-internet framing. Adds PATTERNS.md as the documented surface for emergent patterns built on AMS.
 
 ## Provenance
 
