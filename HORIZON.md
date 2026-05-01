@@ -507,6 +507,52 @@ This matters strategically because the alternative — pitching multi-agent infr
 
 ---
 
+## 13. The Long Game — Distributed Mixture of Experts
+
+Event-driven orchestration (§3.7) is one step toward the long game, not the destination. The actual destination is what the substrate enables when many of the catalog's patterns run together at scale, across providers, across organizational boundaries, with collected conversation data feeding back into specialized models that themselves become subscribers.
+
+Two architectural shifts make this concrete.
+
+### 13.1 SOTA-level mixture of experts across providers
+
+The frontier labs — OpenAI, Anthropic, Google, xAI — do mixture of experts internally. Inside their inference stacks, they route subtasks to specialist sub-models, ensemble outputs, compose reasoning traces. The composition happens behind the API; the consumer sees a single model.
+
+AMS makes that same composition possible *across* providers, *across* organizations, on an open substrate. Per role, per function, per modality, per analysis type, the best-in-class model for that subtask subscribes to the conversation. A reasoning subtask routes to one provider. A vision subtask routes to another. A long-context summarization routes to a third. A code-generation subtask routes to a specialist provider. A custom domain subtask routes to a fine-tuned in-house model. All of them are subscribers on the same conversation; the user sees one collaborative output.
+
+This is the structural claim worth stating sharply: **the composition primitive that frontier labs use internally becomes available to anyone, on an open substrate, across providers.** Today, anyone trying to compose SOTA models across providers does it with bespoke glue code, fragile hop-by-hop orchestration, and a custom retry surface for every failure mode. With AMS as the connective tissue, the same composition becomes a subscriber pattern. Small teams get to do at the application layer what the big labs do at the model layer.
+
+- **What AMS enables:** model selection per subtask rather than per session; cross-provider composition without custom orchestration code; the conversation as the unified surface across every model provider.
+- **What's needed beyond AMS:** routing logic (which model handles which subtask, encoded as capability declarations or harness rules); per-provider edge wrappers (per [`PATTERNS.md`](./PATTERNS.md) §2); cost and latency normalization across providers.
+
+### 13.2 Dynamically-trained specialized models as subscribers
+
+The conversations AMS carries are themselves training corpus. With customer permission and clear data governance (TruthKit-shaped), the conversation history can be used to train specialized small models — HRMs (Hierarchical Reasoning Models), domain-specific classifiers, in-house reasoners — that subsequently subscribe to those same conversations as additional experts.
+
+This produces a flywheel. Conversations generate data. Data trains specialists. Specialists subscribe to conversations and contribute. Their contributions appear in future conversation data. The specialists evolve with the domain they serve.
+
+The stack that emerges has three tiers, all composed on the wire:
+
+1. **Frontier subscribers** — SOTA models routed per subtask per §13.1.
+2. **Specialized subscribers** — small models (HRMs, fine-tuned classifiers, domain reasoners) trained on the conversation corpus, dynamically spawned for inference, retired when not needed.
+3. **Deterministic subscribers** — MCP servers and direct integrations doing what deterministic tools do (database lookups, calculations, third-party APIs, structured data manipulation).
+
+A single conversation can route any given subtask to whichever tier is strongest for it. Frontier for open-ended reasoning. Specialized for in-distribution tasks the customer's data has trained well. Deterministic for anything with a known answer. The composition is dynamic, per-turn, per-subtask, and observable end-to-end on the wire.
+
+- **What AMS enables:** the conversation IS the training corpus, the inference event source, and the composition surface — all in one substrate.
+- **What's needed beyond AMS:** a training pipeline that consumes conversation streams (could itself be a subscriber); model-spawning infrastructure for dynamic inference; routing logic that decides which tier handles each subtask; data governance ensuring the corpus is used per customer terms.
+
+### 13.3 Why this is the actual long game
+
+The current shape of "agent infrastructure" treats models as black-box endpoints called by orchestration code. Composition happens by human-written if/else logic. Specialization happens by long-running fine-tuning jobs that produce static artifacts. The model providers are gatekeepers for everything interesting.
+
+The shape AMS enables — distributed mixture of experts spanning frontier, specialized, and deterministic subscribers, with the conversation data feeding back into the specialized tier — flips that. Composition is a property of the substrate, not human glue code. Specialization is dynamic and continuous, not a separate batch job. The model providers become one tier of subscribers among several, contributing where they're strongest and getting out of the way where they're not.
+
+This is what *"everyone can do what the big labs do internally"* actually means structurally. Not that everyone gets a frontier model — they don't. But everyone gets the **composition substrate** that makes a frontier model just one ingredient among several. The strategic moat shifts from "who has the biggest model" to "who has the best composition discipline and the right specialized subscribers for their domain."
+
+Event-driven orchestration is step one. Distributed mixture of experts across providers is step two. The data flywheel that produces continuously-improving specialized subscribers is step three. AMS is the substrate prerequisite for all three — and the PoC must not foreclose any of them.
+
+---
+
 ## What This Costs to Build (Past the PoC)
 
 Most of this catalog assumes infrastructure that the PoC scoped in `SPEC.md` does not yet provide. The shortlist of what's needed to unlock major sections:
@@ -522,6 +568,10 @@ Most of this catalog assumes infrastructure that the PoC scoped in `SPEC.md` doe
 | Identity above account ID | Sections 3.5, 3.6, 8.x | Medium (sister-spec scope) |
 | Edge wrappers (Slack, webhook, SMS, IDE, meeting platforms, Git hosts, devices) | Sections 2.4, 2.5, 7.x, 9.x, 8.4 | One per integration; pattern is `PATTERNS.md` §2 |
 | Transformation, encoding, and artifact-projection subscribers (translation, DOLCHE+H, citation injection/validation, artifact builders) | Sections 5.1–5.6, parts of 4 | Per subscriber: small. Each follows the same per-session-DO pattern as the MCP wrapper. |
+| Cross-provider routing for SOTA mixture of experts | Section 13.1 | Medium — routing/policy layer plus per-provider edge wrappers. Lives in the harness, not the wire. |
+| Conversation-data training pipeline | Section 13.2 | Large — separate ML infrastructure project, consumes AMS streams as a subscriber, produces models that re-enter as subscribers. |
+| Dynamic specialized-model spawning (HRMs and similar) | Section 13.2 | Medium-Large — model-serving infrastructure, ideally serverless / wake-on-event to match the wire's wake-up surface. |
+| Three-tier subscriber routing (frontier + specialized + deterministic) | Section 13.3 | Medium — harness-level policy. The wire just carries; the harness decides which tier handles which subtask. |
 | Binary token support on the wire | Sections 7.1–7.4 | Small, anticipated in `PROTOCOL.md` §4.2 |
 
 None of these is enormous. The asymmetry between effort-to-build and value-if-adopted is the shape worth pursuing.
