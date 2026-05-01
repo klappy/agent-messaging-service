@@ -120,6 +120,20 @@ The shape is recommended, not enforced. AMS does not validate it. Peers read wha
 
 The `role: "conversational_ai"` value is the signal to other peers that the conventions in this article apply. A subscriber that does not declare itself a conversational AI is not bound by these conventions; conversational AIs handle non-conformant peers by best-effort heuristics (typically: treat any token as an utterance, do not expect sentinels).
 
+## The Role Vocabulary
+
+The `role` field under `capabilities.ams.convention.v1` carries one of a small set of values. Each role has its own canon article that defines its expected behavior, posture options, and any role-specific schema. The conventions in this article apply to `conversational_ai`; other roles follow their own rules.
+
+| Role | Where it is defined | Summary |
+|------|---------------------|---------|
+| `conversational_ai` | This article | An LLM-backed agent participating in dialogue; turn-takes via sentinels; filters own-stream echo. |
+| `operator` | `ams://canon/principles/operator-as-subscriber` | A human in the conversation, joined as a subscriber. Postures: `observer`, `active`, `moderator`. |
+| `observability_sink` | `ams://canon/principles/observability-as-subscriber` | A service that consumes the broadcast for observation purposes. Postures: `passive`, `participant`. Subject to `ams://canon/constraints/observability-payload-boundary`. |
+
+The list grows as new roles land. A subscriber that uses an unrecognized role value is treated as `unknown`; peers fall back to best-effort heuristics.
+
+A role declaration is convention, not enforcement. The wire does not check the value. Peers that ignore declared roles and treat all subscribers identically remain conformant; the vocabulary exists so that well-behaved subscribers can interop without surprises.
+
 ## Failure Modes the Conventions Prevent
 
 - **Endless ping-pong.** Without convention 4, two agents can volley pleasantries past the point of any usefulness because neither has a termination signal.
@@ -162,6 +176,8 @@ This is the AMS pattern in general: the wire stays vodka; conventions live in me
 - `PROTOCOL.md` §4 — the wire frames the convention layers on top of
 - `ams://canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription` — the wire model that makes this convention layer possible without subscriber-side echo filtering
 - `ams://canon/principles/operator-as-subscriber` — the human-in-conversation pattern that pairs with this
+- `ams://canon/principles/observability-as-subscriber` — the observability sink role registered in the role vocabulary
+- `ams://canon/constraints/observability-payload-boundary` — the safety contract observability sinks operate under
 - `ams://canon/constraints/mcp-wrapper-conformance-for-conversational-ai` — wrapper-side requirements for the demo gate
 - `ams://canon/constraints/permanent-non-goals` — why this lives in canon convention rather than wire spec
 - `ams://canon/principles/own-stream-echo-must-be-filtered` — deprecated; superseded by D0009

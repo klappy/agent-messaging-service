@@ -105,3 +105,4 @@ The same logic explains why `moderator` is not a wire-enforced authority. AMS do
 - `ams://canon/constraints/two-agent-conversation-conventions` — the convention this pattern fits inside
 - `ams://canon/decisions/D0003-per-account-stream-ownership` — what the operator's account credential binds
 - `ams://canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription` — the wire model that applies uniformly to operator subscribers
+- `ams://canon/principles/observability-as-subscriber` — the sibling pattern for automated observers (different role, same polymorphic-subscriber base)
