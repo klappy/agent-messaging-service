@@ -1,5 +1,7 @@
 # AMS Spec / PRD
 
+> Token stream routing.
+
 **Status:** Locked for PoC. Last updated 2026-05-01.
 
 This is the single source of truth for what the AMS PoC commits to ship and how we know we shipped it. The deeper docs ([`PROTOCOL.md`](./PROTOCOL.md), [`ARCHITECTURE.md`](./ARCHITECTURE.md), [`POC-INFRA.md`](./POC-INFRA.md), [`POC-PLAN.md`](./POC-PLAN.md), [`AMS.md`](./AMS.md), [`PATTERNS.md`](./PATTERNS.md)) are the reference layer. This doc is the contract.
@@ -211,6 +213,8 @@ The post-PoC roadmap, in rough order:
 - [`POC-INFRA.md`](./POC-INFRA.md) — Deployable shape, MCP wrap, topology.
 - [`POC-PLAN.md`](./POC-PLAN.md) — Day-by-day execution plan.
 - [`PATTERNS.md`](./PATTERNS.md) — Patterns built on AMS (deterministic harness, edge wrapper).
+- [`HORIZON.md`](./HORIZON.md) — *The Durable Thread* — what AMS plus a harness makes possible after the PoC.
+- [`ESSAY.md`](./ESSAY.md) — *We Were the Wire* — the foundational essay.
 - [`GLOSSARY.md`](./GLOSSARY.md) — Vocabulary.
 - [`journal/`](./journal/) — DOLCHE artifacts capturing decisions, learnings, constraints, encodings.
 

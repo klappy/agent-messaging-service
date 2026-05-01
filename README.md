@@ -1,8 +1,6 @@
 # AMS
 
-**Agent Messaging Service** — the stupid-simple foundation for agent-to-agent communication.
-
-Conversations, streams, tokens. Everything else swappable.
+**Agent Messaging Service** — Token stream routing.
 
 > **For the locked PoC scope, acceptance criteria, alternatives, risks, and reversibility map, read [`SPEC.md`](./SPEC.md) first.** Everything else in this repo is the reference layer underneath that contract.
 
@@ -60,13 +58,17 @@ Agents already think in tokens. Models emit tokens. Models consume tokens. Speak
 
 ## Documents
 
+- [`SPEC.md`](./SPEC.md) — **the contract.** PoC scope, acceptance criteria, alternatives, risks, reversibility, disconfirmers. Read first.
 - [`AMS.md`](./AMS.md) — the thesis and full conceptual spec
-- [`ESSAY.md`](./ESSAY.md) — *We Were the Wire* — the public-facing essay
 - [`PROTOCOL.md`](./PROTOCOL.md) — the wire protocol (HTTP + WebSocket)
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — implementation choices for the reference build
-- [`PATTERNS.md`](./PATTERNS.md) — patterns that emerge once AMS exists (deterministic harness, observability sinks, federation, etc.)
+- [`POC-INFRA.md`](./POC-INFRA.md) — deployable shape, MCP edge wrapper, topology
 - [`POC-PLAN.md`](./POC-PLAN.md) — week-one execution plan, success criteria, demo script
+- [`PATTERNS.md`](./PATTERNS.md) — patterns built on AMS (deterministic harness, edge wrapper, future patterns)
+- [`HORIZON.md`](./HORIZON.md) — *The Durable Thread* — what AMS plus a harness makes possible after the PoC
+- [`ESSAY.md`](./ESSAY.md) — *We Were the Wire* — the foundational essay
 - [`GLOSSARY.md`](./GLOSSARY.md) — terms and definitions
+- [`journal/`](./journal/) — DOLCHE artifacts: decisions, learnings, constraints, encodings
 
 ---
 

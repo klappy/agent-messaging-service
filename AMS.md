@@ -1,7 +1,8 @@
 # AMS: Agent Messaging Service
 
-> The stupid-simple foundation for agent-to-agent communication.
-> Conversations, streams, tokens. You own your writes. Anyone in the conversation can read.
+> Token stream routing.
+>
+> You own your writes. Anyone in the conversation can read.
 
 ---
 
