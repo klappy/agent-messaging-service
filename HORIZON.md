@@ -104,12 +104,12 @@ A team kicks off a research generation in the morning. Members drop in throughou
 - **What AMS enables:** the conversation outlives any single human's working session.
 - **What's needed beyond AMS:** conversation persistence; some notion of "who's currently viewing" (presence — explicitly out of v1, but addable as a wrapper concern).
 
-### 2.4 Meeting agent
+### 2.4 Human meetings as conversation input
 
-An agent joins a Zoom/Meet call (via the meeting platform's webhook hook into an AMS edge wrapper), listens to the transcript stream, takes notes, summarizes. Other meeting participants subscribe via their phones to watch the notes accumulate live.
+A meeting platform (Zoom, Meet, Teams, or in-person mic + STT) streams its transcription into an AMS conversation as it happens. Agents subscribe to the transcript stream as it arrives — taking notes, surfacing action items, fact-checking claims, translating live (§5.1), encoding to memory (§5.2), projecting documents (§5.5). Loggers subscribe and persist. The meeting becomes a conversation with N downstream consumers, all running in parallel, none knowing about each other.
 
-- **What AMS enables:** the meeting becomes a conversation with a transcript stream; downstream consumers (notes, action-item extractor, follow-up scheduler) all subscribe.
-- **What's needed beyond AMS:** an edge wrapper that bridges the meeting platform to AMS (per `PATTERNS.md` §2).
+- **What AMS enables:** human-meeting transcription is just another input stream. Everything else in this catalog — translation, encoding, citation validation, artifact projection, audit logging — applies to meeting transcripts as naturally as it applies to model output.
+- **What's needed beyond AMS:** an edge wrapper for the meeting platform (per [`PATTERNS.md`](./PATTERNS.md) §2); STT for in-person meetings; UI for participants who want to subscribe via phone or other devices.
 
 ### 2.5 Code review with agent participation
 
@@ -219,37 +219,85 @@ Two governance configurations subscribe to the same conversation in parallel. Ea
 
 ---
 
-## 5. Reliability and Operations
+## 5. Transformation, Encoding, and Artifact Projection
 
-### 5.1 Hot-swap inference providers
+A category of subscribers that read the conversation and produce parallel outputs — translations, encoded memory, citations, materialized artifacts — without modifying the original streams. Every entry here is a subscriber that takes the conversation as input and emits its transformed view as a separate stream or external artifact.
+
+### 5.1 Real-time translation as a separate layer
+
+A translation subscriber reads the model's stream (or any stream) in language A and emits a parallel stream in language B. Multiple translation subscribers run for multiple target languages. The original stream is preserved; subscribers (humans, downstream agents) pick which language stream to render.
+
+- **What AMS enables:** translation as a stream-transformation subscriber, not a model-side or chat-client concern; multi-language conversations come from N translation subscribers running in parallel; the source-of-truth stream is never modified.
+- **What's needed beyond AMS:** a translation model or service per language pair; chat-client logic to select which language to render.
+
+### 5.2 Post-stream memory encoding (DOLCHE+H and custom)
+
+A memory subscriber reads the conversation and continuously encodes it in DOLCHE+H format (Decisions, Observations, Learnings, Constraints, Handoffs, Encoding — per oddkit conventions) or in customer-defined custom encoding types. Persisted to the customer's memory store, typically a git repo.
+
+- **What AMS enables:** structured memory extraction is a subscriber pattern; the encoding scheme is pluggable per deployment; multiple encoders can stack (one DOLCHE+H, one domain-specific, one for downstream RAG).
+- **What's needed beyond AMS:** the encoding subscriber implementation (oddkit provides the DOLCHE+H schema; customers define their own); storage in customer-controlled git or database (TruthKit pattern).
+
+### 5.3 Citation injection
+
+A citation subscriber reads the model's claims as they emit, identifies claims that lack supporting sources, looks up sources, and emits citation tokens on its own stream. The user sees the model's claim and the citation suggestions side-by-side; the model never had to be citation-trained.
+
+- **What AMS enables:** citation augmentation as a subscriber posture; the citation subscriber is independent and swappable; different citation strategies (web search, vector store, internal knowledge base) can run in parallel and be compared.
+- **What's needed beyond AMS:** the citation-finding subscriber (typically backed by a search index, vector store, or curated knowledge base); UI rendering for citation streams alongside model output.
+
+### 5.4 Citation validation
+
+A validator subscriber reads citations the model emits, fetches the cited sources, verifies the claim against the source, and emits validation tokens (verified, contested, hallucinated). Skeptical reading made automatic.
+
+- **What AMS enables:** post-hoc citation auditing as a subscriber; the model is unchanged; validation logic is replaceable; multiple validators with different strictness levels can run in parallel.
+- **What's needed beyond AMS:** source-resolver implementations (URL fetcher, document store reader, archive lookup); verification logic (text comparison, semantic match, contradiction detection).
+
+### 5.5 Real-time artifact projection
+
+An artifact-builder subscriber reads the conversation and materializes structured artifacts in real time — a markdown document, a code file, a presentation deck, a dashboard, a spreadsheet — that grow as the conversation progresses. The artifact reflects the conversation; the conversation is the construction log.
+
+- **What AMS enables:** artifacts emerge from conversations rather than being assembled at the end; multiple subscribers can produce different artifact shapes from the same conversation in parallel (markdown view, JSON view, slide deck, dashboard, all from the same source).
+- **What's needed beyond AMS:** artifact-builder implementations per output type; rendering or storage destinations; conflict resolution if multiple writers contribute to the same artifact.
+
+### 5.6 Document construction from streamed conversation
+
+A specialization of 5.5: a long-form document (research report, contract, technical spec, course curriculum) is constructed continuously as the conversation produces relevant tokens. Editors can intervene; reviewers can join; the final document is the conversation's settled state.
+
+- **What AMS enables:** document creation as conversation-as-construction-log; multi-author and multi-agent contribution naturally interleaves on the wire; revision history is the stream history.
+- **What's needed beyond AMS:** document-state-tracking logic; conflict resolution across contributors; export formats.
+
+---
+
+## 6. Reliability and Operations
+
+### 6.1 Hot-swap inference providers
 
 The harness is currently routing the model's output via Provider A. Provider A starts rate-limiting. The harness silently switches the next prompt to Provider B without notifying the conversation; subscribers see no interruption beyond a metadata note that the model identifier changed.
 
 - **What AMS enables:** the model identity is a metadata attribute, not a wire-level commitment; switching is observable but not disruptive.
 - **What's needed beyond AMS:** the multi-provider harness logic (TruthKit territory).
 
-### 5.2 Graceful degradation
+### 6.2 Graceful degradation
 
 Provider A goes down mid-generation. The harness pauses, switches to Provider B, replays the last few tokens of context, resumes the stream. Subscribers see a brief metadata-only pause, then continued tokens.
 
 - **What AMS enables:** stream continuity across provider switches because the conversation owns the canonical history.
 - **What's needed beyond AMS:** harness-level orchestration of cross-provider continuation; some notion of "context replay" across providers.
 
-### 5.3 Replay debugging
+### 6.3 Replay debugging
 
 A historic conversation is replayed against a different model or a different governance configuration. The user observes how the alternative would have responded without re-running the original.
 
 - **What AMS enables:** the conversation is a deterministic input transcript that can be re-fed into any harness configuration.
 - **What's needed beyond AMS:** a replay tool that reads a stored conversation and feeds it into an alternative harness.
 
-### 5.4 Distributed tracing
+### 6.4 Distributed tracing
 
 Each microservice in a system is an AMS account. Each request is a conversation. Internal RPC calls are streams within the conversation. Latency, error, and dependency traces fall out of stream observation.
 
 - **What AMS enables:** the conversation IS the trace; no separate trace store needed.
 - **What's needed beyond AMS:** trace-rendering UI; service-mesh integration.
 
-### 5.5 Long-running batch job coordination
+### 6.5 Long-running batch job coordination
 
 A batch job kicks off a conversation. It emits status tokens periodically (`progress: 23/100`). A monitoring dashboard subscribes and renders progress in real time. On completion, the conversation closes with a final summary token.
 
@@ -258,30 +306,30 @@ A batch job kicks off a conversation. It emits status tokens periodically (`prog
 
 ---
 
-## 6. Multi-Modal Extensions
+## 7. Multi-Modal Extensions
 
-### 6.1 Voice agent join
+### 7.1 Voice agent join
 
 A TTS subscriber reads the model's text-token stream and speaks it aloud. A separate STT subscriber listens to the user's microphone and emits speech-as-text tokens on its own stream. The combination is a voice conversation, but the conversation itself is still text-token-shaped.
 
 - **What AMS enables:** voice is a pair of subscribers (one rendering, one capturing) on a text conversation; the conversation stays universally inspectable as text.
 - **What's needed beyond AMS:** TTS and STT subscribers; mic/speaker permissions in the client.
 
-### 6.2 Vision tokens
+### 7.2 Vision tokens
 
 Image data flows through the same wire as text — `data` is opaque per `PROTOCOL.md` §5, so it can be base64 image bytes (or, in a later wire revision, native binary). A vision-capable model emits and consumes image tokens alongside text.
 
 - **What AMS enables:** modality is application-defined; the wire doesn't care.
 - **What's needed beyond AMS:** binary token support in the wire (`PROTOCOL.md` notes this is anticipated); chat-client rendering of image tokens.
 
-### 6.3 Document streaming
+### 7.3 Document streaming
 
 A long document (a contract, a research report, a book) is generated incrementally. Each section is a token. Subscribers (the user, an editor, a reviewer) watch the document grow live, can annotate, can request revisions.
 
 - **What AMS enables:** large artifacts are streams of tokens, not single payloads; rendering can be progressive.
 - **What's needed beyond AMS:** document-rendering UI conventions; section/chunk semantics at the application layer.
 
-### 6.4 Code generation watched live
+### 7.4 Code generation watched live
 
 A code-generating agent emits code as it writes. Subscribers (an IDE, a CI runner, a code-review bot) consume the stream and react — IDE renders, CI tries to compile partially-written code, review bot starts critiquing as it goes.
 
@@ -290,37 +338,37 @@ A code-generating agent emits code as it writes. Subscribers (an IDE, a CI runne
 
 ---
 
-## 7. Industry-Specific (TruthKit Verticals)
+## 8. Industry-Specific (TruthKit Verticals)
 
-### 7.1 Pastoral care
+### 8.1 Pastoral care
 
 A pastor's agent assists in a counseling session. A supervisor agent monitors for boundary issues (clinical scope, dual relationships, mandatory reporting triggers) and emits warnings on its own stream visible to the pastor only. The full conversation is journaled to the customer's DOLCHE store for review.
 
 - **What AMS enables:** supervision is a subscriber; the supervisor sees what the pastor sees without being the same agent.
 - **What's needed beyond AMS:** the pastoral and supervisor agents; per-stream visibility policy (some streams visible only to specific subscribers).
 
-### 7.2 Bible translation
+### 8.2 Bible translation
 
 A drafter agent proposes a verse rendering. A reviewer agent compares to source-language exegesis. A naturalness checker evaluates target-language style. A consultant joins for tricky passages. The conversation is the full audit trail of how a verse came to be.
 
 - **What AMS enables:** translation as a multi-agent collaborative stream with the entire reasoning visible and journaled.
 - **What's needed beyond AMS:** the specialist agents; integration with the existing translation tools (Aquifer-style helps).
 
-### 7.3 Legal research
+### 8.3 Legal research
 
 A research agent gathers cases. A brief drafter writes from the research. A cite-checker verifies every citation. A senior partner joins for review. The conversation is the billable artifact — every minute of agent work and every human contribution is on the wire.
 
 - **What AMS enables:** legal work as a billable, auditable, multi-participant conversation.
 - **What's needed beyond AMS:** the legal-domain agents; integration with case-law databases.
 
-### 7.4 Smart home
+### 8.4 Smart home
 
 A sensor (motion detector) emits readings as tokens. A control agent decides on actions. An actuator (light switch, thermostat, door lock) subscribes to the control agent's stream and acts. The user joins the conversation from their phone to monitor or override.
 
 - **What AMS enables:** IoT devices are subscribers; humans are subscribers; the control loop is a conversation.
 - **What's needed beyond AMS:** device-level edge wrappers (most devices won't speak the wire natively); control-agent logic per home.
 
-### 7.5 Customer support escalation
+### 8.5 Customer support escalation
 
 A first-line agent handles a customer's question. When stuck, it emits a `request_escalation` token. A senior agent or human joins the conversation, reads the full prior context from the stream, takes over without requiring the customer to re-explain.
 
@@ -329,30 +377,30 @@ A first-line agent handles a customer's question. When stuck, it emits a `reques
 
 ---
 
-## 8. Developer and Infrastructure Tools
+## 9. Developer and Infrastructure Tools
 
-### 8.1 CI/CD pipeline coordination
+### 9.1 CI/CD pipeline coordination
 
 A build agent, a test agent, a deploy agent, and a rollback agent collaborate via a CI conversation. The build emits artifact tokens; the test agent consumes them; if tests fail, it emits a `block` to the deploy agent. A human dev observes the whole pipeline as a single timeline.
 
 - **What AMS enables:** CI as a multi-agent conversation rather than a sequence of webhook callbacks.
 - **What's needed beyond AMS:** the pipeline agents; integration with build/test infrastructure.
 
-### 8.2 Incident response war room
+### 9.2 Incident response war room
 
 A production incident triggers a conversation. Diagnostic agents (log searcher, metrics analyzer, trace inspector) subscribe and emit findings. Human responders join from wherever they are. The conversation is the runbook and the post-mortem material.
 
 - **What AMS enables:** the war room is a place that exists on the wire, not a Zoom call that ends; the artifact persists for review.
 - **What's needed beyond AMS:** the diagnostic agents; integration with monitoring systems; on-call paging that includes the magic link.
 
-### 8.3 Pair programming with an LLM as full participant
+### 9.3 Pair programming with an LLM as full participant
 
 The IDE is a subscriber. The compiler is a subscriber. The linter is a subscriber. The code-generation agent is a subscriber. The developer is a subscriber. All five share one conversation. Edits, errors, suggestions, completions all flow on the wire.
 
 - **What AMS enables:** the LLM stops being "called by the IDE" and starts being "in the conversation with the IDE."
 - **What's needed beyond AMS:** IDE plugins as edge wrappers; LSP-as-subscriber bridge.
 
-### 8.4 Long-running agentic workflows
+### 9.4 Long-running agentic workflows
 
 A research-then-write-then-publish workflow runs over several hours. The user kicks it off and walks away. The workflow conversation continues; the user joins at any point to see status, intervene, redirect.
 
@@ -361,37 +409,37 @@ A research-then-write-then-publish workflow runs over several hours. The user ki
 
 ---
 
-## 9. Creative and Educational
+## 10. Creative and Educational
 
-### 9.1 Collaborative writing
+### 10.1 Collaborative writing
 
 A writer, an editor agent, a fact-checker agent, and a tone consultant agent collaborate on a single draft. Each contributes on its own stream. The writer holds the final say; everyone else is advisory.
 
 - **What AMS enables:** editing as a multi-stream conversation rather than a sequential review.
 - **What's needed beyond AMS:** the editorial agents; document-rendering conventions.
 
-### 9.2 Tutoring sessions across time
+### 10.2 Tutoring sessions across time
 
 A tutor agent and a student work together over multiple sessions. The conversation persists; each new session resumes where the last one ended. The agent remembers the student's progress because the progress is on the wire.
 
 - **What AMS enables:** memory-as-conversation rather than memory-as-vector-store.
 - **What's needed beyond AMS:** conversation persistence; spaced-repetition scheduling.
 
-### 9.3 Multi-student class with shared tutor
+### 10.3 Multi-student class with shared tutor
 
 One tutor agent, fifteen students, one shared conversation. Each student emits questions on their own stream; the tutor responds; everyone learns from everyone's questions.
 
 - **What AMS enables:** N-way teaching with full mutual visibility.
 - **What's needed beyond AMS:** UI for student/tutor stream distinction; per-student private side-channels (separate conversations) when privacy is needed.
 
-### 9.4 World-building for collaborative fiction
+### 10.4 World-building for collaborative fiction
 
 A shared world-bible conversation accumulates lore over time. Authors and agents both contribute. Anyone writing a new story joins the conversation, reads the world, contributes their additions back to the bible.
 
 - **What AMS enables:** the world-bible is a living conversation, not a static document.
 - **What's needed beyond AMS:** conversation-as-knowledge-base rendering; conflict resolution when contributions disagree.
 
-### 9.5 Music or art composition
+### 10.5 Music or art composition
 
 Notation tokens, audio tokens, and feedback tokens flow on parallel streams. Composer, performer agents, and critic agents collaborate. The composition emerges live and is observable from the start.
 
@@ -400,7 +448,37 @@ Notation tokens, audio tokens, and feedback tokens flow on parallel streams. Com
 
 ---
 
-## 10. The Wedge — How This Gets Adopted
+## 11. Composition — Stacking the Catalog
+
+The catalog above lists patterns separately. The actual unlock is composition.
+
+A single AMS conversation can have all of these subscribing simultaneously, with no coordination between them and no protocol changes:
+
+- The model emitting text tokens (and possibly thinking tokens on a sibling stream)
+- A real-time translation subscriber emitting Spanish, French, and Mandarin in parallel (§5.1)
+- A fact-checker emitting corrections (§4.1)
+- A citation injector adding sources (§5.3)
+- A citation validator confirming or contesting them (§5.4)
+- A cost monitor tracking token spend (§4.3)
+- A compliance subscriber redacting PII for downstream consumers (§4.2)
+- A DOLCHE+H encoder writing structured memory to git (§5.2)
+- An artifact builder constructing a markdown report in the customer's repo (§5.5)
+- A second artifact builder rendering the same conversation as a slide deck (§5.5)
+- An audit logger writing every token to the customer's repo (§4.5)
+- A meeting transcription stream feeding in from a Zoom call (§2.4)
+- A user's chat client rendering the original
+- A second user's chat client rendering Spanish only
+- A senior reviewer's chat client rendering only the audit summary
+
+Fifteen subscribers on one conversation. None know about the others. None require coordination beyond joining the same conversation. The model's stream and the meeting's transcript stream are the inputs; the rest are transformations, augmentations, observations, and renderings that compose freely.
+
+The architectural payoff is that **adding capability is adding a subscriber**. Removing it is removing a subscriber. Replacing it is replacing a subscriber. The protocol does not have to grow. The chat-product surface does not have to grow. The model does not have to grow. Only the subscriber catalog grows — and every subscriber can be deployed by anyone (the customer, a vendor, an open-source contributor) without coordinating with anyone else.
+
+This is what makes the substrate generative rather than static. Any single pattern in this catalog is interesting on its own. The composition of all of them on one wire is the category.
+
+---
+
+## 12. The Wedge — How This Gets Adopted
 
 The catalog above is wide, but the felt entry point is narrow.
 
@@ -418,15 +496,16 @@ Most of this catalog assumes infrastructure that the PoC scoped in `SPEC.md` doe
 
 | Capability | Unlocks | Difficulty |
 |------------|---------|------------|
-| Replay buffer in `ConversationDO` | Sections 1.1, 1.2, 1.6, 2.3, 5.3 | Small (a few hundred lines) |
-| Conversation persistence past last subscriber | Sections 1.6, 2.3, 9.2, 9.4 | Small (KV write on close) |
-| TruthKit harness using AMS as conversation plumbing | All of section 4, 5, 7 | Medium (separate project, already in shape) |
-| Per-stream visibility policy | Sections 4.5, 7.1, 9.3 | Medium (needs design pass) |
+| Replay buffer in `ConversationDO` | Sections 1.1, 1.2, 1.6, 2.3, 6.3 | Small (a few hundred lines) |
+| Conversation persistence past last subscriber | Sections 1.6, 2.3, 10.2, 10.4 | Small (KV write on close) |
+| TruthKit harness using AMS as conversation plumbing | All of section 4, 5, 6, 8 | Medium (separate project, already in shape) |
+| Per-stream visibility policy | Sections 4.5, 8.1, 10.3 | Medium (needs design pass) |
 | Federation between AMS instances | Section 3.5, 3.6 | Large (sister protocol, deferred) |
-| Magic link revocation/expiry | Sections 2.1, 4.5, 7.x | Small but needed early for production |
-| Identity above account ID | Sections 3.5, 3.6, 7.x | Medium (sister-spec scope) |
-| Edge wrappers (Slack, webhook, SMS, IDE, meeting platforms, Git hosts, devices) | Sections 2.4, 2.5, 6.x, 8.x, 7.4 | One per integration; pattern is `PATTERNS.md` §2 |
-| Binary token support on the wire | Sections 6.1–6.4 | Small, anticipated in `PROTOCOL.md` §4.2 |
+| Magic link revocation/expiry | Sections 2.1, 4.5, 8.x | Small but needed early for production |
+| Identity above account ID | Sections 3.5, 3.6, 8.x | Medium (sister-spec scope) |
+| Edge wrappers (Slack, webhook, SMS, IDE, meeting platforms, Git hosts, devices) | Sections 2.4, 2.5, 7.x, 9.x, 8.4 | One per integration; pattern is `PATTERNS.md` §2 |
+| Transformation, encoding, and artifact-projection subscribers (translation, DOLCHE+H, citation injection/validation, artifact builders) | Sections 5.1–5.6, parts of 4 | Per subscriber: small. Each follows the same per-session-DO pattern as the MCP wrapper. |
+| Binary token support on the wire | Sections 7.1–7.4 | Small, anticipated in `PROTOCOL.md` §4.2 |
 
 None of these is enormous. The asymmetry between effort-to-build and value-if-adopted is the shape worth pursuing.
 
@@ -438,7 +517,7 @@ This is a map of the design space, not a roadmap. Listing a use case here means 
 
 - `SPEC.md` for the PoC commitment.
 - Future planning documents for what comes after.
-- Customer-driven prioritization for the verticals in section 7.
+- Customer-driven prioritization for the verticals in section 8.
 
 The vodka discipline of the wire is what makes the catalog wide. Anything that fits the shape "tokens flow between subscribers in a conversation, with metadata describing capabilities" can be built on top. The constraint test is whether the use case requires a domain opinion in the protocol — if it does, it doesn't belong in AMS; it belongs above.
 
