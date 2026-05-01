@@ -1,8 +1,9 @@
-# AMS Spec / PRD
+# AMS Spec / PRD — v1.0
 
 > Token stream routing.
 
-**Status:** Locked for PoC. Last updated 2026-05-01.
+**Version:** 1.0 (PoC scope locked).
+**Status:** Active. Last updated 2026-05-01.
 
 This is the single source of truth for what the AMS PoC commits to ship and how we know we shipped it. The deeper docs ([`PROTOCOL.md`](./PROTOCOL.md), [`ARCHITECTURE.md`](./ARCHITECTURE.md), [`POC-INFRA.md`](./POC-INFRA.md), [`POC-PLAN.md`](./POC-PLAN.md), [`AMS.md`](./AMS.md), [`PATTERNS.md`](./PATTERNS.md)) are the reference layer. This doc is the contract.
 
@@ -238,10 +239,19 @@ The post-PoC roadmap, in rough order:
 
 This doc is the lock. When a load-bearing decision changes, this doc is updated **first**, then the deeper docs are brought into alignment. Every revision adds a dated entry below.
 
+**Versioning.** The spec carries a SemVer-style version number (e.g. `v1.0`, `v1.1`, `v2.0`). The version is the provenance handle: the implementation is built to a specific spec version, and the version is the answer to "what did we commit to when we shipped this." Bump rules:
+
+- **Patch** (e.g. `v1.0` → `v1.0.1`) — clarifications, typo fixes, no change to commitments. Rare; usually folded into the next minor.
+- **Minor** (e.g. `v1.0` → `v1.1`) — additive changes within the same compatibility envelope. New scope, new conventions, new canon references. An implementation built to v1.0 remains a valid implementation under v1.1.
+- **Major** (e.g. `v1.x` → `v2.0`) — breaking changes to scope, contract, or wire. An implementation built to v1.x is not automatically compliant with v2.0. Major bumps align with wire-protocol bumps when the wire itself breaks; spec-only major bumps happen when the contract envelope changes (e.g., scope expands beyond what v1 promised) without breaking the wire.
+
+The version in the title at the top of this document is the current version. Each row in the revisions table below is tagged with the version it introduced. Git tags (`spec-v1.0`, `spec-v1.1`, ...) mark each version's commit for direct retrieval.
+
 **Forward-compatibility check:** every proposed change to this spec — and every implementation choice it permits — is evaluated against [`HORIZON.md`](./HORIZON.md). If a change would foreclose any catalog entry, the change is wrong (or the catalog entry is deliberately retired with a named reason). The catalog is the constraint set that protects v1 from painting future versions into a corner.
 
-| Date | Change | Driver |
-|------|--------|--------|
-| 2026-05-01 | Initial lock — PoC scope, acceptance criteria, alternatives, risks, reversibility, disconfirmers. | Oddkit gauntlet pass surfaced that load-bearing decisions were spread across six docs without a single locking surface. |
-| 2026-05-01 | Added forward-compatibility check against `HORIZON.md` to revision discipline. | Catalog reframed explicitly as a two-sided document: dream half (what becomes possible) and constraint half (what must remain possible). The constraint half belongs in spec discipline. |
-| 2026-05-01 | Adopted D0009: stream-scoped delivery with structural exclusion of self-echo. Wire MUST #4 rewritten; new MUSTs #6 added; new opt-in `X-AMS-Self-Subscribe` connect header; emit semantics confirmed as fire-and-forget v1 default. Echo-filter principle deprecated. Smoke test §3.1 item 3 and demo gate §3.2 updated to verify the no-echo property. Reversibility table records D0009 as a one-way door. | First-principles rethink: previous wire model required every subscriber to implement echo filtering; D0009 moves the constraint into wire structure, eliminating the failure mode and unblocking concurrent multi-stream emission as a default property. Operator (klappy) brought decades of multi-stream parallelism experience to the table. |
+| Version | Date | Change | Driver |
+|---------|------|--------|--------|
+| v1.0 | 2026-05-01 | Initial lock — PoC scope, acceptance criteria, alternatives, risks, reversibility, disconfirmers. | Oddkit gauntlet pass surfaced that load-bearing decisions were spread across six docs without a single locking surface. |
+| v1.0 | 2026-05-01 | Added forward-compatibility check against `HORIZON.md` to revision discipline. | Catalog reframed explicitly as a two-sided document: dream half (what becomes possible) and constraint half (what must remain possible). The constraint half belongs in spec discipline. |
+| v1.0 | 2026-05-01 | Added SemVer-style spec versioning. | Provenance — clear mapping between "what we committed to" and "what we shipped." This row introduces the versioning convention; the document is retroactively marked v1.0 because the PoC scope and locks above are unchanged. |
+| v1.0 | 2026-05-01 | Adopted D0009: stream-scoped delivery with structural exclusion of self-echo. Wire MUST #4 rewritten; new MUSTs #6 added; new opt-in `X-AMS-Self-Subscribe` connect header; emit semantics confirmed as fire-and-forget v1 default. Echo-filter principle deprecated. Smoke test §3.1 item 3 and demo gate §3.2 updated to verify the no-echo property. Reversibility table records D0009 as a one-way door. | First-principles rethink: previous wire model required every subscriber to implement echo filtering; D0009 moves the constraint into wire structure, eliminating the failure mode and unblocking concurrent multi-stream emission as a default property. Operator (klappy) brought decades of multi-stream parallelism experience to the table. |
