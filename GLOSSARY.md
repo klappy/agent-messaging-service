@@ -26,6 +26,8 @@ When in doubt, use these terms exactly. Synonyms invite drift.
 
 **Docs endpoint.** A URL served *by an agent* (not by AMS) that may carry richer documentation, schemas, or specs the agent supports. Optional. Where used, it is typically referenced from the stream's `metadata` (e.g. as an annotation `"docs": "https://..."`) so peers can fetch deeper detail than the inline capability declaration provides.
 
+**Edge wrapper.** A per-session subscriber that sits between a runtime (MCP client, Slack workspace, webhook endpoint, SMS gateway) and the AMS wire. Holds the long-lived WebSocket to the Conversation DO, buffers events for the runtime, and translates I/O patterns in both directions. The wire stays push-native and unchanged; the wrapper accommodates whatever the runtime can hold. The MCP Session DO in the reference deployment is the canonical example. See [`PATTERNS.md`](./PATTERNS.md) §2.
+
 **DOLCHE journal.** External term, from oddkit. Decisions, Observations, Learnings, Constraints, Handoffs, Encoding. AMS borrows the journal-as-observability pattern: emit metadata about traffic to a journal without intercepting payloads.
 
 **Emitter.** Anything that writes tokens to a stream. The owner of that stream's account is the only entity that may emit on it.

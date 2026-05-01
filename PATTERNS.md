@@ -56,7 +56,65 @@ These are problems for the harness ecosystem to solve. AMS already gave them the
 
 ---
 
-## 2. (Future Patterns)
+## 2. The Edge Wrapper
+
+**The pattern.** AMS's wire is push-native, WebSocket-first, real-time. Most consumer runtimes are not — they're request/response, or they speak a different protocol entirely (MCP, HTTP webhooks, Slack events, SMS). Rather than reshape the wire to accommodate each runtime, place a thin per-session subscriber between the runtime and the wire. The wrapper holds a long-lived WebSocket to the conversation it serves, buffers events for the runtime, and translates I/O patterns in both directions.
+
+```
+Runtime (MCP client, Slack workspace, SMS gateway, ...)
+    │
+    │  whatever the runtime speaks
+    │  (request/response, webhooks, events, etc.)
+    ▼
+Edge Wrapper (per-session subscriber)
+    │
+    │  • holds the wire WebSocket
+    │  • per-session event buffer + cursor
+    │  • subscription set
+    │  • bidirectional I/O translation
+    ▼
+AMS Conversation (the dream-house wire, unchanged)
+```
+
+**Why it matters.** The wire spec gets to be exactly the shape AMS wants — push-native, opaque, broadcast — without compromising for any specific runtime's limitations. The Conversation DO does not have to know that some peers are MCP sessions, that some are webhook endpoints, that some are humans on SMS. It treats every subscriber the same: a WebSocket-holding entity that emits and receives wire frames. Each adapter is a single-purpose translator, and adding a new runtime is a new wrapper, not a protocol revision.
+
+**Why it stays vodka.** The wrapper:
+
+- Carries opaque tokens and opaque metadata. Same payload contract as the wire.
+- Holds no persistent durable state — only ephemeral session state (buffer, cursor, subscription set), discarded when the session ends.
+- Has no domain opinions. It does not parse `data`, schema-validate `metadata`, or branch on payload contents.
+- Implements one well-defined contract over another. That is the entire job.
+
+A wrapper that grows beyond translation — that adds caching, rewrites payloads, applies content policy, or accumulates business logic — has stopped being a wrapper and become a product. At that point it gets factored out as a separate service. The wrapper layer must stay cheap.
+
+**The MCP wrapper as the canonical instance.** The reference deployment ships an MCP edge wrapper as a per-MCP-session Durable Object (`SessionDO` in [`POC-INFRA.md`](./POC-INFRA.md) §4). The Session DO holds the WebSocket to the Conversation DO, buffers wire events for the MCP client, and exposes the AMS surface as five MCP tools plus two notification streams. The Conversation DO does not know MCP exists.
+
+**Other wrappers that fit the same shape.**
+
+- **Slack adapter.** A per-Slack-channel Session DO that bridges Slack messages to AMS tokens and vice versa. Slack threads ↔ conversations.
+- **Webhook adapter.** A per-subscription Session DO that POSTs incoming tokens to a configured URL and accepts outbound tokens via a return webhook.
+- **SMS adapter.** A per-phone-number Session DO that sends outbound tokens via SMS and accepts inbound SMS as token emissions.
+- **A2A bridge.** A Session DO that translates between AMS and the Agent2Agent protocol (or any other agent comms protocol that emerges).
+
+Each of these is its own DO class implementing the same edge-wrapper contract. None of them require the wire spec to change.
+
+**What the pattern does not provide.**
+
+- AMS does not host runtimes. The wrapper bridges to a runtime; it does not run one.
+- AMS does not validate what the wrapper carries. Translation fidelity is the wrapper's responsibility.
+- AMS does not standardize wrapper APIs. Each wrapper exposes whatever is idiomatic for the runtime it serves.
+
+**Open questions in this pattern.**
+
+- *Wrapper authentication.* A wrapper acts as an AMS account; how does the wrapper itself prove which account it represents? In the reference impl, the MCP `Authorization` header is the AMS bearer credential — the agent's account is the wrapper's account. Other wrappers may need different binding mechanisms.
+- *Wrapper failure semantics.* If the wrapper crashes mid-session, its buffer is lost. A future revision may add a cheap spill-to-storage tier, but not in v1.
+- *Wrapper observability.* Should wrappers emit telemetry to a separate observability subscriber (the pattern in §3 below, eventually), or to a wrapper-specific log sink? Probably the former, but TBD.
+
+These are wrapper-ecosystem questions. AMS already gave them the wire.
+
+---
+
+## 3. (Future Patterns)
 
 Patterns we expect to document here as they land:
 

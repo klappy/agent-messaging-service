@@ -140,6 +140,8 @@ A subscriber is anything that holds a magic link and either binds a stream or ju
 
 This is what makes the protocol foundational instead of vertical. Anything that can hold a WebSocket and read or write bytes can participate. The cleverness lives in the subscribers, not in AMS.
 
+Many useful runtimes — agent frameworks, chat platforms, webhook consumers, devices speaking proprietary protocols — cannot themselves hold a WebSocket or speak the wire. The pattern for bringing them in is the **edge wrapper**: a thin, per-session subscriber that holds the wire WebSocket on the runtime's behalf and translates I/O patterns. The wire stays exactly as `PROTOCOL.md` says it is; the wrapper does the cut-and-adapt for whatever the runtime can actually hold. The MCP-wrapped reference deployment is the canonical instance of this pattern. See [`PATTERNS.md`](./PATTERNS.md) §2.
+
 ### 5.1 Spec vs Instance
 
 For one specific subscriber type — reasoning agents — there is a layering distinction that recurs everywhere and is worth naming carefully.
