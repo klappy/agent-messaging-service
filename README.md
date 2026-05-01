@@ -2,13 +2,13 @@
 
 **Agent Messaging Service** — the stupid-simple foundation for agent-to-agent communication.
 
-Rooms, streams, tokens. Everything else swappable.
+Conversations, streams, tokens. Everything else swappable.
 
 ---
 
 ## What It Is
 
-AMS is a real-time pub-sub protocol designed from the ground up for agents — not for humans, not retrofitted from email or chat. Two agents (or any combination of subscribers) join a **room**, each writes to their own **stream**, and **tokens** flow between them in real time. No copy-paste. No human in the wire.
+AMS is a real-time pub-sub protocol designed from the ground up for agents — not for humans, not retrofitted from email or chat. Two agents (or any combination of subscribers) join a **conversation**, each writes to their own **stream**, and **tokens** flow between them in real time. No copy-paste. No human in the wire.
 
 We made this because we needed it. Sitting at a hackathon, we were the manual bus between two agents that should have been able to talk directly. AMS removes us from that loop.
 
@@ -18,35 +18,48 @@ We made this because we needed it. Sitting at a hackathon, we were the manual bu
 
 Every team running multiple agents in parallel is hitting the same wall: agents need to coordinate, and the existing options are either human-shaped messaging (Slack, Discord, email) or opinionated full-stack frameworks that lock you in.
 
-AMS is the **TCP/IP play** for agent communication: a thin, unopinionated foundation that anyone's stack can sit on top of. You bring your identity. You bring your auth. You bring your queue. AMS just brokers tokens between rooms.
+AMS is the **TCP/IP play** for agent communication: a thin, unopinionated foundation that anyone's stack can sit on top of. You bring your identity. You bring your auth. You bring your queue. AMS just brokers tokens between subscribers.
 
 ---
 
 ## How It Works
 
 ```
-You ──► [account] ──► mints a room ──► gets a magic link
-                                            │
-                                            ▼
-                                     share the link
-                                            │
-                                            ▼
-Someone else ──► [account] ──► presents magic link ──► joins the room
+You ──► [account] ──► mints a conversation ──► gets a magic link URL
+                                                     │
+                                                     ▼
+                                              share the URL
+                                                     │
+                                                     ▼
+Someone else ──► [account] ──► presents the URL ──► joins the conversation
 ```
 
-Once both parties are in the room, each owns their **stream**. Each writes to their own stream. Each subscribes to all streams in the room. Tokens flow in real time. No interleaving, no inbox clutter — you own what you write, others choose to listen.
+A magic link looks like:
+
+```
+https://ams.covenant.dev/klappy/conversations/falcon-pulse-9421?t=eyJhbGc...
+```
+
+Once both parties are in the conversation, each owns their **stream**. Each writes to their own stream. Each subscribes to all streams in the conversation. Tokens flow in real time. No interleaving, no inbox clutter — you own what you write, others choose to listen.
+
+---
+
+## Why Tokens, Not Messages
+
+Agents already think in tokens. Models emit tokens. Models consume tokens. Speaking anything else on the wire forces a translation layer the protocol shouldn't own. Tokens also stream natively — a writer can start emitting before it has finished reasoning, a subscriber can start processing before the writer is done. See [`AMS.md` §3.1](./AMS.md) for the full argument.
 
 ---
 
 ## Status
 
-**Pre-PoC.** Architecture and protocol are documented. First reference implementation targets end of week.
+**Pre-PoC.** Architecture and protocol are documented. First reference implementation targets end of next week.
 
 ---
 
 ## Documents
 
 - [`AMS.md`](./AMS.md) — the thesis and full conceptual spec
+- [`ESSAY.md`](./ESSAY.md) — *We Were the Wire* — the public-facing essay
 - [`PROTOCOL.md`](./PROTOCOL.md) — the wire protocol (HTTP + WebSocket)
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — implementation choices for the reference build
 - [`POC-PLAN.md`](./POC-PLAN.md) — week-one execution plan, success criteria, demo script

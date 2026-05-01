@@ -1,7 +1,7 @@
 # AMS: Agent Messaging Service
 
 > The stupid-simple foundation for agent-to-agent communication.
-> Rooms, streams, tokens. You own your writes. Anyone in the room can read.
+> Conversations, streams, tokens. You own your writes. Anyone in the conversation can read.
 
 ---
 
@@ -37,32 +37,61 @@ The business consequence: we are not selling a product to humans. **We are selli
 
 ---
 
-## 3. The Primitives: Account, Room, Stream, Token
+## 3. The Primitives: Account, Conversation, Stream, Token
 
 Four primitives, in order of nesting:
 
-**Account.** A namespace. Belongs to a human, an organization, or an autonomous operator. Holds identity, billing, policy. An account spawns rooms and writes streams. Without an account, you cannot own a stream.
+**Account.** A namespace. Belongs to a human, an organization, or an autonomous operator. Holds identity, billing, policy. An account spawns conversations and writes streams. Without an account, you cannot own a stream.
 
-**Room.** A coordination surface, addressed by a **magic link**. Created by one account. Joinable by anyone holding the link. The room does not store messages long-term; it routes streams between subscribers in real time.
+**Conversation.** A coordination surface, addressed by a **magic link**. Created by one account. Joinable by anyone holding the link. The conversation does not store messages long-term; it routes streams between subscribers in real time.
 
-**Stream.** A single writer's owned pipe inside a room. When you join a room, you bring your stream. **Only you write to your stream.** Everyone in the room reads it. If three accounts join a room, the room carries three streams, and every subscriber sees all three — but no two writers ever interleave on the same stream.
+**Stream.** A single writer's owned pipe inside a conversation. When you join a conversation, you bring your stream. **Only you write to your stream.** Everyone in the conversation reads it. If three accounts join a conversation, the conversation carries three streams, and every subscriber sees all three — but no two writers ever interleave on the same stream.
 
 **Token.** The smallest unit of transmission. A token can be one byte or one megabyte. AMS does not parse it, validate it, or care what it means. Streams carry tokens. That is the entire data model.
 
-That is the protocol. Account → joins → Room (magic link) → owns → Stream → carries → Tokens.
+That is the protocol. Account → joins → Conversation (magic link) → owns → Stream → carries → Tokens.
 
-### 3.1 Magic Link as the Room Invite
+### 3.1 Why Tokens, Not Messages
 
-A magic link is a room handle. Whoever creates the room mints the link. Sharing the link (Signal, email, QR code, scribbled on a napkin) is the act of inviting another account into the room. When the second account presents the link, AMS binds their stream to the room.
+Most messaging systems take "message" as their unit. Discord, Slack, Kafka, RabbitMQ, gRPC, even MCP — each has a notion of a complete, framed, atomic message that gets passed from sender to receiver. AMS rejects that. Three reasons.
 
-Two distinct things happen at registration:
+**Cognition.** Agents already operate in tokens. A language model emits tokens. A language model consumes tokens. The internal unit of agent reasoning is the token, not the message. When two agents talk to each other, the wire between them should speak the same unit they think in. Anything else introduces a translation layer — and translation layers are where semantics quietly drift, where latency hides, and where every framework starts inventing its own incompatible message envelopes.
 
-1. **Magic link presented** → AMS knows which room to join.
+**Streaming.** Messages are discrete. You compose the whole thing, then you send it. Tokens stream. When an agent is generating a response, it does not decide on a complete message and then transmit — it emits tokens as it thinks. AMS preserves that. A writer can start emitting before it has finished reasoning. A subscriber can start processing before the writer is done. Real-time means *real-time*, not "real-time delivery of completed messages." The shape of the protocol matches the shape of agent cognition.
+
+**Layering.** Bytes are too low: AMS would have to reinvent serialization on top of them, and every implementation would do it slightly differently. Messages are too high: the moment you commit to a message envelope, you have committed to framing, schemas, ordering semantics, delivery guarantees, and a hundred other opinions the protocol should not own. Tokens land at the right altitude. Bigger than a byte, smaller than a message, exactly the unit agents already produce and consume. Everything above the token layer — message envelopes, schemas, queues, RPC frameworks — can be built by anyone, on top of AMS, without fighting AMS.
+
+This is why one-to-many fan-out is the trivial case in AMS, not a special feature. A model emits a token stream; N subscribers all receive it in real time. A coordinator agent listens. A logger listens. A UI listens. A downstream worker listens. Same emission, no replication logic. Token streaming is what models already do natively; AMS just removes the wire that used to break it.
+
+### 3.2 Magic Link as URL
+
+A magic link is a URL. Not an opaque blob, not a JWT, not a custom envelope — a URL.
+
+```
+https://ams.covenant.dev/klappy/conversations/falcon-pulse-9421?t=eyJhbGc...
+```
+
+Three parts:
+
+- **Origin (`https://ams.covenant.dev`)** — which AMS instance hosts the conversation. Discovery is solved trivially: the URL is the address.
+- **Path (`/klappy/conversations/falcon-pulse-9421`)** — `<account-namespace>/conversations/<conversation-name>`. The account namespace makes ownership visible in the URL itself and eliminates the global-namespace collision problem. Anyone reading a magic link knows whose conversation it is.
+- **Token (`?t=...`)** — a permissive bearer token granting permission to attach a stream and listen to the conversation. Default-on for every issued URL; future authorization policies (e.g. fully public conversations) can drop or replace it.
+
+The conversation name itself is a **namespace alias** for an underlying identifier. Two identifier flavors are supported:
+
+- **Flat UUID** — generated at conversation creation. The default. The alias is just a friendlier handle.
+- **Deterministic JCS-SHA** — content-addressable hash of canonicalized inputs (JSON Canonicalization Scheme + SHA-256). Useful when two parties need to *independently arrive* at the same conversation ID by hashing the same canonical input — for example, "the conversation about spec X" without prior coordination.
+
+The protocol treats the URL as opaque from the *client's* perspective: do not parse it, do not infer structure, just present it intact when joining. URL structure is a deployment-side choice. Other AMS implementations may use different URL shapes without breaking conformance, as long as the URL routes to a conversation and carries (or does not carry) the permissive token.
+
+**Two doors at registration:**
+
+1. **Magic link presented** → AMS knows which conversation to join.
 2. **Account credentials presented** → AMS knows whose stream to bind.
 
-The magic link is a **bearer token for room access**. The account credential is **proof of who owns the stream being bound**. Two doors. One unlocks the room. The other unlocks your write surface inside it.
+The magic link is a bearer token for conversation access. The account credential is proof of who owns the stream being bound. One unlocks the conversation. The other unlocks your write surface inside it.
 
-### 3.2 Wake-Up Semantics
+### 3.3 Wake-Up Semantics
 
 Subscribers do not have to be live and listening to participate. A magic link can be configured to **wake** a dormant subscriber when tokens arrive. Sleep until called. Wake when needed. Same primitive, no extra layer. (Cloudflare Workers and Durable Objects already give us this for free at the infrastructure layer.)
 
@@ -75,10 +104,10 @@ Most messaging systems are built around inboxes. Anyone writes to your inbox; yo
 AMS inverts that. **You own your writes, not your reads.**
 
 - You write to your stream. Nobody else can write there.
-- Other subscribers read your stream by being in the same room. You do not curate, filter, or accept incoming messages — incoming messages do not exist in this model.
-- If you do not want to hear from someone, you leave their room. Or you do not enter it.
+- Other subscribers read your stream by being in the same conversation. You do not curate, filter, or accept incoming messages — incoming messages do not exist in this model.
+- If you do not want to hear from someone, you leave their conversation. Or you do not enter it.
 
-This is the right shape for real-time, because real-time has no time for triage. It also makes the security model dramatically simpler: there is no inbox to flood, no spam vector to plug, no permission grant to revoke. You either share a room with someone or you do not.
+This is the right shape for real-time, because real-time has no time for triage. It also makes the security model dramatically simpler: there is no inbox to flood, no spam vector to plug, no permission grant to revoke. You either share a conversation with someone or you do not.
 
 ---
 
@@ -104,104 +133,53 @@ TCP/IP works because each layer solves one problem and stays out of the way of t
 | Layer | Concern | Loose TCP/IP Analog | AMS Stance |
 |---|---|---|---|
 | **Transport** | Move bytes between two endpoints | Physical / Link | WebSocket to start. Swappable. |
-| **Room + Stream** | Pub-sub coordination, magic-link addressing, write ownership | (no clean analog — closest is multicast with per-source channels) | **AMS owns this.** Stupid simple. |
+| **Conversation + Stream** | Pub-sub coordination, magic-link addressing, write ownership | (no clean analog — closest is multicast with per-source channels) | **AMS owns this.** Stupid simple. |
 | **Account / Identity** | Who owns this stream? | (none — TCP/IP punts to DNS + TLS) | Account is required. Identity scheme above account is negotiable. |
-| **Discovery** | How do I find a room or account I have not met? | DNS | Optional registry. Not required for direct-link comms. |
+| **Discovery** | How do I find a conversation or account I have not met? | DNS | URL is the address. Optional registry above that. |
 | **Capability Negotiation** | What protocols / formats do we both speak? | (TLS handshake, content negotiation) | Each subscriber publishes a docs endpoint. Subscribers agree at runtime. |
-| **Authorization** | Who can join the room? Who can read which streams? | (none — left to applications) | Magic-link bearer + account auth in the PoC. Richer policies are pluggable. |
-| **Observability** | What is flowing through the system? | (none — out-of-band tooling) | Orthogonal. Operators see metadata, not stream contents. |
-| **Job Coordination** | Queues, dependencies, parallelism, handoffs | (application layer) | Separate stack. Lives above AMS, not inside it. |
+| **Authorization** | Who can join the conversation? Who can read which streams? | (none — left to applications) | Magic-link bearer + account auth in the PoC. Richer policies are pluggable. |
+| **Observability** | What is happening across conversations? | (none — out-of-band) | Subscribers can be observability sinks. AMS does not push or pull telemetry. |
+| **Job Coordination** | Queues, dependencies, parallelism | (application layer) | Above AMS, not in AMS. |
+| **Identity** | Who an agent *is*, beyond an account ID | (none) | Above AMS. Negotiated between subscribers via docs endpoints. |
 
-### 6.1 Identity
-
-Agents do not have a clean identity story yet. AMS makes the **account** the minimum identity primitive — every stream is owned by an account, period. Above that, the schemes people will want are all in play:
-
-- **Spec-as-identity** — the SHA of the agent's specification is the identity. Verifiable, immutable, but does not capture runtime variance.
-- **Instance-as-identity** — each running copy gets a UUID. Captures the actual thing in motion, but means N copies of the same spec are N different identities.
-- **Behavior-as-identity** — two agents are "the same" if their observable outputs match for the same inputs. Closest to how humans reason about identity. Computationally intractable to verify.
-- **Composite** — identity is a tuple: (account, spec SHA, model, proxy config, team, …). Maximum flexibility, maximum bookkeeping.
-
-AMS does not pick. Subscribers publish whatever identity scheme they use in their docs endpoint. The receiver decides which scheme it cares about for a given interaction. A trust-critical conversation (Bible translation, legal, pastoral) might require account + spec-SHA + a TruthKit attestation. A utility conversation (log forwarding, sensor relay) might accept any account.
-
-### 6.2 Capability Negotiation via Docs Endpoints
-
-Every subscriber publishes a **docs endpoint** — its own little README served by the subscriber itself. The docs declare:
-
-- What identity scheme(s) the subscriber uses
-- What protocols and message formats it speaks
-- What operations it supports
-- What authorization it requires
-- What state it considers public
-
-Two subscribers meet in a room, fetch each other's docs, find a common protocol, and proceed. If there is no overlap, no conversation. If there is partial overlap, they pick the intersection. **No central protocol mandate. No version-pinning hell.** The subscribers arbitrate.
-
-### 6.3 Authorization
-
-Two doors:
-
-- **Room access** — controlled by the magic link. Whoever holds it can join.
-- **Stream ownership** — controlled by account credentials. You can only write to streams owned by your account.
-
-That is the entire model in the PoC. Richer policies are pluggable on top:
-
-- Magic link expiry, rotation, single-use links
-- Per-room allowlist of accounts
-- Per-stream read ACLs (for the rare case you want a stream visible to a subset of room members)
-- Capability tokens, attestation chains, TruthKit-validated identity gates
-
-AMS does not prescribe the policy. The room metadata declares the policy and AMS enforces what the room owner declared.
-
-### 6.4 Observability
-
-The room model is privacy-preserving by default: only subscribers in the room read the streams. **Observability does not break that guarantee.** It runs in parallel.
-
-The pattern: subscribers emit *metadata* about their participation (account, timestamp, room, stream lengths, outcome) to an audit trail. Operators get visibility into traffic without intercepting payloads. This is the DOLCHE journal pattern from oddkit, applied to live coordination instead of work handoffs.
-
-Operators can demand more (full token contents, replayable traces) by configuring their own subscribers to log them — but that is a *subscriber-side* policy, not an AMS-side capability.
-
-### 6.5 Job Coordination
-
-Real handoffs need queues. Some jobs are sequential. Some are parallel. Some have dependency graphs. None of that belongs in the messaging layer.
-
-AMS carries tokens. A coordinator agent — or a real queue (Cloudflare Queues, RabbitMQ, SQS, whatever) — sits above AMS and handles the choreography. The queue subscribes to AMS streams to dispatch work. Agents call back over AMS to report results. The queue is not part of the protocol.
-
-This is the cleanest separation we can draw and the one most existing stacks get wrong: they bake the queue into the messaging layer, then everyone has to take their queue.
+The contract: **AMS owns rows two and three only.** Everything else is a layer above it that some subscriber, framework, or vertical product implements in whatever way fits its use case. AMS does not have an opinion.
 
 ---
 
 ## 7. The PoC
 
-What we build first. This week.
+What we are shipping by end of next week.
 
 ### 7.1 Scope
 
-A single Cloudflare Worker, backed by a Durable Object per room, that:
+A single Cloudflare Worker, backed by a Durable Object per conversation, that:
 
-1. Provides `POST /rooms` to mint a new room and return a magic link.
-2. Provides a WebSocket endpoint that takes the magic link plus an account credential, binds the connection's stream to the room, and joins the subscriber to the broadcast loop.
-3. Forwards every token written to any stream in the room to every subscriber in that room, tagged with the writing account / stream identifier so receivers know who wrote what.
+1. Provides `POST /{namespace}/conversations` to mint a new conversation and return a magic link URL.
+2. Provides a WebSocket endpoint that takes the magic link plus an account credential, binds the connection's stream to the conversation, and joins the subscriber to the broadcast loop.
+3. Forwards every token written to any stream in the conversation to every subscriber in that conversation, tagged with the writing account / stream identifier so receivers know who wrote what.
 
 That is the entire PoC.
 
-**Stubbed for the PoC, real later:** account auth (the PoC accepts any string as an account ID and trusts it; production binds accounts to verified credentials). No revocation, no expiry, no per-stream ACLs, no federation, no registry.
+**Stubbed for the PoC, real later:** account auth (the PoC accepts any string as an account ID and trusts it; production binds accounts to verified credentials). No revocation, no expiry, no per-stream ACLs, no federation, no registry, no JCS-SHA derivation (UUID only).
 
 ### 7.2 Stack
 
-- **Cloudflare Worker** for HTTP entry.
-- **Durable Object per room** to hold the WebSocket connections and the broadcast loop.
-- **D1 (or KV)** for the minimal account stub and room metadata.
+- **Cloudflare Worker** for HTTP entry and URL routing.
+- **Durable Object per conversation** to hold the WebSocket connections and the broadcast loop.
+- **D1 (or KV)** for the minimal account stub and conversation metadata (alias → identifier mapping).
 - Token format: opaque bytes. The protocol does not care.
 
 ### 7.3 What It Proves
 
-- Two agents (mine, Ian's), each with their own account, can be handed a magic link and start exchanging tokens through their owned streams in real time, with no copy-paste, no Signal, no human in the wire.
-- The same room works for non-agent subscribers — a Worker, a curl command, a sensor — without protocol changes.
+- Two agents (mine, Ian's), each with their own account, can be handed a magic link URL and start exchanging tokens through their owned streams in real time, with no copy-paste, no Signal, no human in the wire.
+- The same conversation works for non-agent subscribers — a Worker, a curl command, a sensor — without protocol changes.
 - The broker is small enough (target: under 300 lines including the DO) that the *foundation* is obviously not the interesting part. The interesting part is what gets built on top.
 
 ### 7.4 What It Does Not Prove (Yet)
 
 - Real account auth. Bearer-string equivalence in the PoC.
-- Discovery. There is no registry. Magic links are exchanged out of band.
+- Discovery beyond "the URL is the address."
+- JCS-SHA derived conversation identifiers. UUID only in the PoC.
 - Authorization beyond magic link possession + account self-assertion.
 - Cross-broker federation. One Worker, one account namespace.
 - Scale. The PoC is for *correctness* of the primitive, not throughput.
@@ -215,12 +193,13 @@ These are explicit non-goals for week one. They are layers, and they bolt on.
 To stay vodka, AMS will *never* take an opinion on:
 
 - **What identity scheme accounts use above the account ID itself.** AMS carries identity declarations. It does not validate the upper schemes.
-- **What authorization policy a room enforces beyond the two-door minimum.** Magic link + account ownership is the floor. Anything richer is declared in room metadata.
+- **What authorization policy a conversation enforces beyond the two-door minimum.** Magic link + account ownership is the floor. Anything richer is declared in conversation metadata.
 - **What format tokens take.** Opaque bytes.
 - **What transport layer is "correct."** WebSocket today. Swappable.
 - **What queue or coordinator sits above it.** Job coordination is not in the protocol.
 - **Whether the registry is centralized, federated, or distributed.** The PoC has no registry. Production deployments can pick.
 - **What pricing dimension applies.** The hosted instance(s) bill on whatever dimension makes sense (likely concurrency-tiered). The protocol itself is free.
+- **What URL structure other AMS implementations use.** The reference impl picks one. Conformance only requires that the magic link route to a conversation and authorize stream attachment.
 
 This list is the contract. Every time someone proposes an addition, it gets checked against this list. If it would make AMS opinionated about one of these, the answer is no — that belongs in a layer above.
 
@@ -231,10 +210,11 @@ This list is the contract. Every time someone proposes an addition, it gets chec
 Honest things we do not yet know, and which the PoC will not answer:
 
 - **Magic link revocation.** Once a link is issued, it works forever. Do we add expiry to the PoC, or wait until someone needs it?
-- **Room persistence.** When the last subscriber disconnects, does the room evaporate or persist? PoC default: evaporate.
-- **Stream replay.** When a subscriber joins late, do they get the room's recent token history or only what arrives after they connect? PoC default: from-now-only.
-- **Multi-stream-per-account.** Can one account own multiple streams in the same room? Probably yes, named by the account. PoC default: one stream per account per room.
-- **Federation.** Two brokers, one room. Possible, not solved. Probably needs a federation protocol layer.
+- **Conversation persistence.** When the last subscriber disconnects, does the conversation evaporate or persist? PoC default: evaporate.
+- **Stream replay.** When a subscriber joins late, do they get the conversation's recent token history or only what arrives after they connect? PoC default: from-now-only.
+- **Multi-stream-per-account.** Can one account own multiple streams in the same conversation? Probably yes, named by the account. PoC default: one stream per account per conversation.
+- **JCS-SHA collision and canonicalization scope.** When deterministic IDs land, what gets included in the canonical input? Schema TBD before the feature ships.
+- **Federation.** Two brokers, one conversation. Possible, not solved. Probably needs a federation protocol layer.
 - **Spec ownership.** Is AMS a Covenant project, an open standard with a reference implementation, or both? The right answer is probably "both, eventually." The PoC ships under Covenant.
 
 ---
@@ -261,7 +241,7 @@ These are **data-gravity** services — "get data in or out of Cloudflare infras
 
 - AMS *runs on* Durable Objects in the PoC. DOs are the implementation, not the competition.
 - A Cloudflare Worker can be an AMS subscriber. AMS does not replace Workers; it gives Workers a coordination channel.
-- A Cloudflare Queue can sit above an AMS room as the job-coordination layer. AMS does not replace Queues; it feeds them.
+- A Cloudflare Queue can sit above an AMS conversation as the job-coordination layer. AMS does not replace Queues; it feeds them.
 
 The right framing: **Cloudflare services are first-class subscribers in AMS.** Anyone building on AMS gets immediate access to the entire Cloudflare ecosystem as plug-in subscribers. That is a feature, not a competitive overlap.
 
@@ -277,11 +257,15 @@ We considered just adapting Matrix, Mastodon, or similar federated human-messagi
 
 Stripping all of that out is a bigger project than building the agent-native version from scratch. We respect the prior art. We are not borrowing from it.
 
+### 11.4 vs. MCP
+
+MCP is how a single agent calls tools and reads resources. AMS is how multiple agents (and other subscribers) talk to each other. MCP is one-to-one (agent ↔ tool); AMS is many-to-many (agents ↔ conversations ↔ subscribers). They compose: an agent reaches out via MCP to read a database, then emits the result on its AMS stream so other subscribers can react.
+
 ---
 
 ## 12. Naming
 
-**AMS** stands for **Agent Messaging Service**. The acronym deliberately echoes SMS: a primitive, ubiquitous, dumb-pipe messaging substrate that nobody thinks about because it just works. SMS does not know what your text means. Neither does AMS.
+**AMS** stands for **Agent Messaging Service**. The acronym deliberately echoes SMS: a primitive, ubiquitous, dumb-pipe substrate that nobody thinks about because it just works. The echo is at the acronym level only — SMS carries messages, AMS carries tokens (see §3.1 for why). SMS does not know what your text means. Neither does AMS.
 
 The protocol is open. The reference implementation is open. The hosted instance(s) are commercial.
 
