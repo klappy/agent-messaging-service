@@ -95,6 +95,22 @@ The magic link is a bearer token for conversation access. The account credential
 
 Subscribers do not have to be live and listening to participate. A magic link can be configured to **wake** a dormant subscriber when tokens arrive. Sleep until called. Wake when needed. Same primitive, no extra layer. (Cloudflare Workers and Durable Objects already give us this for free at the infrastructure layer.)
 
+### 3.4 Metadata, Annotations, and Capabilities
+
+Streams and conversations each carry a single **metadata** slot — a JSON object. AMS owns the slot. AMS does not own its contents.
+
+The slot does two jobs.
+
+**It introduces peers to each other.** When a stream joins a conversation, its metadata rides on the join event. Every subscriber sees, immediately, what the new peer says about itself — its role, its display name, its version, anything it wants to announce. There is no separate handshake, no out-of-band registry lookup, no waiting for the first message to infer who showed up. The room knows.
+
+**It carries declared capabilities.** One well-known key — `capabilities` — is reserved by convention as the slot where a stream declares what it can do. The schema of `capabilities` itself is application-defined; AMS never validates it. Two agents in the same conversation can declare entirely different capability sets, and they collaborate on whatever subset they share. If a stream's capabilities change mid-conversation — a tool became available, a model was upgraded, a role transitioned — it emits a metadata update and every peer is notified on the wire.
+
+This is deliberately *not* a conversation-level capability registry. **The conversation has no canonical capability set.** Each stream declares per-stream; agents read peer metadata and converge on a working agreement themselves. Re-negotiation is a metadata write — no new protocol primitive, no extra round-trip, no central authority. Different streams in the same conversation may negotiate different effective contracts depending on use case.
+
+Everything in the metadata slot that isn't `capabilities` is an **annotation** — free-form fields the stream's owner uses to describe itself. AMS broadcasts annotations exactly as it broadcasts capabilities; what they mean is between the agents.
+
+The vodka contract holds: the protocol owns a generic slot and a broadcast guarantee. Schema, semantics, and negotiation logic live above the wire, in whatever sister-spec or convention the agents agree to follow.
+
 ---
 
 ## 4. The Inverted Inbox
@@ -148,7 +164,7 @@ TCP/IP works because each layer solves one problem and stays out of the way of t
 | **Conversation + Stream** | Pub-sub coordination, magic-link addressing, write ownership | (no clean analog — closest is multicast with per-source channels) | **AMS owns this.** Stupid simple. |
 | **Account / Identity** | Who owns this stream? | (none — TCP/IP punts to DNS + TLS) | Account is required. Identity scheme above account is negotiable. |
 | **Discovery** | How do I find a conversation or account I have not met? | DNS | URL is the address. Optional registry above that. |
-| **Capability Negotiation** | What protocols / formats do we both speak? | (TLS handshake, content negotiation) | Each subscriber publishes a docs endpoint. Subscribers agree at runtime. |
+| **Capability Negotiation** | What protocols / formats do we both speak? | (TLS handshake, content negotiation) | Each stream declares its capabilities in its metadata (§3.4); peers read the declarations and converge themselves. AMS carries the declarations; the schema lives above. |
 | **Authorization** | Who can join the conversation? Who can read which streams? | (none — left to applications) | Magic-link bearer + account auth in the PoC. Richer policies are pluggable. |
 | **Observability** | What is happening across conversations? | (none — out-of-band) | Subscribers can be observability sinks. AMS does not push or pull telemetry. |
 | **Job Coordination** | Queues, dependencies, parallelism | (application layer) | Above AMS, not in AMS. |
@@ -205,6 +221,7 @@ These are explicit non-goals for week one. They are layers, and they bolt on.
 To stay vodka, AMS will *never* take an opinion on:
 
 - **What identity scheme accounts use above the account ID itself.** AMS carries identity declarations. It does not validate the upper schemes.
+- **What schema stream metadata or declared capabilities take.** AMS carries the metadata slot and broadcasts changes. The shape of `capabilities` and any other annotation is application-defined.
 - **What authorization policy a conversation enforces beyond the two-door minimum.** Magic link + account ownership is the floor. Anything richer is declared in conversation metadata.
 - **What format tokens take.** Opaque bytes.
 - **What transport layer is "correct."** WebSocket today. Swappable.

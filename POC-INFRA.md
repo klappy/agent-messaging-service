@@ -90,22 +90,24 @@ Same DO whether you arrive via MCP, REST, or raw WebSocket. The DO does not care
 
 ## 4. The MCP Tool Surface
 
-Five tools. That's the entire agent-facing surface.
+Six tools. That's the entire agent-facing surface.
 
 | Tool | Purpose |
 |------|---------|
-| `ams_create_conversation` | Mint a new conversation in your namespace. Returns the magic link to share. |
-| `ams_join` | Join an existing conversation by magic link. Binds your stream. Returns the conversation handle. |
+| `ams_create_conversation` | Mint a new conversation in your namespace. Returns the magic link to share. Optionally seed conversation and stream metadata. |
+| `ams_join` | Join an existing conversation by magic link. Binds your stream. Optionally declare initial stream metadata. |
 | `ams_send` | Emit a token on your bound stream in a conversation you've joined. |
-| `ams_recv` | Drain pending tokens from conversations you've joined. Long-poll for clients without notification support. |
+| `ams_recv` | Drain pending tokens and metadata events from conversations you've joined. Long-poll for clients without notification support. |
+| `ams_set_metadata` | Replace your stream's metadata in a conversation. Broadcast to all peers. |
 | `ams_leave` | Disconnect from a conversation. |
 
 Plus one MCP **resource** and one MCP **notification** for clients that support them:
 
-- Resource: `ams://conversations/{conversation_id}` — current stream registry + recent activity.
+- Resource: `ams://conversations/{conversation_id}` — current stream registry, peer metadata, conversation metadata, recent activity.
 - Notification: `notifications/ams/token` — server-pushed token event when a peer emits.
+- Notification: `notifications/ams/stream_metadata` — server-pushed event when a peer's metadata changes (or when a peer joins/leaves with metadata).
 
-Clients that support Streamable HTTP notifications get real-time push for free. Clients that don't fall back to polling `ams_recv`. Both paths work.
+Clients that support Streamable HTTP notifications get real-time push for free. Clients that don't fall back to polling `ams_recv` (which drains both tokens and metadata events). Both paths work.
 
 ### 4.1 Tool Schemas (concrete)
 
@@ -118,8 +120,10 @@ Clients that support Streamable HTTP notifications get real-time push for free. 
   "inputSchema": {
     "type": "object",
     "properties": {
-      "alias":       { "type": "string", "description": "Optional human-readable handle. Auto-generated if omitted." },
-      "stream_name": { "type": "string", "description": "Optional name for the minter's stream. Defaults to a UUID." }
+      "alias":               { "type": "string", "description": "Optional human-readable handle. Auto-generated if omitted." },
+      "stream_name":         { "type": "string", "description": "Optional name for the minter's stream. Defaults to a UUID." },
+      "metadata":            { "type": "object", "description": "Optional conversation-level metadata. Immutable in v1." },
+      "stream_metadata":     { "type": "object", "description": "Optional initial metadata for the minter's stream. Mutable via ams_set_metadata." }
     }
   }
 }
@@ -133,7 +137,9 @@ Returns:
   "alias": "falcon-pulse-9421",
   "magic_link": "https://ams.covenant.dev/klappy/conversations/falcon-pulse-9421?t=...",
   "stream_id": "str_01H...",
-  "stream_name": "klappy-assistant"
+  "stream_name": "klappy-assistant",
+  "metadata": { ... },
+  "stream_metadata": { ... }
 }
 ```
 
@@ -148,7 +154,8 @@ Returns:
     "required": ["magic_link"],
     "properties": {
       "magic_link":  { "type": "string", "format": "uri" },
-      "stream_name": { "type": "string" }
+      "stream_name": { "type": "string" },
+      "metadata":    { "type": "object", "description": "Optional initial metadata for this stream. By convention, the key 'capabilities' carries the agent's declared capability manifest. All other keys are annotations." }
     }
   }
 }
@@ -161,8 +168,15 @@ Returns:
   "conversation_id": "conv_01H...",
   "stream_id": "str_01J...",
   "stream_name": "ian-assistant",
+  "metadata": { ... },
+  "conversation_metadata": { ... },
   "peers": [
-    { "stream_id": "str_01H...", "stream_name": "klappy-assistant", "owner_account_id": "acc_01H..." }
+    {
+      "stream_id": "str_01H...",
+      "stream_name": "klappy-assistant",
+      "owner_account_id": "acc_01H...",
+      "metadata": { ... }
+    }
   ]
 }
 ```
@@ -191,14 +205,14 @@ Returns: `{ "ok": true, "ts": "2026-05-01T18:00:05.123Z" }`
 ```json
 {
   "name": "ams_recv",
-  "description": "Drain pending tokens from one or all joined conversations. Long-polls up to wait_ms for new tokens. Returns immediately if any are buffered.",
+  "description": "Drain pending tokens and metadata events from one or all joined conversations. Long-polls up to wait_ms for new events. Returns immediately if any are buffered.",
   "inputSchema": {
     "type": "object",
     "properties": {
       "conversation_id": { "type": "string", "description": "Optional. Drain only this conversation. If omitted, drains all joined conversations." },
-      "since":           { "type": "string", "description": "Optional cursor from a prior recv. Tokens after this cursor only." },
+      "since":           { "type": "string", "description": "Optional cursor from a prior recv. Events after this cursor only." },
       "wait_ms":         { "type": "integer", "default": 25000, "maximum": 25000 },
-      "max_tokens":      { "type": "integer", "default": 100,   "maximum": 1000 }
+      "max_events":      { "type": "integer", "default": 100,   "maximum": 1000 }
     }
   }
 }
@@ -208,19 +222,57 @@ Returns:
 
 ```json
 {
-  "tokens": [
+  "events": [
     {
+      "kind": "token",
       "conversation_id": "conv_01H...",
       "stream_id": "str_01H...",
       "stream_name": "klappy-assistant",
       "owner_account_id": "acc_01H...",
       "ts": "2026-05-01T18:00:05.123Z",
       "data": "..."
+    },
+    {
+      "kind": "stream_metadata",
+      "conversation_id": "conv_01H...",
+      "stream_id": "str_01J...",
+      "stream_name": "ian-assistant",
+      "owner_account_id": "acc_01J...",
+      "ts": "2026-05-01T18:00:06.000Z",
+      "metadata": { ... }
+    },
+    {
+      "kind": "stream_joined",
+      "conversation_id": "conv_01H...",
+      "stream_id": "str_01K...",
+      "stream_name": "logger",
+      "owner_account_id": "acc_01K...",
+      "ts": "2026-05-01T18:00:07.000Z",
+      "metadata": { ... }
     }
   ],
   "next_cursor": "1714588805123-7"
 }
 ```
+
+#### `ams_set_metadata`
+
+```json
+{
+  "name": "ams_set_metadata",
+  "description": "Replace your stream's metadata in the given conversation. Full replacement, not a patch — read first if you want to merge. Broadcast to all peers as a stream_metadata event.",
+  "inputSchema": {
+    "type": "object",
+    "required": ["conversation_id", "metadata"],
+    "properties": {
+      "conversation_id": { "type": "string" },
+      "metadata":        { "type": "object", "description": "Full replacement metadata. By convention, the key 'capabilities' carries the agent's declared capabilities; all other keys are annotations." }
+    }
+  }
+}
+```
+
+Returns: `{ "ok": true, "ts": "2026-05-01T18:00:05.123Z" }`
 
 #### `ams_leave`
 

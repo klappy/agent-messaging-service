@@ -86,7 +86,9 @@ Content-Type: application/json
 {
   "alias": "falcon-pulse-9421",       // optional; auto-generated if omitted
   "stream_name": "klappy-assistant",  // optional; defaults to a UUID
-  "id_kind": "uuid"                   // optional; "uuid" (default) or "jcs-sha256" (post-PoC)
+  "id_kind": "uuid",                  // optional; "uuid" (default) or "jcs-sha256" (post-PoC)
+  "metadata": { ... },                // optional; conversation-level metadata, see §4.4
+  "stream_metadata": { ... }          // optional; metadata for the minter's stream, see §4.4
 }
 ```
 
@@ -102,11 +104,13 @@ Content-Type: application/json
   "magic_link": "https://ams.covenant.dev/klappy/conversations/falcon-pulse-9421?t=...",
   "stream_id": "str_01H...",
   "stream_name": "klappy-assistant",
+  "metadata": { ... },
+  "stream_metadata": { ... },
   "created_at": "2026-05-01T18:00:01Z"
 }
 ```
 
-The minter's account is automatically attached to the conversation with the named stream. The `magic_link` is the shareable invitation; anyone holding it (plus a valid account credential) can join.
+The minter's account is automatically attached to the conversation with the named stream. The `magic_link` is the shareable invitation; anyone holding it (plus a valid account credential) can join. Conversation-level `metadata` is set at mint and is immutable in v1. Per-stream `stream_metadata` is owned by the stream's account and mutable at runtime — see §4.4.
 
 ---
 
@@ -128,15 +132,16 @@ Content-Type: application/json
   "alias": "falcon-pulse-9421",
   "namespace": "klappy",
   "id_kind": "uuid",
+  "metadata": { ... },
   "created_at": "2026-05-01T18:00:01Z",
   "streams": [
-    { "stream_id": "str_01H...", "stream_name": "klappy-assistant", "owner_account_id": "acc_01H..." },
-    { "stream_id": "str_01J...", "stream_name": "ian-assistant",    "owner_account_id": "acc_01J..." }
+    { "stream_id": "str_01H...", "stream_name": "klappy-assistant", "owner_account_id": "acc_01H...", "metadata": { ... } },
+    { "stream_id": "str_01J...", "stream_name": "ian-assistant",    "owner_account_id": "acc_01J...", "metadata": { ... } }
   ]
 }
 ```
 
-Useful for a subscriber that wants to know who else is in a conversation before connecting.
+Useful for a subscriber that wants to know who else is in a conversation — and what each peer has declared about themselves — before connecting.
 
 ---
 
@@ -148,10 +153,11 @@ Useful for a subscriber that wants to know who else is in a conversation before 
 GET wss://<host>/v1/{namespace}/conversations/{alias}/connect?t=<permissive-token>
   Upgrade: websocket
   Authorization: Bearer ams_sk_...
-  X-AMS-Stream-Name: klappy-assistant   // optional; defaults to UUID
+  X-AMS-Stream-Name: klappy-assistant            // optional; defaults to UUID
+  X-AMS-Stream-Metadata: <base64-json>           // optional; initial stream metadata, see §4.4
 ```
 
-The full magic link URL with `/connect` appended is the WebSocket endpoint. The `t` query parameter (the permissive token from the magic link) authorizes conversation admission. The `Authorization` header authorizes stream ownership.
+The full magic link URL with `/connect` appended is the WebSocket endpoint. The `t` query parameter (the permissive token from the magic link) authorizes conversation admission. The `Authorization` header authorizes stream ownership. The optional `X-AMS-Stream-Metadata` header carries the initial metadata for this stream as base64-encoded JSON; subscribers may also set or update metadata after connect via the `set_metadata` client frame (§4.2).
 
 **Server response on success:** `101 Switching Protocols` followed by a server frame:
 
@@ -160,7 +166,16 @@ The full magic link URL with `/connect` appended is the WebSocket endpoint. The 
   "type": "joined",
   "conversation_id": "conv_01H...",
   "stream_id": "str_01H...",
-  "stream_name": "klappy-assistant"
+  "stream_name": "klappy-assistant",
+  "metadata": { ... },
+  "peers": [
+    {
+      "stream_id": "str_01J...",
+      "stream_name": "ian-assistant",
+      "owner_account_id": "acc_01J...",
+      "metadata": { ... }
+    }
+  ]
 }
 ```
 
@@ -177,8 +192,9 @@ Every WebSocket frame is a single JSON object.
 **Client → server frames:**
 
 ```json
-{ "type": "token", "data": "..." }      // emit a token on the client's stream
-{ "type": "ping" }                       // optional keepalive
+{ "type": "token", "data": "..." }                       // emit a token on the client's stream
+{ "type": "set_metadata", "metadata": { ... } }          // replace the client's stream metadata; see §4.4
+{ "type": "ping" }                                        // optional keepalive
 ```
 
 **Server → client frames:**
@@ -196,10 +212,31 @@ Every WebSocket frame is a single JSON object.
 
 ```json
 {
-  "type": "stream_joined",   // or "stream_left"
+  "type": "stream_joined",
+  "stream_id": "str_01K...",
+  "stream_name": "...",
+  "owner_account_id": "acc_01K...",
+  "metadata": { ... }                                     // initial metadata, if any
+}
+```
+
+```json
+{
+  "type": "stream_left",
   "stream_id": "str_01K...",
   "stream_name": "...",
   "owner_account_id": "acc_01K..."
+}
+```
+
+```json
+{
+  "type": "stream_metadata",                              // sent on every metadata change
+  "stream_id": "str_01J...",
+  "stream_name": "ian-assistant",
+  "owner_account_id": "acc_01J...",
+  "metadata": { ... },
+  "ts": "2026-05-01T18:00:05.123Z"
 }
 ```
 
@@ -208,6 +245,39 @@ Every WebSocket frame is a single JSON object.
 ```
 
 `data` is opaque. It is the application's responsibility to parse it. The PoC treats `data` as a UTF-8 string for convenience, but binary support is anticipated and the field will become base64-or-binary in a later revision.
+
+---
+
+### 4.4 Metadata, Annotations, and Capabilities
+
+Every stream and every conversation has a **metadata** slot — a single JSON object. AMS owns the slot. AMS does not own what goes in it.
+
+**Where metadata lives.**
+
+- **Conversation metadata** is set at mint via `POST /v1/{ns}/conversations` and is **immutable in v1**. It belongs to the conversation as a whole — typically a description, an intended use, an authorization policy declaration, a reference to an external spec the conversation implements.
+- **Stream metadata** is set at connect (via `X-AMS-Stream-Metadata` or via the first `set_metadata` frame after `joined`) and is **mutable at runtime by the stream's owning account** via subsequent `set_metadata` frames. Each `set_metadata` is a full replacement, not a patch — clients that want to merge must read first and write the merged object.
+
+**The one well-known key: `capabilities`.**
+
+If a stream's metadata contains the key `capabilities`, peers may interpret that field as the stream's declared capability manifest. The schema of `capabilities` itself is **application-defined** — AMS does not validate it, parse it, or constrain its shape. A reasonable convention is an array of capability identifiers, or a structured object describing supported message types, models, tools, or roles, but the protocol does not enforce any particular shape.
+
+All other metadata keys are **annotations** — free-form fields the stream's owner uses to introduce itself to the conversation (`role`, `display_name`, `version`, `contact`, `homepage`, anything else useful). Peers read what they understand and ignore what they don't.
+
+**Negotiation is between agents, not in the protocol.**
+
+AMS does not compute a "conversation capability set." Each stream declares its own capabilities; each peer reads peer metadata and decides what it can do with whom. Two streams in the same conversation may declare entirely different capabilities and collaborate on whatever subset they share. Re-negotiation is just `set_metadata` — emit a new metadata object, every subscriber is notified via `stream_metadata`, peers re-converge.
+
+**What this enables.**
+
+- A new subscriber joins and immediately knows, from peer metadata, who is in the room and what each peer claims to do.
+- Capability changes (e.g., a tool became available, a model was upgraded, a role transitioned) are first-class events on the wire — every peer is notified without an extra round-trip or out-of-band signal.
+- Conversation-level metadata gives the conversation a declared purpose without AMS having to model "purpose" as a primitive.
+
+**What this does not introduce.**
+
+- No schema for capability declarations. That is for the application or a future sister-spec.
+- No protocol-level negotiation algorithm. Peers negotiate themselves.
+- No conversation-level capability set. The conversation has no opinion about what its streams can do.
 
 ---
 
@@ -253,9 +323,11 @@ A conforming AMS implementation must:
 
 1. Implement all three control-plane endpoints in §3.
 2. Implement the WebSocket connect path and the frame formats in §4.
-3. Enforce per-account stream ownership: only the account that owns a stream may emit on it.
+3. Enforce per-account stream ownership: only the account that owns a stream may emit on it or set its metadata.
 4. Broadcast every token emitted on any stream in a conversation to every connected subscriber on that conversation.
-5. Treat magic links as opaque on the client side.
+5. Broadcast every metadata change on any stream in a conversation to every connected subscriber on that conversation, via a `stream_metadata` frame (§4.2). Initial metadata rides on `stream_joined`.
+6. Treat magic links as opaque on the client side.
+7. Treat metadata payloads as opaque — never modify, schema-validate, or filter their contents.
 
 A conforming AMS implementation may:
 
@@ -268,7 +340,9 @@ A conforming AMS implementation may:
 A conforming AMS implementation must not:
 
 - Modify token `data` in transit.
+- Modify stream or conversation `metadata` in transit, or apply a schema to it.
 - Allow accounts to emit on streams they do not own.
+- Allow accounts to set metadata on streams they do not own.
 - Break the per-stream ordering guarantee in §5.
 
 ---

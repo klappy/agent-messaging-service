@@ -10,9 +10,13 @@ When in doubt, use these terms exactly. Synonyms invite drift.
 
 **Alias.** A human-readable handle for a conversation, mapped to an underlying `conversation_id`. Aliases live inside an account's namespace (e.g. `klappy/conversations/falcon-pulse-9421`).
 
+**Annotation.** Any field in a stream's or conversation's `metadata` object other than the well-known `capabilities` key. Free-form, application-defined. Used to introduce a stream to the conversation — role, display name, version, contact, anything else useful. Broadcast on join via `stream_joined` and on update via `stream_metadata`. See [`PROTOCOL.md`](./PROTOCOL.md) §4.4.
+
 **Broadcast loop.** The mechanism inside a Conversation Durable Object that takes a token emitted on any stream in the conversation and pushes it to every connected subscriber.
 
-**Capability negotiation.** The runtime process by which two agents in a conversation compare their published docs endpoints and agree on a common protocol or message format. Not part of the AMS protocol itself; a layer above.
+**Capabilities.** The well-known metadata key (literally `"capabilities"`) reserved by convention for a stream's declared capability manifest. The schema of the value is application-defined; AMS does not validate it. Peers in the same conversation may declare different capability sets and collaborate on whatever subset they share. Re-negotiation is a metadata write — see [`PROTOCOL.md`](./PROTOCOL.md) §4.4.
+
+**Capability negotiation.** The runtime process by which agents in a conversation read each other's `capabilities` declarations from stream metadata and converge on a working agreement. AMS carries the declarations; the negotiation algorithm lives in the agents.
 
 **Conversation.** A bound set of streams that share a magic link. All subscribers in a conversation read all streams in the conversation (subject to per-conversation authorization policy). Identified by `conversation_id`, surfaced via an `alias` within an account's `namespace`. Created via `POST /v1/{namespace}/conversations`. The temporal/dialogical framing — replaces the spatial "room" terminology used in early drafts.
 
@@ -20,7 +24,7 @@ When in doubt, use these terms exactly. Synonyms invite drift.
 
 **Dial tone.** Metaphor. The thing AMS provides: an always-available, semantically empty channel that lets meaningful conversation happen on top.
 
-**Docs endpoint.** A URL served *by an agent* (not by AMS) that declares what protocols, formats, identity schemes, and authorization the agent supports. Used for capability negotiation between agents in a conversation.
+**Docs endpoint.** A URL served *by an agent* (not by AMS) that may carry richer documentation, schemas, or specs the agent supports. Optional. Where used, it is typically referenced from the stream's `metadata` (e.g. as an annotation `"docs": "https://..."`) so peers can fetch deeper detail than the inline capability declaration provides.
 
 **DOLCHE journal.** External term, from oddkit. Decisions, Observations, Learnings, Constraints, Handoffs, Encoding. AMS borrows the journal-as-observability pattern: emit metadata about traffic to a journal without intercepting payloads.
 
@@ -41,6 +45,8 @@ When in doubt, use these terms exactly. Synonyms invite drift.
 **JCS-SHA.** A deterministic conversation identifier derived from canonicalized JSON inputs (JCS — JSON Canonicalization Scheme, RFC 8785) hashed with SHA-256. Allows two parties to independently arrive at the same conversation ID by hashing the same canonical input. Post-PoC.
 
 **Magic link.** The URL that addresses a conversation and grants the bearer permission to attach a stream and read all streams in the conversation. Reference shape: `https://<host>/<namespace>/conversations/<alias>?t=<permissive-token>`. Clients treat it as opaque. URL structure is a deployment-side choice.
+
+**Metadata.** A single JSON object slot owned by AMS at both the stream and conversation level. AMS carries it and broadcasts changes; AMS never validates or schemas its contents. One key is well-known by convention: `capabilities`. All other keys are *annotations*. Stream metadata is mutable by the stream's owning account; conversation metadata is set at mint and is immutable in v1. See [`PROTOCOL.md`](./PROTOCOL.md) §4.4.
 
 **Namespace.** A URL-safe identifier owned by an account, appearing in conversation URLs and as a scope for aliases. One account, one namespace.
 
