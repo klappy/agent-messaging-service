@@ -4,6 +4,8 @@
 
 Conversations, streams, tokens. Everything else swappable.
 
+> **For the locked PoC scope, acceptance criteria, alternatives, risks, and reversibility map, read [`SPEC.md`](./SPEC.md) first.** Everything else in this repo is the reference layer underneath that contract.
+
 ---
 
 ## What It Is
