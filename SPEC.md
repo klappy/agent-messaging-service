@@ -224,6 +224,9 @@ The post-PoC roadmap, in rough order:
 
 This doc is the lock. When a load-bearing decision changes, this doc is updated **first**, then the deeper docs are brought into alignment. Every revision adds a dated entry below.
 
+**Forward-compatibility check:** every proposed change to this spec — and every implementation choice it permits — is evaluated against [`HORIZON.md`](./HORIZON.md). If a change would foreclose any catalog entry, the change is wrong (or the catalog entry is deliberately retired with a named reason). The catalog is the constraint set that protects v1 from painting future versions into a corner.
+
 | Date | Change | Driver |
 |------|--------|--------|
 | 2026-05-01 | Initial lock — PoC scope, acceptance criteria, alternatives, risks, reversibility, disconfirmers. | Oddkit gauntlet pass surfaced that load-bearing decisions were spread across six docs without a single locking surface. |
+| 2026-05-01 | Added forward-compatibility check against `HORIZON.md` to revision discipline. | Catalog reframed explicitly as a two-sided document: dream half (what becomes possible) and constraint half (what must remain possible). The constraint half belongs in spec discipline. |

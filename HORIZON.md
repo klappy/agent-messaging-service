@@ -2,11 +2,17 @@
 
 > Token stream routing.
 
-A catalog of use cases AMS makes possible and things to build on top of it. Each entry names *what it is*, *what AMS specifically enables that wasn't possible before*, and *what's needed beyond AMS to ship it*.
+This is the layer that unlocks the broader vision — the missing link between the agent infrastructure that exists today and the agent infrastructure that should. Without a substrate that lets tokens flow freely between subscribers in a conversation, every entry in this catalog requires a separate point solution. With it, every entry becomes a subscriber pattern.
 
-This is not the spec. The spec is [`SPEC.md`](./SPEC.md) — what we are committing to ship in the PoC. This doc is the design space the spec is the first move toward. Not a roadmap. Not a backlog. A map.
+This catalog is not a backlog. We list these dreams to do the *opposite* of overwhelming or paralyzing — we list them to make the design space visible so the spec can be confident about what it is choosing not to commit to. Most of what's here will not be built by us. Some of it will not be built at all. Some of it will be built by people we have not met yet, on top of the substrate we shipped.
 
-Comprehensive on purpose. The vodka discipline of the wire produces a substrate that is genuinely domain-agnostic; the consequence is that the catalog is wide. We are listing categories so we can see the shape, not promising to build all of them.
+But the catalog is also a constraint set. **Anything we ship must not foreclose any of this.** Each entry is implicitly a forward-compatibility test: if a v1 decision makes it impossible for a future version to support entry §X, that's a wrong decision and we revisit. The catalog protects us from painting ourselves into a corner — from shipping something that solves today's problem at the cost of tomorrow's category.
+
+So the framing is two-sided: the catalog is what becomes possible (the dream half), and the catalog is what must remain possible (the constraint half). The PoC scoped in [`SPEC.md`](./SPEC.md) ships against both — committed to a small first slice, constrained against foreclosing the rest.
+
+Each entry names *what it is*, *what AMS specifically enables that wasn't possible before*, and *what's needed beyond AMS to ship it*.
+
+This is not the spec. The spec is [`SPEC.md`](./SPEC.md). This is the design space the spec is the first move toward. Comprehensive on purpose: the vodka discipline of the wire produces a substrate that is genuinely domain-agnostic, and the consequence is that the catalog is wide.
 
 ---
 
@@ -145,7 +151,7 @@ A research agent gathers sources. A writer agent drafts from those sources. A fa
 
 ### 3.3 Hierarchical agent teams
 
-A manager agent receives a task on a top-level conversation. It spawns worker agents in sub-conversations (one per worker), delegates pieces of the task. Worker results flow back to the manager via a coordination conversation. The manager assembles the final output.
+A manager agent receives a task on a top-level conversation. It spawns worker agents in sub-conversations (one per worker), delegates pieces of the task. Worker results flow back to the manager via a coordination conversation. The manager assembles the final output. This is the *spawning-orchestrator* pattern — useful when the task structure is hierarchical and known in advance. Compare with §3.7 for the event-driven alternative when the task structure is reactive.
 
 - **What AMS enables:** conversations as the coordination primitive; workers can be ephemeral and replaceable; the manager reasons over conversations as data.
 - **What's needed beyond AMS:** manager-level reasoning patterns; spawn/lifecycle semantics for worker agents.
@@ -170,6 +176,17 @@ An agent provider lists capabilities; a consumer joins a conversation that inclu
 
 - **What AMS enables:** capability discovery via metadata; per-session participation; clean teardown when the session ends.
 - **What's needed beyond AMS:** marketplace product (catalog, billing, SLA, reputation); identity scheme for vetted providers.
+
+### 3.7 Event-driven orchestration
+
+Orchestration becomes a *property of the conversation*, not a special agent role. Workers declare what events they react to (in stream metadata, via the well-known `capabilities` key). When matching events arrive on the conversation, the workers wake and react. There is no orchestrator agent that spawns and maintains them — the wire's event flow IS the orchestrator.
+
+This is the inversion of the currently dominant pattern, where an orchestration agent (LangChain, AutoGen, CrewAI, custom equivalents) decides which worker runs when, holds state about each worker's lifecycle, and is itself a single point of complexity, latency, and failure. With AMS, the conversation holds the events; subscribers react. Workers come and go. New worker types are added by joining the conversation and declaring what they react to. The "manager" role disappears — or, if it exists at all, becomes just another subscriber that emits coordinating events.
+
+The shift is the same one that took infrastructure from cron-and-systemd to event-driven serverless: the trigger drives the execution, not a central coordinator. Applied to agent systems, the conversation is the event bus and the agents are the handlers.
+
+- **What AMS enables:** orchestration as event-driven subscription rather than agent-managed spawning; the conversation is the coordination surface; workers are stateless and reactive; new capabilities join by subscribing, not by being spawned.
+- **What's needed beyond AMS:** capability/event-trigger conventions in stream metadata (so workers know what to react to); worker runtimes that can wake on event (the wake-up surface in [`AMS.md`](./AMS.md) §3.3 covers this); a worker registry pattern (could be its own subscriber that publishes available workers as metadata).
 
 ---
 
@@ -511,13 +528,15 @@ None of these is enormous. The asymmetry between effort-to-build and value-if-ad
 
 ---
 
-## What This Catalog Does Not Promise
+## What This Catalog Does Not Promise (and What It Does Constrain)
 
 This is a map of the design space, not a roadmap. Listing a use case here means *the substrate could support it*, not *we are building it*. Decisions about what to actually build live in:
 
-- `SPEC.md` for the PoC commitment.
+- [`SPEC.md`](./SPEC.md) for the PoC commitment.
 - Future planning documents for what comes after.
 - Customer-driven prioritization for the verticals in section 8.
+
+But every entry here also sets a constraint on what we ship: **a v1 decision that forecloses any catalog entry is a wrong decision.** Forward compatibility with this catalog is the architectural test. If a proposed protocol change, deployment choice, or schema commitment would make some entry above impossible to build later, that proposal needs a re-think — or the catalog entry needs a deliberate, named retirement.
 
 The vodka discipline of the wire is what makes the catalog wide. Anything that fits the shape "tokens flow between subscribers in a conversation, with metadata describing capabilities" can be built on top. The constraint test is whether the use case requires a domain opinion in the protocol — if it does, it doesn't belong in AMS; it belongs above.
 
