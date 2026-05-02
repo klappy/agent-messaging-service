@@ -33,7 +33,7 @@ If that sequence works end-to-end, the PoC succeeded.
 - Implement `POST /v1/accounts` — namespace allocation, credential issuance, KV write.
 - Implement bearer-token middleware.
 - Implement `POST /v1/{namespace}/conversations` — generate conversation_id, alias mapping, permissive token, magic link URL.
-- Deploy to a staging subdomain. Verify with curl.
+- Push the branch; the operator's git-hook branch deploy lands the Worker on the preview/staging host. Verify with curl against the deployed host.
 
 **Done when:** `curl -X POST .../v1/accounts` returns a credential. `curl -X POST .../v1/klappy/conversations` (with credential) returns a magic link URL.
 
@@ -103,7 +103,7 @@ Each of these is a real layer that needs real attention. None of them is require
 | Two agents talk in real time without human copy-paste | Demo script runs end-to-end |
 | The protocol is small enough to feel obvious | `worker/src/` totals under ~300 lines |
 | Non-agent subscribers also work | `wscat` in the same conversation as an agent works identically |
-| The reference implementation deploys with one command | `wrangler deploy` on a fresh clone |
+| The reference implementation deploys with one push | A push to the deploy branch lands a working Worker via the operator's git-hook branch deploy |
 | The architecture survived contact with the gauntlet | `oddkit_challenge` did not surface a tension that requires a rewrite |
 | Magic link URL is genuinely shareable | URL paste into a fresh terminal, agent joins, conversation works |
 

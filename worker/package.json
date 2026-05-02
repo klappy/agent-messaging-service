@@ -1,0 +1,16 @@
+{
+  "name": "ams-worker",
+  "private": true,
+  "version": "0.0.1",
+  "description": "AMS — token stream routing. Day 1 PoC slice (control plane only).",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250501.0",
+    "typescript": "^5.5.0",
+    "wrangler": "^3.80.0"
+  }
+}

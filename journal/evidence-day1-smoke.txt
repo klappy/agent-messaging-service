@@ -1,0 +1,120 @@
+================================================================
+AMS Day 1 Smoke Evidence (local — wrangler dev / miniflare)
+Run at: 2026-05-02T14:01:07Z
+Branch: claude/poc-day1-worker-setup-Od3Q5
+Scope:  SPEC.md §3.1 items 1 and 2 (control-plane only)
+
+Note:   Production hosts ams.klappy.dev / ams.truthkit.ai are not
+        DNS-resolvable yet, and no Worker named 'ams' exists in
+        the Cloudflare account. Live deploy is gated on operator-
+        side one-time setup that has not yet run for this repo:
+          1. Wire Cloudflare Workers Builds (Git integration) to
+             this repo so a branch push triggers Worker build +
+             deploy.
+          2. Add custom domains ams.klappy.dev and ams.truthkit.ai
+             in the Worker dashboard (DNS records auto-provision).
+          3. Bind secrets AMS_CREDENTIAL_PEPPER and
+             AMS_PERMISSIVE_TOKEN_PEPPER on the live Worker via
+             Cloudflare dashboard → Settings → Variables → Encrypted.
+        The Worker bundle exercised below is the same one the
+        deploy will lift. KV namespace AMS_KV
+        (id f77cc1625168407c8100140426e3c687) was created via the
+        Cloudflare MCP and is referenced by worker/wrangler.toml.
+================================================================
+
+### 0. GET /healthz
+HTTP/1.1 200 OK
+Content-Length: 67
+Content-Type: application/json
+
+{"ok":true,"host":"ams.klappy.dev","ts":"2026-05-02T14:01:07.449Z"}
+
+### 1. SPEC §3.1 #1 — POST /v1/accounts (smoke namespace) → 201 with credential
+HTTP/1.1 201 Created
+Content-Length: 167
+Content-Type: application/json
+
+{"account_id":"acc_01KQMFWDM7FNY9AHEYC0","namespace":"smoke","credential":"ams_sk_chxH_3EPhHtQLBbxemd9EjYwmuZv7bKVD2BU5KDwZA0","created_at":"2026-05-02T14:01:07.463Z"}
+
+(extracted credential for downstream calls: ams_sk_chxH_3EPhHtQLBbxemd9EjYwmuZv7bKVD2BU5KDwZA0)
+
+### 2. SPEC §3.1 #2 — POST /v1/smoke/conversations (with bearer) → 201 with magic_link
+HTTP/1.1 201 Created
+Content-Length: 349
+Content-Type: application/json
+
+{"conversation_id":"conv_01KQMFWDNAWKJTSR4VY5","alias":"golden-mountain-5084","magic_link":"https://ams.klappy.dev/smoke/conversations/golden-mountain-5084?t=XRT75XOb7obTxO1bV-xrVTpBBxpM9s09Amwj9TgPWrg","stream_id":"str_01KQMFWDNAMJPP83168B","stream_name":"stream-elWdMwhN","metadata":{},"stream_metadata":{},"created_at":"2026-05-02T14:01:07.498Z"}
+
+### 3. Bearer middleware: no Authorization → expect 401 missing_credential
+HTTP/1.1 401 Unauthorized
+Content-Length: 87
+Content-Type: application/json
+
+{"error":"missing_credential","message":"Authorization: Bearer <ams_sk_...> required."}
+### 4. Bearer middleware: bogus bearer → expect 401 invalid_credential
+HTTP/1.1 401 Unauthorized
+Content-Length: 77
+Content-Type: application/json
+
+{"error":"invalid_credential","message":"Account credential not recognized."}
+### 5. Cross-namespace mint blocked: smoke creds against /v1/other/conversations → expect 403 namespace_mismatch
+HTTP/1.1 403 Forbidden
+Content-Length: 113
+Content-Type: application/json
+
+{"error":"namespace_mismatch","message":"Bearer credential is for namespace 'smoke'; cannot mint under 'other'."}
+### 6. Namespace uniqueness: re-claim 'smoke' → expect 409 namespace_taken
+HTTP/1.1 409 Conflict
+Content-Length: 80
+Content-Type: application/json
+
+{"error":"namespace_taken","message":"Namespace 'smoke' is already registered."}
+### 7. Namespace validation: namespace=BadNS! → expect 400 invalid_namespace
+HTTP/1.1 400 Bad Request
+Content-Length: 134
+Content-Type: application/json
+
+{"error":"invalid_namespace","message":"namespace required: lowercase alphanumeric + hyphen, 1–63 chars, must start with [a-z0-9]."}
+### 8. Second account in same KV — namespace=ian
+HTTP/1.1 201 Created
+Content-Length: 165
+Content-Type: application/json
+
+{"account_id":"acc_01KQMFWDPWSC9FZV877Q","namespace":"ian","credential":"ams_sk_0vvBI_xZPcGADkCzDyZcQAI7F3Ivq7jYefAAoYWSJD8","created_at":"2026-05-02T14:01:07.548Z"}
+
+### 9. Same alias in two namespaces → both 201 (alias key is namespaced)
+{
+    "conversation_id": "conv_01KQMFWDQX7GMWNPRBGA",
+    "alias": "shared-name",
+    "magic_link": "https://ams.klappy.dev/smoke/conversations/shared-name?t=A5U6eaKtM1ItA30IhgSJ_k9_EzJc7zHjoF-NX3jXslg",
+    "stream_id": "str_01KQMFWDQX682BX0RCP1",
+    "stream_name": "stream-egQsmm4k",
+    "metadata": {},
+    "stream_metadata": {},
+    "created_at": "2026-05-02T14:01:07.581Z"
+}
+
+{
+    "conversation_id": "conv_01KQMFWDRZ2D878GEJRX",
+    "alias": "shared-name",
+    "magic_link": "https://ams.klappy.dev/ian/conversations/shared-name?t=MR0hiucEL3NvivAdcfbw79FIGViaXhUycoL1TxvyRH0",
+    "stream_id": "str_01KQMFWDRZBVJCCFYP6M",
+    "stream_name": "stream-4ceO876c",
+    "metadata": {},
+    "stream_metadata": {},
+    "created_at": "2026-05-02T14:01:07.615Z"
+}
+
+### 10. Alias collision within one namespace → expect 409 alias_taken
+HTTP/1.1 409 Conflict
+Content-Length: 111
+Content-Type: application/json
+
+{"error":"alias_taken","message":"Conversation alias 'shared-name' is already in use under namespace 'smoke'."}
+================================================================
+RESULT — SPEC §3.1 items 1 and 2 PASS locally.
+         Bearer middleware works (401 paths).
+         Per-namespace authorization works (403 path).
+         Day 2/3 items (3 = wscat / WebSocket; 4–5 = MCP) are
+         out of Day 1 scope and not exercised here.
+================================================================
