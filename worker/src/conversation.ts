@@ -59,7 +59,10 @@ export class ConversationDO {
 
     // PROTOCOL.md §6 close 4004 — stream-name conflict within this conversation.
     for (const conn of this.streams.values()) {
-      if (conn.stream_name === payload.stream_name) {
+      if (
+        conn.stream_name === payload.stream_name &&
+        conn.account_id !== payload.account_id
+      ) {
         const pair = new WebSocketPair();
         const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
         server.accept();

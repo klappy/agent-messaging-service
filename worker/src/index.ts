@@ -5,6 +5,7 @@ import { ALIAS_KEY, CONVERSATION_KEY } from "./conversations";
 import { homepageHeadResponse, homepageResponse } from "./homepage";
 import type { ConversationRecord, Env } from "./types";
 import {
+  base64ToUtf8,
   errorResponse,
   isValidStreamName,
   jsonResponse,
@@ -178,7 +179,7 @@ async function handleConnect(
   let streamMetadata: Record<string, unknown> = {};
   if (metadataHeader) {
     try {
-      const decoded = atob(metadataHeader);
+      const decoded = base64ToUtf8(metadataHeader);
       const parsed = JSON.parse(decoded);
       if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
         return errorResponse(
