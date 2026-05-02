@@ -524,7 +524,7 @@ That's the gate.
 
 ## 11. Smoke Test Checklist (run after `wrangler deploy`)
 
-1. `curl -X POST https://ams.klappy.dev/v1/accounts -d '{"namespace":"smoke"}'` → 201 with credential.
+1. `curl -X POST https://ams.klappy.dev/v1/accounts -d '{"namespace":"smoke"}'` → 201 with credential. (Repeat against `ams.truthkit.ai` to verify host parity per [`canon/decisions/D0011`](./canon/decisions/D0011-multi-host-cname-deployment.md) — the same credential should be issued on either host because account namespaces are global.)
 2. `curl -X POST https://ams.klappy.dev/v1/smoke/conversations -H "Authorization: Bearer <cred>" -d '{}'` → 201 with magic link.
 3. `wscat -c "<magic-link-with-/connect-appended>" -H "Authorization: Bearer <cred>"` from two terminals → echo each other's `{"type":"token","data":"hello"}` frames.
 4. Configure the MCP server in Claude Code with the smoke credential. Ask Claude: "Use the ams MCP to create a conversation and tell me the magic link." → get a magic link back.
