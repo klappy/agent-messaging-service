@@ -1,0 +1,25 @@
+name = "ams"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Per ams://canon/decisions/D0011-multi-host-cname-deployment, both hostnames
+# route to the same Worker. The Worker reads request.headers.get('host') only
+# when constructing magic links to return; everywhere else the host is
+# irrelevant.
+routes = [
+  { pattern = "ams.klappy.dev",  custom_domain = true },
+  { pattern = "ams.truthkit.ai", custom_domain = true }
+]
+
+[[kv_namespaces]]
+binding = "AMS_KV"
+id = "f77cc1625168407c8100140426e3c687"
+
+# Day 2 will add ConversationDO and SessionDO bindings + migrations. Day 1
+# scope (POC-PLAN.md) is Worker shell + accounts + conversation mint, no
+# WebSocket and no DOs.
+
+# Secrets set via `wrangler secret put`:
+#   AMS_CREDENTIAL_PEPPER         (random 32-byte hex; mixed into bearer hash)
+#   AMS_PERMISSIVE_TOKEN_PEPPER   (same idea, for permissive tokens)

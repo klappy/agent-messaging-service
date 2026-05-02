@@ -395,8 +395,8 @@ compatibility_date = "2026-05-01"
 compatibility_flags = ["nodejs_compat"]
 
 routes = [
-  { pattern = "ams.klappy.dev/*",  custom_domain = true },
-  { pattern = "ams.truthkit.ai/*", custom_domain = true }
+  { pattern = "ams.klappy.dev",  custom_domain = true },
+  { pattern = "ams.truthkit.ai", custom_domain = true }
 ]
 
 [[kv_namespaces]]
@@ -422,21 +422,24 @@ new_classes = ["ConversationDO", "SessionDO"]
 # A static AMS_HOST would re-introduce per-host config for a substrate that
 # is host-blind by design.
 
-# Secrets set via `wrangler secret put`:
+# Secrets set out-of-band against the live Worker (Cloudflare dashboard or
+# the operator's deploy automation — never `wrangler secret put` from a
+# coding session):
 #   AMS_CREDENTIAL_PEPPER         (random 32-byte hex; mixed into bearer hash)
 #   AMS_PERMISSIVE_TOKEN_PEPPER   (same idea, for permissive tokens)
 ```
 
 ### 8.2 Bindings + Secrets — One-Time Setup
 
-```bash
-wrangler kv:namespace create AMS_KV
-wrangler secret put AMS_CREDENTIAL_PEPPER
-wrangler secret put AMS_PERMISSIVE_TOKEN_PEPPER
-wrangler deploy
-```
+**Deploys happen via the operator's git-hook branch deploy, not from a coding session running `wrangler deploy`.** The Worker is wired to the GitHub repo through Cloudflare's Workers Git integration; pushes to `main` deploy to production, pushes to other branches deploy to a per-branch preview. Coding agents (Claude Code, Cursor, Codex) push the branch — the deploy is the side effect.
 
-DNS: point both `ams.klappy.dev` and `ams.truthkit.ai` at the Worker via Cloudflare dashboard (custom domain on the Worker, one entry per host). Both CNAMEs route to the same Worker per [`canon/decisions/D0011`](./canon/decisions/D0011-multi-host-cname-deployment.md). TLS is automatic. Adding a third host later is two clicks plus a `routes` entry.
+One-time setup happens out-of-band:
+
+- **KV namespace.** Create `AMS_KV` once via the Cloudflare dashboard or the Cloudflare MCP (`kv_namespace_create`). Drop the returned `id` into `wrangler.toml` and commit.
+- **Secrets.** `AMS_CREDENTIAL_PEPPER` and `AMS_PERMISSIVE_TOKEN_PEPPER` are bound on the live Worker via the Cloudflare dashboard (Workers → Settings → Variables → Encrypted) — not via `wrangler secret put` from a coding session. The operator owns the values.
+- **DNS.** Both `ams.klappy.dev` and `ams.truthkit.ai` are wired to the Worker via Cloudflare dashboard (custom domain on the Worker, one entry per host). Both CNAMEs route to the same Worker per [`canon/decisions/D0011`](./canon/decisions/D0011-multi-host-cname-deployment.md). TLS is automatic. Adding a third host later is two clicks plus a `routes` entry.
+
+`wrangler` exists in the repo as a dev-dependency for `wrangler dev` (local iteration) and for `wrangler types` if needed; production deploys are not invoked from a coding session.
 
 ### 8.3 What the Worker File Tree Looks Like
 
@@ -522,7 +525,7 @@ That's the gate.
 
 ---
 
-## 11. Smoke Test Checklist (run after `wrangler deploy`)
+## 11. Smoke Test Checklist (run after the branch deploys)
 
 1. `curl -X POST https://ams.klappy.dev/v1/accounts -d '{"namespace":"smoke"}'` → 201 with credential. (Repeat against `ams.truthkit.ai` to verify host parity per [`canon/decisions/D0011`](./canon/decisions/D0011-multi-host-cname-deployment.md) — the same credential should be issued on either host because account namespaces are global.)
 2. `curl -X POST https://ams.klappy.dev/v1/smoke/conversations -H "Authorization: Bearer <cred>" -d '{}'` → 201 with magic link.
