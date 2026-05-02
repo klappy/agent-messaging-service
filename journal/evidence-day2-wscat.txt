@@ -1,0 +1,132 @@
+================================================================================
+Day 2 evidence — SPEC §3.1 item 3 (stream-scoped broadcast + structural
+self-exclusion per ams://canon/decisions/D0009)
+================================================================================
+
+  Smoke surface : two WebSocket clients on the same magic link
+  Hypothesis    : klappy emits a token frame; ian receives it; klappy does not
+                  receive his own emission back from the wire (D0009).
+  Wire fixture  : worker/src/conversation.ts (ConversationDO) + the new
+                  GET /{ns}/conversations/{alias}/connect route in
+                  worker/src/index.ts. wrangler.toml carries the DO binding
+                  and the [[migrations]] tag = "v1" new_classes = ["ConversationDO"]
+                  block (first DO migration on this Worker).
+
+================================================================================
+Section A — Real wscat against `wrangler dev --local` (Miniflare)
+================================================================================
+
+  wrangler:    3.114.17
+  wscat:       6.1.0
+  bind:        127.0.0.1:8789 (--port=8789 --persist-to=/tmp/wrangler-day2)
+  vars:        .dev.vars (local-only peppers, NOT production)
+  date:        2026-05-02
+
+--- setup ---
+
+$ curl -s -X POST http://127.0.0.1:8789/v1/accounts \
+       -H "content-type: application/json" -d '{"namespace":"klappy"}'
+{"account_id":"acc_01KQNF9X5EJ1DFW7A7P3","namespace":"klappy",
+ "credential":"ams_sk_y-zvyfnk5IgGaqFdtMYWoDSE_Deskj_r60ggzRgcqQ0",
+ "created_at":"2026-05-02T23:10:15.214Z"}
+
+$ curl -s -X POST http://127.0.0.1:8789/v1/accounts \
+       -H "content-type: application/json" -d '{"namespace":"ian"}'
+{"account_id":"acc_01KQNF9X5WX8DCAFFQ53","namespace":"ian",
+ "credential":"ams_sk_hMJA_SXkRXJtwDwJSIz9DyvoRUyPR1A3JkuHOpk1SE4",
+ "created_at":"2026-05-02T23:10:15.228Z"}
+
+$ curl -s -X POST http://127.0.0.1:8789/v1/klappy/conversations \
+       -H "Authorization: Bearer ams_sk_y-zvyfnk5..." \
+       -H "content-type: application/json" \
+       -d '{"alias":"day2-smoke","stream_name":"klappy-stream"}'
+{"conversation_id":"conv_01KQNFA7MPD56KCEFR75","alias":"day2-smoke",
+ "magic_link":"https://ams.klappy.dev/klappy/conversations/day2-smoke?t=VJapbldbk4Jdr7C1A5oWRETLydBBG7fZqnzxFtjzEpE",
+ "stream_id":"str_01KQNFA7MPVBB7MJK8S2","stream_name":"klappy-stream",
+ "metadata":{},"stream_metadata":{},"created_at":"2026-05-02T23:10:25.943Z"}
+
+# Note: miniflare returns the magic link with the host pinned to the first
+# wrangler-route hostname (ams.klappy.dev). For local wscat we substitute
+# 127.0.0.1:8789 — the path + permissive token are the binding contract.
+
+--- ian (listener) wscat session ---
+
+$ wscat -c "ws://127.0.0.1:8789/klappy/conversations/day2-smoke/connect?t=VJapbldbk4Jdr7C1A5oWRETLydBBG7fZqnzxFtjzEpE" \
+        -H "Authorization: Bearer ams_sk_hMJA_SXkRXJtwDwJSIz9DyvoRUyPR1A3JkuHOpk1SE4" \
+        -H "X-AMS-Stream-Name: ian-stream-3" --no-color
+
+{"type":"joined","conversation_id":"conv_01KQNFA7MPD56KCEFR75",
+ "stream_id":"str_01KQNFJFASQ8AM23SAEC","stream_name":"ian-stream-3",
+ "metadata":{},"self_subscribe":false,
+ "peers":[{"stream_id":"str_01KQNFDS485A0WT46WAM","stream_name":"ian-stream-2",
+          "owner_account_id":"acc_01KQNF9X5WX8DCAFFQ53","metadata":{}}]}
+{"type":"stream_joined","stream_id":"str_01KQNFJGA1GJCEPY6PA3",
+ "stream_name":"klappy-stream-3","owner_account_id":"acc_01KQNF9X5EJ1DFW7A7P3",
+ "metadata":{}}
+{"type":"token","stream_id":"str_01KQNFJGA1GJCEPY6PA3",
+ "stream_name":"klappy-stream-3","owner_account_id":"acc_01KQNF9X5EJ1DFW7A7P3",
+ "ts":"2026-05-02T23:14:56.964Z","data":"hello-from-klappy-via-wscat-v3"}
+{"type":"stream_left","stream_id":"str_01KQNFJGA1GJCEPY6PA3",
+ "stream_name":"klappy-stream-3","owner_account_id":"acc_01KQNF9X5EJ1DFW7A7P3"}
+
+--- klappy (sender) wscat session ---
+
+$ wscat -c "ws://127.0.0.1:8789/klappy/conversations/day2-smoke/connect?t=VJapbldbk4Jdr7C1A5oWRETLydBBG7fZqnzxFtjzEpE" \
+        -H "Authorization: Bearer ams_sk_y-zvyfnk5IgGaqFdtMYWoDSE_Deskj_r60ggzRgcqQ0" \
+        -H "X-AMS-Stream-Name: klappy-stream-3" --no-color \
+        -x '{"type":"token","data":"hello-from-klappy-via-wscat-v3"}' -w 2
+
+{"type":"joined","conversation_id":"conv_01KQNFA7MPD56KCEFR75",
+ "stream_id":"str_01KQNFJGA1GJCEPY6PA3","stream_name":"klappy-stream-3",
+ "metadata":{},"self_subscribe":false,
+ "peers":[{"stream_id":"str_01KQNFDS485A0WT46WAM","stream_name":"ian-stream-2",
+          "owner_account_id":"acc_01KQNF9X5WX8DCAFFQ53","metadata":{}},
+         {"stream_id":"str_01KQNFJFASQ8AM23SAEC","stream_name":"ian-stream-3",
+          "owner_account_id":"acc_01KQNF9X5WX8DCAFFQ53","metadata":{}}]}
+
+# klappy received exactly one frame: his own `joined` confirmation.
+# He did NOT receive a token frame for "hello-from-klappy-via-wscat-v3".
+# This is the wire-level proof that D0009 structural self-exclusion holds.
+# (ian-stream-2 in the peers list is a leftover from an earlier wscat attempt
+# during this same wrangler dev process — irrelevant to the broadcast property.)
+
+--- result ---
+
+  PASS — broadcast: ian received klappy's token frame (3rd frame above).
+  PASS — self-exclusion: klappy's session received zero token frames.
+  PASS — lifecycle: ian observed `stream_joined` on klappy's connect and
+                    `stream_left` on klappy's disconnect.
+  PASS — `joined` frame: both clients received it on connect, with
+                    self_subscribe: false echoed and a peers list reflecting
+                    the streams already present in the conversation DO.
+
+================================================================================
+Section B — node ws-driven paired client (timestamped, both sides on one log)
+================================================================================
+
+  Driver:       /tmp/ws-test.mjs (node 22, ws@8.x)
+  Same wrangler dev process; fresh wscat-free run against the same conversation.
+  This run captures the symmetry: klappy emits, ian receives, klappy doesn't;
+  then ian emits, klappy receives, ian doesn't.
+
+[2026-05-02T23:11:25.050Z] [ian]    OPEN ws://127.0.0.1:8789/klappy/conversations/day2-smoke/connect?t=VJapbldbk4Jdr7C1A5oWRETLydBBG7fZqnzxFtjzEpE
+[2026-05-02T23:11:25.051Z] [ian]    RECV {"type":"joined","conversation_id":"conv_01KQNFA7MPD56KCEFR75","stream_id":"str_01KQNFC1BRE9WCJPYNPC","stream_name":"ian-stream","metadata":{},"self_subscribe":false,"peers":[]}
+[2026-05-02T23:11:25.207Z] [ian]    RECV {"type":"stream_joined","stream_id":"str_01KQNFC1GPR4NRZTF1V9","stream_name":"klappy-stream","owner_account_id":"acc_01KQNF9X5EJ1DFW7A7P3","metadata":{}}
+[2026-05-02T23:11:25.208Z] [klappy] OPEN ws://127.0.0.1:8789/klappy/conversations/day2-smoke/connect?t=VJapbldbk4Jdr7C1A5oWRETLydBBG7fZqnzxFtjzEpE
+[2026-05-02T23:11:25.208Z] [klappy] RECV {"type":"joined","conversation_id":"conv_01KQNFA7MPD56KCEFR75","stream_id":"str_01KQNFC1GPR4NRZTF1V9","stream_name":"klappy-stream","metadata":{},"self_subscribe":false,"peers":[{"stream_id":"str_01KQNFC1BRE9WCJPYNPC","stream_name":"ian-stream","owner_account_id":"acc_01KQNF9X5WX8DCAFFQ53","metadata":{}}]}
+[2026-05-02T23:11:25.408Z] [klappy] SEND {"type":"token","data":"hello-from-klappy"}
+[2026-05-02T23:11:25.410Z] [ian]    RECV {"type":"token","stream_id":"str_01KQNFC1GPR4NRZTF1V9","stream_name":"klappy-stream","owner_account_id":"acc_01KQNF9X5EJ1DFW7A7P3","ts":"2026-05-02T23:11:25.409Z","data":"hello-from-klappy"}
+[2026-05-02T23:11:25.809Z] [ian]    SEND {"type":"token","data":"ack-from-ian"}
+[2026-05-02T23:11:25.810Z] [klappy] RECV {"type":"token","stream_id":"str_01KQNFC1BRE9WCJPYNPC","stream_name":"ian-stream","owner_account_id":"acc_01KQNF9X5WX8DCAFFQ53","ts":"2026-05-02T23:11:25.810Z","data":"ack-from-ian"}
+[2026-05-02T23:11:26.211Z] [ian]    RECV {"type":"stream_left","stream_id":"str_01KQNFC1GPR4NRZTF1V9","stream_name":"klappy-stream","owner_account_id":"acc_01KQNF9X5EJ1DFW7A7P3"}
+
+  Symmetry verified — neither client ever received its own emission.
+
+================================================================================
+Section C — Live deploy (ams.klappy.dev) — populated post-deploy
+================================================================================
+
+  Pending: live transcript appended once Workers Builds promotes the
+  claude/day2-websocket-streaming-y9PTc branch and a fresh Day-3-validation
+  session re-runs SPEC §3.1 item 3 against ams.klappy.dev.
+

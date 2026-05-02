@@ -11,6 +11,24 @@ export function base64url(bytes: Uint8Array): string {
   return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
+// Encode an arbitrary string (including non-Latin1 Unicode like emoji or CJK)
+// as standard base64. Plain `btoa(s)` throws on code points >255; we route
+// through TextEncoder so the input is the UTF-8 byte sequence first.
+export function utf8ToBase64(s: string): string {
+  const bytes = new TextEncoder().encode(s);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]!);
+  return btoa(bin);
+}
+
+// Inverse of `utf8ToBase64`: base64 → UTF-8 string.
+export function base64ToUtf8(s: string): string {
+  const bin = atob(s);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
 // SHA-256 of (pepper || ":" || secret), hex-encoded. Matches storage layout
 // for credential hashes and permissive-token hashes.
 export async function pepperedHash(pepper: string, secret: string): Promise<string> {
@@ -93,6 +111,10 @@ export function jsonResponse(body: unknown, init: ResponseInit = {}): Response {
       ...(init.headers ?? {}),
     },
   });
+}
+
+export function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 export function errorResponse(

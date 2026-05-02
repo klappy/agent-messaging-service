@@ -1,6 +1,7 @@
 import type { AccountRecord, ConversationRecord, Env } from "./types";
 import {
   errorResponse,
+  isPlainObject,
   isValidAlias,
   isValidStreamName,
   jsonResponse,
@@ -20,10 +21,6 @@ interface CreateConversationBody {
   id_kind?: unknown;
   metadata?: unknown;
   stream_metadata?: unknown;
-}
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 // POST /v1/{namespace}/conversations

@@ -16,9 +16,21 @@ routes = [
 binding = "AMS_KV"
 id = "f77cc1625168407c8100140426e3c687"
 
-# Day 2 will add ConversationDO and SessionDO bindings + migrations. Day 1
-# scope (POC-PLAN.md) is Worker shell + accounts + conversation mint, no
-# WebSocket and no DOs.
+# ConversationDO — one Durable Object per conversation_id. The Worker resolves
+# alias → conversation_id via KV at upgrade time, then routes here via
+# CONVERSATION_DO.idFromName(conversation_id). The DO holds the in-memory
+# stream registry, the per-stream subscription set, and the WebSocket handles.
+# See worker/src/conversation.ts and ams://canon/decisions/D0009.
+[[durable_objects.bindings]]
+name = "CONVERSATION_DO"
+class_name = "ConversationDO"
+
+# First DO migration on this Worker. Required the first time DO classes are
+# introduced; tag is the migration identifier (Cloudflare records it on the
+# Worker so future migrations can rename / transfer / delete classes).
+[[migrations]]
+tag = "v1"
+new_classes = ["ConversationDO"]
 
 # Secrets set via `wrangler secret put`:
 #   AMS_CREDENTIAL_PEPPER         (random 32-byte hex; mixed into bearer hash)
