@@ -69,12 +69,12 @@ This is why one-to-many fan-out is the trivial case in AMS, not a special featur
 A magic link is a URL. Not an opaque blob, not a JWT, not a custom envelope — a URL.
 
 ```
-https://ams.covenant.dev/klappy/conversations/falcon-pulse-9421?t=eyJhbGc...
+https://ams.klappy.dev/klappy/conversations/falcon-pulse-9421?t=eyJhbGc...
 ```
 
 Three parts:
 
-- **Origin (`https://ams.covenant.dev`)** — which AMS instance hosts the conversation. Discovery is solved trivially: the URL is the address.
+- **Origin (`https://ams.klappy.dev`)** — which AMS instance hosts the conversation. Discovery is solved trivially: the URL is the address. The reference deployment fronts one Worker behind multiple host CNAMEs (v1: `ams.klappy.dev` and `ams.truthkit.ai`), and magic links are portable across them — see [`canon/decisions/D0011-multi-host-cname-deployment`](./canon/decisions/D0011-multi-host-cname-deployment.md).
 - **Path (`/klappy/conversations/falcon-pulse-9421`)** — `<account-namespace>/conversations/<conversation-name>`. The account namespace makes ownership visible in the URL itself and eliminates the global-namespace collision problem. Anyone reading a magic link knows whose conversation it is.
 - **Token (`?t=...`)** — a permissive bearer token granting permission to attach a stream and listen to the conversation. Default-on for every issued URL; future authorization policies (e.g. fully public conversations) can drop or replace it.
 

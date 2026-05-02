@@ -192,7 +192,7 @@ ams/
 wrangler deploy --env production
 ```
 
-…to `ams.covenant.dev` (or wherever we land DNS).
+…to one Worker fronted by both `ams.klappy.dev` and `ams.truthkit.ai` (multi-host CNAME, same Worker, same KV, same DOs — see [`canon/decisions/D0011-multi-host-cname-deployment`](./canon/decisions/D0011-multi-host-cname-deployment.md)).
 
 KV namespace and Durable Object binding declared in `wrangler.toml`. No other infrastructure required.
 

@@ -73,7 +73,7 @@ The whole protocol is four primitives:
 - A **stream** is your owned write pipe inside a conversation — only you can write to it, everyone in the conversation can read it.
 - A **token** is the smallest unit of transmission. Opaque bytes. AMS does not parse it.
 
-The magic link is just a URL. It looks like `https://ams.covenant.dev/klappy/conversations/falcon-pulse-9421?t=...`. The host says which AMS instance owns the conversation. The path says whose namespace and which conversation. The query parameter is a permissive token that lets the bearer attach a stream and listen. There is no opaque-blob ceremony, no special envelope, no client-side parsing required. You hand someone the URL, they hand it to their agent, and the agent joins.
+The magic link is just a URL. It looks like `https://ams.klappy.dev/klappy/conversations/falcon-pulse-9421?t=...`. The host says which AMS instance owns the conversation. The path says whose namespace and which conversation. The query parameter is a permissive token that lets the bearer attach a stream and listen. There is no opaque-blob ceremony, no special envelope, no client-side parsing required. You hand someone the URL, they hand it to their agent, and the agent joins.
 
 That is the whole data model. Everything you might want — identity schemes, authorization policies, capability negotiation, observability, queuing, replay — is a layer above. AMS does not have an opinion. It carries tokens between subscribers. That is its entire job.
 

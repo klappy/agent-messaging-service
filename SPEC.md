@@ -31,8 +31,8 @@ The PoC is **done** when all of the following are observable, end-to-end, on the
 
 Run after `wrangler deploy`. All five must pass:
 
-1. `curl -X POST https://ams.covenant.dev/v1/accounts -d '{"namespace":"smoke"}'` returns `201` with a credential.
-2. `curl -X POST https://ams.covenant.dev/v1/smoke/conversations -H "Authorization: Bearer <cred>" -d '{}'` returns `201` with a magic link.
+1. `curl -X POST https://ams.klappy.dev/v1/accounts -d '{"namespace":"smoke"}'` returns `201` with a credential. (Either deploy host works — see [`canon/decisions/D0011-multi-host-cname-deployment`](./canon/decisions/D0011-multi-host-cname-deployment.md). Substitute `ams.truthkit.ai` to verify host parity.)
+2. `curl -X POST https://ams.klappy.dev/v1/smoke/conversations -H "Authorization: Bearer <cred>" -d '{}'` returns `201` with a magic link.
 3. Two `wscat` sessions on the magic link (with `/connect` appended) exchange `{"type":"token","data":"hello"}` frames in real time. Each session sees the *other's* frames and not its own — confirming structural exclusion of self-delivery (per [`canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription`](./canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription.md)).
 4. A Claude Code instance configured with the AMS MCP server can call `ams_create_conversation` and receive a magic link.
 5. A second Claude Code instance (different bearer) can `ams_join` that link and `ams_send` a token; the first instance receives it (via push notification or `ams_recv`) within 5 seconds. Neither instance receives its own emissions back unless it explicitly opted into self-subscription.
@@ -73,7 +73,7 @@ For the PoC ship to be claimed complete, the closeout artifact (a journal entry 
 | Account model (namespace + bearer credential) | [`PROTOCOL.md`](./PROTOCOL.md) §3.1 |
 | Magic-link addressing (URL with permissive token) | [`PROTOCOL.md`](./PROTOCOL.md) §2 |
 | Stream-scoped delivery with structural exclusion of self-echo | [`canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription`](./canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription.md), [`PROTOCOL.md`](./PROTOCOL.md) §4.1 |
-| Hosted reference deployment at `ams.covenant.dev` | [`POC-INFRA.md`](./POC-INFRA.md) §8 |
+| Hosted reference deployment under multi-host CNAMEs (`ams.klappy.dev` and `ams.truthkit.ai`, both fronting one Worker) | [`POC-INFRA.md`](./POC-INFRA.md) §8, [`canon/decisions/D0011-multi-host-cname-deployment`](./canon/decisions/D0011-multi-host-cname-deployment.md) |
 | Day-by-day execution plan | [`POC-PLAN.md`](./POC-PLAN.md) |
 
 Specifically locked for v1:
@@ -120,7 +120,7 @@ Full detail in [`POC-INFRA.md`](./POC-INFRA.md) §4.
 Agent (Claude Code, Cursor, Desktop, claude.ai, ...)
    │ MCP Streamable HTTP (request/response + push notifications)
    ▼
-AMS Worker (ams.covenant.dev)
+AMS Worker (ams.klappy.dev, ams.truthkit.ai — same Worker, multi-host CNAME, D0011)
    ├─ POST /mcp        → SessionDO (per MCP session)
    ├─ POST /v1/...     → REST control plane
    └─ GET  /v1/.../connect → ConversationDO via WS upgrade
@@ -175,7 +175,7 @@ Surfaced explicitly because the gauntlet flagged them as missing.
 | Two-DO split (ConversationDO + SessionDO) | **Two-way** | Could be merged later if the SessionDO pattern proves redundant. Cost: redoing the file split. |
 | Six-tool MCP surface (current names) | **Two-way** until external adoption | Add tools freely (additive). Renames break clients once anyone configures the MCP server. After that, only additive changes. |
 | JSON frame format on the wire | **Two-way** at v2 boundary | Versioning in the URL path (`/v1/`) means swapping framing is a v2 concern. v1 is committed JSON. |
-| `ams.covenant.dev` as the reference instance | **Two-way** | DNS / routing change. Trivial. |
+| Multi-host CNAME deployment (`ams.klappy.dev` + `ams.truthkit.ai` fronting one Worker) per [`canon/decisions/D0011-multi-host-cname-deployment`](./canon/decisions/D0011-multi-host-cname-deployment.md) | **One-way for v1** | Splitting into per-host Workers would break magic-link portability across the existing link space. Adding more CNAMEs is two-way and trivial. |
 | Bound-account MCP binding (`Authorization` header) | **Two-way** | Mode B (on-demand account) can be added without breaking Mode A. |
 
 The one-way doors are the places to be most certain. Two-way doors get less scrutiny.
@@ -197,9 +197,9 @@ These are not deferred to a future version — they're decisions inside v1 that 
 
 1. **Which MCP SDK / framework to use, if any.** Default: hand-roll Streamable HTTP framing in `mcp.ts`. If a maintained TS SDK exists and is light enough, use it.
 2. **TLS for `wss://` outside Cloudflare's defaults.** Default: Cloudflare auto-TLS.
-3. **DNS apex vs subdomain.** Default: `ams.covenant.dev` as a subdomain of an existing Covenant zone.
+3. **DNS apex vs subdomain.** Default: `ams.klappy.dev` and `ams.truthkit.ai` as subdomains of existing zones, both CNAMEd to the same Worker per [`canon/decisions/D0011-multi-host-cname-deployment`](./canon/decisions/D0011-multi-host-cname-deployment.md).
 4. **Bearer token format.** Default: 32-byte URL-safe base64. Alternative: signed JWT. Going with the simpler unless there's a real reason.
-5. **MCP server discovery URL.** Default: `https://ams.covenant.dev/mcp`. Possible alternative: `/.well-known/mcp` or `/mcp/v1`. v1 commits to `/mcp`.
+5. **MCP server discovery URL.** Default: `https://ams.klappy.dev/mcp` (or `https://ams.truthkit.ai/mcp` — same Worker, identical surface, per D0011). Possible alternative: `/.well-known/mcp` or `/mcp/v1`. v1 commits to `/mcp`.
 
 ## 12. Out-of-Scope, On Horizon
 
@@ -255,3 +255,4 @@ The version in the title at the top of this document is the current version. Eac
 | v1.0 | 2026-05-01 | Added forward-compatibility check against `HORIZON.md` to revision discipline. | Catalog reframed explicitly as a two-sided document: dream half (what becomes possible) and constraint half (what must remain possible). The constraint half belongs in spec discipline. |
 | v1.0 | 2026-05-01 | Added SemVer-style spec versioning. | Provenance — clear mapping between "what we committed to" and "what we shipped." This row introduces the versioning convention; the document is retroactively marked v1.0 because the PoC scope and locks above are unchanged. |
 | v1.0 | 2026-05-01 | Adopted D0009: stream-scoped delivery with structural exclusion of self-echo. Wire MUST #4 rewritten; new MUSTs #6 added; new opt-in `X-AMS-Self-Subscribe` connect header; emit semantics confirmed as fire-and-forget v1 default. Echo-filter principle deprecated. Smoke test §3.1 item 3 and demo gate §3.2 updated to verify the no-echo property. Reversibility table records D0009 as a one-way door. | First-principles rethink: previous wire model required every subscriber to implement echo filtering; D0009 moves the constraint into wire structure, eliminating the failure mode and unblocking concurrent multi-stream emission as a default property. Operator (klappy) brought decades of multi-stream parallelism experience to the table. |
+| v1.0 | 2026-05-02 | Adopted D0011: multi-host CNAME deployment. Replaced placeholder `ams.covenant.dev` with the v1 dual-host pair `ams.klappy.dev` + `ams.truthkit.ai`, both fronting one Worker, one KV, one DO class. §3.1 smoke-test curls, §6 architecture diagram, §9 reversibility table (entry rewritten as one-way per D0011), §11 open decisions (DNS subdomain default, MCP discovery URL) all updated. Magic links carry whichever host minted them and resolve identically across hosts. | Prior planning sessions had introduced the `ams.covenant.dev` placeholder before a deploy host was decided; D0011 replaces it with the Sovee-pattern dual-host deployment as the operational counterpart to per-query dynamic orchestration. Spec-first per [`canon/decisions/D0007-spec-as-locking-surface.md`](./canon/decisions/D0007-spec-as-locking-surface.md) — docs land before any worker code. |

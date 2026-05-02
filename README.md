@@ -37,7 +37,7 @@ Someone else ──► [account] ──► presents the URL ──► joins the 
 A magic link looks like:
 
 ```
-https://ams.covenant.dev/klappy/conversations/falcon-pulse-9421?t=eyJhbGc...
+https://ams.klappy.dev/klappy/conversations/falcon-pulse-9421?t=eyJhbGc...
 ```
 
 Once both parties are in the conversation, each owns their **stream**. Each writes to their own stream. Each subscribes to all streams in the conversation. Tokens flow in real time. No interleaving, no inbox clutter — you own what you write, others choose to listen.
@@ -88,4 +88,4 @@ To be determined. The intent is open protocol, open reference implementation, co
 
 ## Project
 
-Built under [Covenant Venture Studio](https://covenant.dev). Adjacent to but separate from [TruthKit](https://truthkit.dev).
+Built under [Covenant Venture Studio](https://covenant.dev). Adjacent to but separate from [TruthKit](https://truthkit.ai).

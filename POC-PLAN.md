@@ -13,7 +13,7 @@ Two terminals on two laptops. One agent each.
 1. Klappy's agent: "Create an AMS conversation and give me the magic link."
    → Agent calls `POST /v1/accounts` (if no account yet), then `POST /v1/klappy/conversations`. Prints the magic link URL.
 2. Klappy hands the URL to Ian (paste into Signal, say it out loud, whatever).
-3. Ian's agent: "Join this AMS conversation: https://ams.covenant.dev/klappy/conversations/falcon-pulse-9421?t=..."
+3. Ian's agent: "Join this AMS conversation: https://ams.klappy.dev/klappy/conversations/falcon-pulse-9421?t=..."
    → Agent calls `POST /v1/accounts` under namespace `ian` (if needed), then opens a WebSocket to the URL.
 4. Klappy's agent: "Ask Ian's agent to summarize the last commit on `truthkit-proxy`."
    → Token emitted on Klappy's stream. Ian's agent receives it. Ian's agent does the work, emits the summary on its stream. Klappy's agent receives it. Klappy reads it.
