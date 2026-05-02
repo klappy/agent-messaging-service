@@ -39,15 +39,15 @@ If that sequence works end-to-end, the PoC succeeded.
 
 ### Day 2 — Sunday
 
-**Goal:** Conversation Durable Object with WebSocket connect, single-conversation broadcast.
+**Goal:** Conversation Durable Object with WebSocket connect, single-conversation stream-scoped broadcast.
 
-- Implement the Conversation Durable Object: stream registry, WS connection list, broadcast loop.
-- Implement WebSocket upgrade in the Worker, parse URL + permissive token + account credential, hand off to the DO.
-- Implement `joined` server frame on connect.
-- Implement token frame routing (client emits → server broadcasts to all in conversation).
-- Manual test with two `wscat` sessions on the same magic link URL: emit on one, see on the other.
+- Implement the Conversation Durable Object: stream registry, per-stream subscription registry (owners structurally excluded by default per `ams://canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription`), stream-scoped broadcast loop.
+- Implement WebSocket upgrade in the Worker, parse URL + permissive token + account credential + optional `X-AMS-Self-Subscribe` header, hand off to the DO.
+- Implement `joined` server frame on connect (including the `self_subscribe` field echoing the effective opt-in state).
+- Implement token frame routing (client emits → server broadcasts to every subscriber of the emitting stream, which excludes the stream's owning account by default).
+- Manual test with two `wscat` sessions on the same magic link URL: emit on one, see on the other AND verify the emitter does not see its own frame.
 
-**Done when:** two `wscat` clients on the same magic link URL can see each other's emitted tokens in real time, each tagged with the writing account / stream.
+**Done when:** two `wscat` clients on the same magic link URL can see each other's emitted tokens in real time, each tagged with the writing account / stream — and neither client receives its own emissions back from the wire (verifying the structural exclusion).
 
 ### Day 3 — Monday Morning
 

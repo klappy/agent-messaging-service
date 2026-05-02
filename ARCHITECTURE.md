@@ -41,8 +41,12 @@ This is the cheapest path that gets us a real, globally-deployable AMS instance 
                               │   (one per conv)    │
                               │                     │
                               │   - stream registry │
+                              │   - subscription    │
+                              │     registry        │
+                              │     (owners excl.)  │
                               │   - WS connections  │
-                              │   - broadcast loop  │
+                              │   - stream-scoped   │
+                              │     broadcast loop  │
                               └─────────────────────┘
 
                               ┌─────────────────────┐
@@ -78,16 +82,17 @@ One Durable Object per conversation. The DO is the only thing that knows who is 
 State held by the DO:
 
 - **Stream registry** — map of `stream_id` → `{stream_name, owner_account_id, ws_connection}`. Multiple stream_ids may belong to the same account if the account has joined multiple times (e.g. one agent process, one debugging tab). The PoC enforces one stream per account per conversation; future versions relax this.
+- **Subscription registry** — for each `stream_id`, the set of WebSocket connections that should receive that stream's tokens. Per `ams://canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription`, the stream's owning account's connection is structurally excluded from this set by default. The exclusion lives at registration, not as a runtime filter on the broadcast path.
 - **Active WebSocket connections** — handles to every open connection in the conversation.
 - **Conversation metadata** — `conversation_id`, `created_at`, optional admission policy (PoC: open-with-token).
 
 Operations the DO handles:
 
-- `register_stream(account_id, stream_name)` → `stream_id`. Called by the Worker when a new WebSocket joins.
-- `emit_token(stream_id, account_id, data)` → broadcasts to all connected sockets. Verifies that `account_id` owns `stream_id`.
-- `disconnect(stream_id)` → removes the stream from the registry, broadcasts a `stream_left` lifecycle event to remaining subscribers.
+- `register_stream(account_id, stream_name, self_subscribe=false)` → `stream_id`. Called by the Worker when a new WebSocket joins. Also registers the new connection as a subscriber of every other stream in the conversation by default. If `self_subscribe=true` (from the `X-AMS-Self-Subscribe` connect header), the connection is additionally registered as a subscriber of its own stream — the opt-in path for loggers, replay sinks, audit consumers.
+- `emit_token(stream_id, account_id, data)` → broadcasts to every WebSocket in the stream's subscription set. Verifies that `account_id` owns `stream_id`. The owning account's own connection is not in the subscription set by default, so it does not receive its own emission back; D0009's "no echo" property is a direct consequence of how the subscription set is built, not a separate filter.
+- `disconnect(stream_id)` → removes the stream from the stream registry, removes its connection from every other stream's subscription set, broadcasts a `stream_left` lifecycle event to remaining subscribers.
 
-The broadcast loop is straightforward: each token frame is serialized once and pushed to every WebSocket in the conversation. No per-subscriber buffering in the PoC.
+The broadcast loop is straightforward: each token frame is serialized once and pushed to every WebSocket in the emitting stream's subscription set. No per-subscriber buffering in the PoC. The loop is **stream-scoped**, not conversation-scoped — the conversation is the admission boundary, but broadcast targets are derived per-stream.
 
 ---
 
