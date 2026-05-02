@@ -155,9 +155,10 @@ GET wss://<host>/v1/{namespace}/conversations/{alias}/connect?t=<permissive-toke
   Authorization: Bearer ams_sk_...
   X-AMS-Stream-Name: klappy-assistant            // optional; defaults to UUID
   X-AMS-Stream-Metadata: <base64-json>           // optional; initial stream metadata, see §4.4
+  X-AMS-Self-Subscribe: false                    // optional; default false. See "Self-Subscription" below.
 ```
 
-The full magic link URL with `/connect` appended is the WebSocket endpoint. The `t` query parameter (the permissive token from the magic link) authorizes conversation admission. The `Authorization` header authorizes stream ownership. The optional `X-AMS-Stream-Metadata` header carries the initial metadata for this stream as base64-encoded JSON; subscribers may also set or update metadata after connect via the `set_metadata` client frame (§4.2).
+The full magic link URL with `/connect` appended is the WebSocket endpoint. The `t` query parameter (the permissive token from the magic link) authorizes conversation admission. The `Authorization` header authorizes stream ownership. The optional `X-AMS-Stream-Metadata` header carries the initial metadata for this stream as base64-encoded JSON; subscribers may also set or update metadata after connect via the `set_metadata` client frame (§4.2). The optional `X-AMS-Self-Subscribe` header opts the connection into receiving its own stream's tokens (default: false; see "Self-Subscription" below).
 
 **Server response on success:** `101 Switching Protocols` followed by a server frame:
 
@@ -168,6 +169,7 @@ The full magic link URL with `/connect` appended is the WebSocket endpoint. The 
   "stream_id": "str_01H...",
   "stream_name": "klappy-assistant",
   "metadata": { ... },
+  "self_subscribe": false,
   "peers": [
     {
       "stream_id": "str_01J...",
@@ -181,7 +183,27 @@ The full magic link URL with `/connect` appended is the WebSocket endpoint. The 
 
 **Server response on failure:** WebSocket close with one of the codes in §6.
 
-After joining, the connection is duplex: the client emits tokens on their stream, the server pushes tokens from every stream in the conversation (including the client's own — for echo / confirmation, and so single-process subscribers can use the same buffer).
+After joining, the connection is duplex: the client emits tokens on its own stream, and the server pushes tokens from every other stream the subscriber is admitted to in the conversation. **The server does not push the subscriber's own stream's tokens by default** — ownership and subscription are mutually exclusive states. See "Self-Subscription" below for the opt-in path.
+
+#### Stream-Scoped Delivery
+
+The wire delivers tokens *stream-by-stream*, not *conversation-by-conversation*. A subscriber connected to a conversation is, by default, attached as a reader to every stream in that conversation **except those it owns**. The conversation is the admission boundary (you must be admitted to the conversation to read any of its streams); the broadcast unit is the individual stream within that boundary.
+
+This is the structural foundation that lets multiple streams emit concurrently with no turn-taking and no self-feedback loops. See [`canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription`](./canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription.md).
+
+#### Self-Subscription (Opt-In)
+
+A subscriber that wants to read its own stream — typically a logger, replay sink, or audit consumer that also happens to emit on a stream — may opt in by setting the request header `X-AMS-Self-Subscribe: true` at connect time. When opted in, own-stream `token` and `stream_metadata` frames arrive on the same channels as peer frames; the subscriber distinguishes them by comparing `owner_account_id` to its own account.
+
+The default is `false`. There is no protocol-level reason for the common case to opt in, and most subscribers should leave it alone. The capability exists so the structural exclusion does not foreclose legitimate use cases.
+
+The `joined` frame echoes the effective `self_subscribe` value so the subscriber knows which mode the broker accepted.
+
+#### Emit Confirmation (Fire-and-Forget by Default)
+
+The wire does not acknowledge accepted `token` frames. An emitter that needs proof of broker acceptance has two options: (1) infer from the absence of a malformed-frame close (§6, code 4400); (2) opt into an optional receipt extension exposed by an implementation, if one is offered. The default v1 wire is fire-and-forget — there is no separate `ack` or `receipt` frame in the v1 frame set.
+
+See [`canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription`](./canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription.md) §"Hard Cases Resolved" #1 for the rationale and the deferral path.
 
 ---
 
@@ -246,6 +268,8 @@ Every WebSocket frame is a single JSON object.
 
 `data` is opaque. It is the application's responsibility to parse it. The PoC treats `data` as a UTF-8 string for convenience, but binary support is anticipated and the field will become base64-or-binary in a later revision.
 
+A `token` frame carrying an `owner_account_id` equal to the subscriber's own account ID will only appear if the subscriber opted into self-subscription via `X-AMS-Self-Subscribe: true` at connect. Subscribers that did not opt in will never see such a frame; subscribers that did opt in are responsible for distinguishing their own emissions from peer emissions.
+
 ---
 
 ### 4.4 Metadata, Annotations, and Capabilities
@@ -284,10 +308,12 @@ AMS does not compute a "conversation capability set." Each stream declares its o
 ## 5. Token Semantics
 
 - **Ordering.** Tokens within a single stream are delivered to subscribers in the order they were emitted, full stop. No reordering across streams — readers see whatever interleaving the server's broadcast loop produces.
+- **Concurrency.** Multiple streams in a conversation may emit in parallel without coordination. Stream independence is structural: each stream has one writer (D0003) and the wire does not deliver a stream's tokens to its owner (D0009), so concurrent emission produces no wire-level race conditions and no self-feedback loops.
 - **Delivery.** At-most-once. If a subscriber is disconnected when a token is emitted, the subscriber misses that token. Replay is a future feature.
 - **Backpressure.** If a subscriber's WebSocket buffer is full, the server may close the connection with `4290 Subscriber Backpressure`. The PoC does not buffer per-subscriber.
 - **Size.** Tokens may be up to 64 KiB in the PoC. Larger payloads should be chunked by the application.
 - **Streaming-native.** Tokens may be emitted as fast as the writer can produce them — there is no batching boundary at the protocol level. Models that produce tokens incrementally (which is most of them) emit them incrementally on the stream.
+- **Emit acknowledgment.** None by default. Emit is fire-and-forget at the wire layer. See §4.1 "Emit Confirmation."
 
 ---
 
@@ -322,12 +348,13 @@ HTTP error responses on the control plane use standard status codes plus a JSON 
 A conforming AMS implementation must:
 
 1. Implement all three control-plane endpoints in §3.
-2. Implement the WebSocket connect path and the frame formats in §4.
+2. Implement the WebSocket connect path and the frame formats in §4, including the `X-AMS-Self-Subscribe` connect header (default `false`) and the `self_subscribe` field in the `joined` server frame.
 3. Enforce per-account stream ownership: only the account that owns a stream may emit on it or set its metadata.
-4. Broadcast every token emitted on any stream in a conversation to every connected subscriber on that conversation.
-5. Broadcast every metadata change on any stream in a conversation to every connected subscriber on that conversation, via a `stream_metadata` frame (§4.2). Initial metadata rides on `stream_joined`.
-6. Treat magic links as opaque on the client side.
-7. Treat metadata payloads as opaque — never modify, schema-validate, or filter their contents.
+4. Broadcast every token emitted on a stream to every subscriber attached to that stream, **except the stream's owning account** unless that account has opted into self-subscription via `X-AMS-Self-Subscribe: true`. Per-stream ordering is preserved; cross-stream ordering is whatever the broadcast loop produces.
+5. Broadcast every metadata change on a stream to every subscriber attached to that stream, **except the stream's owning account** unless opted in, via a `stream_metadata` frame (§4.2). Initial metadata rides on `stream_joined`.
+6. Structurally exclude self-delivery by default. The exclusion is a registration property — when a subscriber attaches to a conversation, the broker's subscription set does not include the subscriber's own stream(s) unless `X-AMS-Self-Subscribe: true` was passed. The exclusion is not implemented as a runtime filter on the broadcast path.
+7. Treat magic links as opaque on the client side.
+8. Treat metadata payloads as opaque — never modify, schema-validate, or filter their contents.
 
 A conforming AMS implementation may:
 
@@ -336,6 +363,8 @@ A conforming AMS implementation may:
 - Persist tokens for replay (declare this in the conversation metadata).
 - Apply rate limits, concurrency caps, or quota enforcement (declare this in the account metadata).
 - Support `jcs-sha256` conversation identifiers.
+- Expose an opt-in self-subscription mode beyond `X-AMS-Self-Subscribe` (e.g., a runtime toggle frame). Default behavior remains structural exclusion.
+- Offer optional emit receipts. An implementation may add a custom `x_receipt` server-pushed frame returned to the emitter when a token is accepted for broadcast. The frame is not part of v1's required surface; fire-and-forget remains the v1 default.
 
 A conforming AMS implementation must not:
 
@@ -344,6 +373,7 @@ A conforming AMS implementation must not:
 - Allow accounts to emit on streams they do not own.
 - Allow accounts to set metadata on streams they do not own.
 - Break the per-stream ordering guarantee in §5.
+- Deliver a stream's tokens or metadata frames to its owning account by default. Self-delivery is opt-in only; a broker that echoes own-stream frames by default is non-conformant.
 
 ---
 

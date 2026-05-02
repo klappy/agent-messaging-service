@@ -87,7 +87,7 @@ AMS Conversation (the dream-house wire, unchanged)
 
 A wrapper that grows beyond translation — that adds caching, rewrites payloads, applies content policy, or accumulates business logic — has stopped being a wrapper and become a product. At that point it gets factored out as a separate service. The wrapper layer must stay cheap.
 
-**The MCP wrapper as the canonical instance.** The reference deployment ships an MCP edge wrapper as a per-MCP-session Durable Object (`SessionDO` in [`POC-INFRA.md`](./POC-INFRA.md) §4). The Session DO holds the WebSocket to the Conversation DO, buffers wire events for the MCP client, and exposes the AMS surface as five MCP tools plus two notification streams. The Conversation DO does not know MCP exists.
+**The MCP wrapper as the canonical instance.** The reference deployment ships an MCP edge wrapper as a per-MCP-session Durable Object (`SessionDO` in [`POC-INFRA.md`](./POC-INFRA.md) §4). The Session DO holds the WebSocket to the Conversation DO, buffers wire events for the MCP client, and exposes the AMS surface as six MCP tools plus two notification streams. The Conversation DO does not know MCP exists. Under `ams://canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription`, the wrapper's job is strictly translation — the wire never delivers self-echoes, so the wrapper does not implement input-side filtering, deduplication, or emit-history state.
 
 **Other wrappers that fit the same shape.**
 

@@ -98,8 +98,12 @@ The vodka contract holds: **the MCP wrapper is one of the polymorphic-subscriber
    │   │ (one per conversation, push-only)        │   │
    │   │                                          │   │
    │   │  • stream registry                       │   │
-   │   │  • subscriber WebSocket list             │   │
-   │   │  • broadcast loop (tokens + metadata)    │   │
+   │   │  • per-stream subscription registry      │   │
+   │   │    (owners structurally excluded by      │   │
+   │   │     default; opt-in via                  │   │
+   │   │     X-AMS-Self-Subscribe)                │   │
+   │   │  • stream-scoped broadcast loop          │   │
+   │   │    (tokens + metadata)                   │   │
    │   │  • does not know MCP exists              │   │
    │   └──────────────────────────────────────────┘   │
    └──────────────────────────────────────────────────┘

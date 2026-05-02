@@ -32,9 +32,9 @@ Run after `wrangler deploy`. All five must pass:
 
 1. `curl -X POST https://ams.covenant.dev/v1/accounts -d '{"namespace":"smoke"}'` returns `201` with a credential.
 2. `curl -X POST https://ams.covenant.dev/v1/smoke/conversations -H "Authorization: Bearer <cred>" -d '{}'` returns `201` with a magic link.
-3. Two `wscat` sessions on the magic link (with `/connect` appended) echo each other's `{"type":"token","data":"hello"}` frames in real time.
+3. Two `wscat` sessions on the magic link (with `/connect` appended) exchange `{"type":"token","data":"hello"}` frames in real time. Each session sees the *other's* frames and not its own — confirming structural exclusion of self-delivery (per [`canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription`](./canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription.md)).
 4. A Claude Code instance configured with the AMS MCP server can call `ams_create_conversation` and receive a magic link.
-5. A second Claude Code instance (different bearer) can `ams_join` that link and `ams_send` a token; the first instance receives it (via push notification or `ams_recv`) within 5 seconds.
+5. A second Claude Code instance (different bearer) can `ams_join` that link and `ams_send` a token; the first instance receives it (via push notification or `ams_recv`) within 5 seconds. Neither instance receives its own emissions back unless it explicitly opted into self-subscription.
 
 ### 3.2 Demo Gate (real-world)
 
@@ -47,7 +47,7 @@ The end-to-end hackathon-replay scenario from [`POC-PLAN.md`](./POC-PLAN.md) §1
 - Ian's agent receives the token, performs the work, emits the summary.
 - Klappy's agent receives the summary.
 
-**No copy-paste of message contents at any step.** That is the gate. Anything else passing while this fails is a fail.
+**No copy-paste of message contents at any step. Neither agent receives its own emissions back from the wire.** Both are the gate. Anything else passing while either fails is a fail.
 
 ### 3.3 Definition of Done (per `klappy://canon/constraints/definition-of-done`)
 
@@ -71,6 +71,7 @@ For the PoC ship to be claimed complete, the closeout artifact (a journal entry 
 | Stream + conversation metadata slot | [`PROTOCOL.md`](./PROTOCOL.md) §4.4 |
 | Account model (namespace + bearer credential) | [`PROTOCOL.md`](./PROTOCOL.md) §3.1 |
 | Magic-link addressing (URL with permissive token) | [`PROTOCOL.md`](./PROTOCOL.md) §2 |
+| Stream-scoped delivery with structural exclusion of self-echo | [`canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription`](./canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription.md), [`PROTOCOL.md`](./PROTOCOL.md) §4.1 |
 | Hosted reference deployment at `ams.covenant.dev` | [`POC-INFRA.md`](./POC-INFRA.md) §8 |
 | Day-by-day execution plan | [`POC-PLAN.md`](./POC-PLAN.md) |
 
@@ -79,9 +80,11 @@ Specifically locked for v1:
 - Six MCP tools: `ams_create_conversation`, `ams_join`, `ams_send`, `ams_set_metadata`, `ams_leave`, `ams_recv` (degradation path).
 - Two MCP notifications: `notifications/ams/token`, `notifications/ams/stream_metadata`.
 - One MCP resource: `ams://conversations/{conversation_id}`.
-- Wire frames: `token`, `set_metadata`, `ping` (client→server); `joined`, `token`, `stream_joined`, `stream_left`, `stream_metadata`, `pong` (server→client).
-- Conformance rules: [`PROTOCOL.md`](./PROTOCOL.md) §7, both must and must-not.
+- Wire frames: `token`, `set_metadata`, `ping` (client→server); `joined` (with `self_subscribe` field), `token`, `stream_joined`, `stream_left`, `stream_metadata`, `pong` (server→client).
+- Connect headers: `Authorization`, `X-AMS-Stream-Name`, `X-AMS-Stream-Metadata`, `X-AMS-Self-Subscribe` (default `false`).
+- Conformance rules: [`PROTOCOL.md`](./PROTOCOL.md) §7, both must and must-not, including MUSTs #4 (stream-scoped broadcast) and #6 (structural exclusion).
 - One MCP binding mode: bound-account via `Authorization` header in MCP config.
+- Emit semantics: fire-and-forget at the wire layer (no acknowledgment frame in v1).
 
 ## 5. Scope — OUT (Deferred, Named)
 
@@ -103,6 +106,8 @@ These are explicitly **not** in v1. They are deferred so we don't drift into the
 | Spill-to-storage for SessionDO buffer | First observed buffer-overflow incident in production |
 | DOLCHE journal observability subscriber | After the PoC ships and we want production telemetry |
 | Containers / non-Worker hosting | If Workers + DOs prove insufficient for any specific subscriber type |
+| Optional emit receipts (acknowledgment frame) | First orchestration or audit use case that requires positive confirmation of broker acceptance |
+| Selective subscription (attach to specific streams within a conversation, not all) | First use case where reading every peer stream is operationally prohibitive |
 
 Deferring an item means: it is not blocked, it is not forgotten, and it does not gate v1. When the re-entry signal fires, the item gets its own design pass.
 
@@ -125,7 +130,7 @@ AMS Worker (ams.covenant.dev)
                                        AMS KV
 ```
 
-**Two Durable Object classes.** `ConversationDO` is the dream-house wire — push-only, one per conversation, knows nothing about MCP. `SessionDO` is the per-MCP-session edge wrapper — holds the WS to the conversation DO, holds the per-session buffer, translates MCP I/O. The wire stays clean; the wrapper carries the runtime adaptation.
+**Two Durable Object classes.** `ConversationDO` is the dream-house wire — push-only, one per conversation, knows nothing about MCP. It holds the per-stream subscription registry (with owners structurally excluded by default) and runs the stream-scoped broadcast loop. `SessionDO` is the per-MCP-session edge wrapper — holds the WS to the conversation DO, holds the per-session buffer, translates MCP I/O. The wire stays clean; the wrapper carries the runtime adaptation. Neither layer implements echo filtering; the wire structurally excludes self-delivery.
 
 **KV** holds account credential hashes, alias → conversation_id mappings, and conversation-level metadata + permissive tokens.
 
@@ -141,6 +146,7 @@ Surfaced explicitly because the gauntlet flagged them as missing.
 | Single DO that handles both raw WS and MCP sessions | Earlier draft of `POC-INFRA.md`. Compromised the ConversationDO with MCP-session state, breaking the "any wrapper plugs in" property. Replaced with the SessionDO split. |
 | Long-poll as the primary MCP delivery mechanism | Earlier framing of the MCP tool surface. Let runtime constraints shape the spec presentation. Corrected to push-as-primary, recv-as-degradation. |
 | Containers for the PoC infra | Workers + DOs cover the PoC. Containers add operational surface without solving any v1 requirement. Re-entry signal: any subscriber type that can't run as a Worker. |
+| Wire-level echo of own-stream tokens with subscriber-side filtering | Earlier draft of `PROTOCOL.md` §4.1. Made the wire deliver each stream's tokens to its owner and required every subscriber to filter on `owner_account_id`. Reversed under D0009 — moved the constraint into wire structure (exclusion at registration), eliminated the bug class, and unblocked concurrent multi-stream emission as a default property of the wire. |
 
 ## 8. Risks (and Mitigations)
 
@@ -154,6 +160,7 @@ Surfaced explicitly because the gauntlet flagged them as missing.
 | MCP itself evolves in a way that obsoletes the wrapper before v2 | Medium-positive | Wrappers are designed to be disposable; if MCP gains first-class persistent streams, the SessionDO buffer logic shrinks toward zero and gets deleted. The wire does not change. This is the [intended trajectory](./journal/2026-05-01-ams-dream-house-edge-wrappers.tsv). |
 | A buffer overflow in a slow MCP client silently drops events | Low (mitigated by design) | `truncated: true` flag on the next `ams_recv` response with a count of dropped events. Slow clients get told they were slow. |
 | The demo fails mid-presentation | Medium | Smoke test (§3.1) must pass before any demo attempt. Recorded fallback exists. |
+| Some legitimate use case requires self-observability that the default exclusion blocks | Low | `X-AMS-Self-Subscribe: true` opt-in covers it. Documented in [`PROTOCOL.md`](./PROTOCOL.md) §4.1 and the D0009 hard-cases section. |
 
 ## 9. Reversibility — One-Way vs Two-Way Doors
 
@@ -162,6 +169,8 @@ Surfaced explicitly because the gauntlet flagged them as missing.
 | Tokens-not-messages as the wire unit | **One-way** | Re-architecting to message envelopes would break every subscriber. Don't reverse; layer on top. |
 | Magic link as a URL (not opaque blob) | **One-way for v1** within the deployment | Other implementations may differ; protocol opacity rule preserves this. |
 | Per-account stream ownership | **One-way** | This is the inverted-inbox model. Reversing breaks the central security simplification. |
+| Stream as primitive; ownership structurally excludes subscription (D0009) | **One-way** | Reversing would re-introduce wire-level echo, force every subscriber to re-implement filtering, and re-couple broadcast scope to conversation membership in a way that would foreclose downstream composition. Don't reverse; the door is closed. See [`canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription`](./canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription.md) §"What This Forecloses." |
+| Fire-and-forget emit semantics (no v1 ack frame) | **Two-way** at v2 boundary, two-way within v1 via an extension MAY | Optional receipts can be added later as an extension or a v2 frame without breaking existing emitters. |
 | Two-DO split (ConversationDO + SessionDO) | **Two-way** | Could be merged later if the SessionDO pattern proves redundant. Cost: redoing the file split. |
 | Six-tool MCP surface (current names) | **Two-way** until external adoption | Add tools freely (additive). Renames break clients once anyone configures the MCP server. After that, only additive changes. |
 | JSON frame format on the wire | **Two-way** at v2 boundary | Versioning in the URL path (`/v1/`) means swapping framing is a v2 concern. v1 is committed JSON. |
@@ -178,6 +187,7 @@ If any of these is observed, the plan needs re-thinking, not just re-trying:
 - **Two MCP clients cannot reliably exchange tokens within a 5-second budget.** Means either MCP transport is too slow for the use case, or the SessionDO pattern adds unacceptable hop latency.
 - **A second wrapper class (e.g. webhook, Slack) cannot be added without modifying `conversation.ts`.** Means the wrapper-pattern abstraction leaked, and the ConversationDO is not as pure as the spec claims.
 - **An agent's emitted tokens are observably re-ordered within a single stream.** Means the per-stream ordering guarantee in [`PROTOCOL.md`](./PROTOCOL.md) §5 is broken in the implementation; this is a wire-conformance failure.
+- **Subscribers receive their own emitted tokens by default at the wire layer.** Means the structural exclusion in [`PROTOCOL.md`](./PROTOCOL.md) §7 MUST #6 is broken in the implementation; this is a wire-conformance failure under D0009.
 - **Adoption signal after the first 30 days is zero — nobody outside Covenant tries to write a subscriber.** Means the foundation play is mistimed or mis-positioned, and the strategic risk in §8 has materialized.
 
 ## 11. Open Decisions Still Inside v1 Scope
@@ -204,6 +214,9 @@ The post-PoC roadmap, in rough order:
 8. **Second wrapper class** (probably webhook adapter) — proves the edge-wrapper pattern is general.
 9. **Observability subscriber** — DOLCHE-shaped journal sink as a separate service.
 10. **Pricing surface** — the hosted instance becomes commercial.
+11. **Optional emit receipts** — opt-in `x_receipt` server-pushed frame for emitters that need positive confirmation; deferred from D0009 hard cases.
+12. **Selective subscription** — attach to a chosen subset of streams in a conversation (rather than the default subscribe-to-all-except-own); D0009 enables this without further architectural change but the v1 default is sufficient for the PoC.
+13. **Multi-stream-per-account composition patterns** — pipelines, aggregators, cross-conversation re-routing; D0009 unblocks these but they are post-PoC design work.
 
 ## 13. References
 
@@ -216,6 +229,7 @@ The post-PoC roadmap, in rough order:
 - [`HORIZON.md`](./HORIZON.md) — comprehensive catalog of use cases AMS unlocks and things to build on top of it.
 - [`ESSAY.md`](./ESSAY.md) — *We Were the Wire* — the foundational essay.
 - [`GLOSSARY.md`](./GLOSSARY.md) — Vocabulary.
+- [`canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription.md`](./canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription.md) — The wire-delivery axiom.
 - [`journal/`](./journal/) — DOLCHE artifacts capturing decisions, learnings, constraints, encodings.
 
 ---
@@ -230,3 +244,4 @@ This doc is the lock. When a load-bearing decision changes, this doc is updated 
 |------|--------|--------|
 | 2026-05-01 | Initial lock — PoC scope, acceptance criteria, alternatives, risks, reversibility, disconfirmers. | Oddkit gauntlet pass surfaced that load-bearing decisions were spread across six docs without a single locking surface. |
 | 2026-05-01 | Added forward-compatibility check against `HORIZON.md` to revision discipline. | Catalog reframed explicitly as a two-sided document: dream half (what becomes possible) and constraint half (what must remain possible). The constraint half belongs in spec discipline. |
+| 2026-05-01 | Adopted D0009: stream-scoped delivery with structural exclusion of self-echo. Wire MUST #4 rewritten; new MUSTs #6 added; new opt-in `X-AMS-Self-Subscribe` connect header; emit semantics confirmed as fire-and-forget v1 default. Echo-filter principle deprecated. Smoke test §3.1 item 3 and demo gate §3.2 updated to verify the no-echo property. Reversibility table records D0009 as a one-way door. | First-principles rethink: previous wire model required every subscriber to implement echo filtering; D0009 moves the constraint into wire structure, eliminating the failure mode and unblocking concurrent multi-stream emission as a default property. Operator (klappy) brought decades of multi-stream parallelism experience to the table. |

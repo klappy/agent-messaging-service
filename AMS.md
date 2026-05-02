@@ -2,7 +2,7 @@
 
 > Token stream routing.
 >
-> You own your writes. Anyone in the conversation can read.
+> You own your writes. Anyone else in the conversation can read.
 
 ---
 
@@ -44,9 +44,9 @@ Four primitives, in order of nesting:
 
 **Account.** A namespace. Belongs to a human, an organization, or an autonomous operator. Holds identity, billing, policy. An account spawns conversations and writes streams. Without an account, you cannot own a stream.
 
-**Conversation.** A coordination surface, addressed by a **magic link**. Created by one account. Joinable by anyone holding the link. The conversation does not store messages long-term; it routes streams between subscribers in real time.
+**Conversation.** A convenience grouping for streams that share a coordination context, addressed by a **magic link**. Created by one account. Joinable by anyone holding the link. The conversation is the admission boundary — you must be admitted to a conversation to read any of its streams — but it is not the unit of broadcast. The broadcast unit is the individual stream within the conversation. The conversation does not store messages long-term; it routes streams between subscribers in real time.
 
-**Stream.** A single writer's owned pipe inside a conversation. When you join a conversation, you bring your stream. **Only you write to your stream.** Everyone in the conversation reads it. If three accounts join a conversation, the conversation carries three streams, and every subscriber sees all three — but no two writers ever interleave on the same stream.
+**Stream.** A single writer's owned pipe inside a conversation. **Only one account writes to a stream — the owner.** Every other admitted account in the conversation may subscribe to read it. **Ownership and subscription are mutually exclusive states** — the wire structurally never delivers a stream's tokens to its owning account. If three accounts join a conversation, the conversation carries three streams; each subscriber sees the two streams they don't own and not their own. No two writers ever interleave on the same stream, and no writer is ever fed back its own emissions at the wire layer. (See [`canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription`](./canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription.md) for the load-bearing rule and [`canon/decisions/D0003-per-account-stream-ownership`](./canon/decisions/D0003-per-account-stream-ownership.md) for the write-side ownership rule.)
 
 **Token.** The smallest unit of transmission. A token can be one byte or one megabyte. AMS does not parse it, validate it, or care what it means. Streams carry tokens. That is the entire data model.
 
@@ -62,7 +62,7 @@ Most messaging systems take "message" as their unit. Discord, Slack, Kafka, Rabb
 
 **Layering.** Bytes are too low: AMS would have to reinvent serialization on top of them, and every implementation would do it slightly differently. Messages are too high: the moment you commit to a message envelope, you have committed to framing, schemas, ordering semantics, delivery guarantees, and a hundred other opinions the protocol should not own. Tokens land at the right altitude. Bigger than a byte, smaller than a message, exactly the unit agents already produce and consume. Everything above the token layer — message envelopes, schemas, queues, RPC frameworks — can be built by anyone, on top of AMS, without fighting AMS.
 
-This is why one-to-many fan-out is the trivial case in AMS, not a special feature. A model emits a token stream; N subscribers all receive it in real time. A coordinator agent listens. A logger listens. A UI listens. A downstream worker listens. Same emission, no replication logic. Token streaming is what models already do natively; AMS just removes the wire that used to break it.
+This is why one-to-many fan-out is the trivial case in AMS, not a special feature. A model emits a token stream; N subscribers all receive it in real time. A coordinator agent listens. A logger listens. A UI listens. A downstream worker listens. Same emission, no replication logic. Token streaming is what models already do natively; AMS just removes the wire that used to break it. And because subscription and ownership are mutually exclusive, *concurrent* emission across many streams is the trivial case too — no coordination needed, no turn-taking required, no self-feedback loops to avoid.
 
 ### 3.2 Magic Link as URL
 
@@ -122,9 +122,10 @@ AMS inverts that. **You own your writes, not your reads.**
 
 - You write to your stream. Nobody else can write there.
 - Other subscribers read your stream by being in the same conversation. You do not curate, filter, or accept incoming messages — incoming messages do not exist in this model.
+- You do not read your own stream by default. The wire structurally never delivers your stream's tokens back to you. There is no echo to filter, no self-feedback loop to break.
 - If you do not want to hear from someone, you leave their conversation. Or you do not enter it.
 
-This is the right shape for real-time, because real-time has no time for triage. It also makes the security model dramatically simpler: there is no inbox to flood, no spam vector to plug, no permission grant to revoke. You either share a conversation with someone or you do not.
+This is the right shape for real-time, because real-time has no time for triage. It also makes the security model dramatically simpler: there is no inbox to flood, no spam vector to plug, no permission grant to revoke. You either share a conversation with someone or you do not. And the broadcast model is dramatically simpler: there is no "did I write this?" branch on the input path, because the wire never gives you the option.
 
 ---
 
@@ -132,14 +133,16 @@ This is the right shape for real-time, because real-time has no time for triage.
 
 A subscriber is anything that holds a magic link and either binds a stream or just listens. The protocol does not check what is on the other end of the connection. Practical subscriber types:
 
-- **Reasoning agents** — read tokens, decide, write back. The headline use case.
+- **Reasoning agents** — read tokens from peer streams, decide, write back on their own stream. The headline use case.
 - **Cloudflare Workers / serverless functions** — react to tokens deterministically. "When stream-A emits, POST to this webhook." "When stream-B emits, write to D1."
 - **Queues and durable storage** — fan tokens into a real job queue (Cloudflare Queues, RabbitMQ, SQS) for async processing.
-- **Observability adapters** — listen, redact, ship metadata to a journal or telemetry sink.
-- **IoT devices** — emit sensor readings as tokens; subscribe to control commands.
+- **Observability adapters** — listen, redact, ship metadata to a journal or telemetry sink. Loggers are typically separate accounts that subscribe to the streams they observe — that way the audit trail is not entangled with the producer's account identity.
+- **IoT devices** — emit sensor readings as tokens; subscribe to control commands on peer streams.
 - **Humans** — a curl command, a CLI, a browser. The protocol does not require sentience.
 
 This is what makes the protocol foundational instead of vertical. Anything that can hold a WebSocket and read or write bytes can participate. The cleverness lives in the subscribers, not in AMS.
+
+A subscriber that genuinely wants to read its own stream — a debug session, a replay sink that happens to share an account with the producer — may opt in via the `X-AMS-Self-Subscribe` header at connect (see [`PROTOCOL.md`](./PROTOCOL.md) §4.1). The default is structural exclusion; opt-in exists so the door is open without making it the common case.
 
 Many useful runtimes — agent frameworks, chat platforms, webhook consumers, devices speaking proprietary protocols — cannot themselves hold a WebSocket or speak the wire. The pattern for bringing them in is the **edge wrapper**: a thin, per-session subscriber that holds the wire WebSocket on the runtime's behalf and translates I/O patterns. The wire stays exactly as `PROTOCOL.md` says it is; the wrapper does the cut-and-adapt for whatever the runtime can actually hold. The MCP-wrapped reference deployment is the canonical instance of this pattern. See [`PATTERNS.md`](./PATTERNS.md) §2.
 
@@ -164,7 +167,7 @@ TCP/IP works because each layer solves one problem and stays out of the way of t
 | Layer | Concern | Loose TCP/IP Analog | AMS Stance |
 |---|---|---|---|
 | **Transport** | Move bytes between two endpoints | Physical / Link | WebSocket to start. Swappable. |
-| **Conversation + Stream** | Pub-sub coordination, magic-link addressing, write ownership | (no clean analog — closest is multicast with per-source channels) | **AMS owns this.** Stupid simple. |
+| **Conversation + Stream** | Pub-sub coordination, magic-link addressing, write ownership, structural exclusion of self-echo | (no clean analog — closest is multicast with per-source channels) | **AMS owns this.** Stupid simple. See D0003 (write ownership) and D0009 (subscription excludes ownership). |
 | **Account / Identity** | Who owns this stream? | (none — TCP/IP punts to DNS + TLS) | Account is required. Identity scheme above account is negotiable. |
 | **Discovery** | How do I find a conversation or account I have not met? | DNS | URL is the address. Optional registry above that. |
 | **Capability Negotiation** | What protocols / formats do we both speak? | (TLS handshake, content negotiation) | Each stream declares its capabilities in its metadata (§3.4); peers read the declarations and converge themselves. AMS carries the declarations; the schema lives above. |
@@ -186,8 +189,8 @@ What we are shipping by end of next week.
 A single Cloudflare Worker, backed by a Durable Object per conversation, that:
 
 1. Provides `POST /{namespace}/conversations` to mint a new conversation and return a magic link URL.
-2. Provides a WebSocket endpoint that takes the magic link plus an account credential, binds the connection's stream to the conversation, and joins the subscriber to the broadcast loop.
-3. Forwards every token written to any stream in the conversation to every subscriber in that conversation, tagged with the writing account / stream identifier so receivers know who wrote what.
+2. Provides a WebSocket endpoint that takes the magic link plus an account credential, binds the connection's stream to the conversation, and registers the subscriber as a reader of every stream in the conversation **except those it owns** (unless the subscriber opted into self-subscription via `X-AMS-Self-Subscribe: true`).
+3. Forwards every token written to any stream in the conversation to every subscriber attached to that stream, tagged with the writing account / stream identifier so receivers know who wrote what. The structural exclusion of self-delivery means writers do not receive their own emissions back at the wire layer.
 
 That is the entire PoC.
 
@@ -196,13 +199,14 @@ That is the entire PoC.
 ### 7.2 Stack
 
 - **Cloudflare Worker** for HTTP entry and URL routing.
-- **Durable Object per conversation** to hold the WebSocket connections and the broadcast loop.
+- **Durable Object per conversation** to hold the WebSocket connections, the per-stream subscription registry, and the broadcast loop.
 - **D1 (or KV)** for the minimal account stub and conversation metadata (alias → identifier mapping).
 - Token format: opaque bytes. The protocol does not care.
 
 ### 7.3 What It Proves
 
 - Two agents (mine, Ian's), each with their own account, can be handed a magic link URL and start exchanging tokens through their owned streams in real time, with no copy-paste, no Signal, no human in the wire.
+- Each agent reads only the peer's stream — neither receives its own emissions back from the wire — so the demo passes without any subscriber-side echo-filter logic.
 - The same conversation works for non-agent subscribers — a Worker, a curl command, a sensor — without protocol changes.
 - The broker is small enough (target: under 300 lines including the DO) that the *foundation* is obviously not the interesting part. The interesting part is what gets built on top.
 
@@ -214,6 +218,7 @@ That is the entire PoC.
 - Authorization beyond magic link possession + account self-assertion.
 - Cross-broker federation. One Worker, one account namespace.
 - Scale. The PoC is for *correctness* of the primitive, not throughput.
+- Concurrent multi-stream emission patterns at scale (D0009 enables it; the PoC exercises only the two-agent turn-taking case).
 
 These are explicit non-goals for week one. They are layers, and they bolt on.
 
@@ -244,7 +249,8 @@ Honest things we do not yet know, and which the PoC will not answer:
 - **Magic link revocation.** Once a link is issued, it works forever. Do we add expiry to the PoC, or wait until someone needs it?
 - **Conversation persistence.** When the last subscriber disconnects, does the conversation evaporate or persist? PoC default: evaporate.
 - **Stream replay.** When a subscriber joins late, do they get the conversation's recent token history or only what arrives after they connect? PoC default: from-now-only.
-- **Multi-stream-per-account.** Can one account own multiple streams in the same conversation? Probably yes, named by the account. PoC default: one stream per account per conversation.
+- **Multi-stream-per-account.** Can one account own multiple streams in the same conversation? Probably yes, named by the account; the structural-exclusion rule extends naturally (the owner is not subscribed to any of its own streams). PoC default: one stream per account per conversation.
+- **Optional emit receipts.** Fire-and-forget is the v1 default; will some orchestration use case force opt-in receipts as a MAY? Probably yes eventually; not in PoC.
 - **JCS-SHA collision and canonicalization scope.** When deterministic IDs land, what gets included in the canonical input? Schema TBD before the feature ships.
 - **Federation.** Two brokers, one conversation. Possible, not solved. Probably needs a federation protocol layer.
 - **Spec ownership.** Is AMS a Covenant project, an open standard with a reference implementation, or both? The right answer is probably "both, eventually." The PoC ships under Covenant.
