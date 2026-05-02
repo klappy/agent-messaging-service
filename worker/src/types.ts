@@ -2,6 +2,7 @@ export interface Env {
   AMS_KV: KVNamespace;
   AMS_CREDENTIAL_PEPPER: string;
   AMS_PERMISSIVE_TOKEN_PEPPER: string;
+  CONVERSATION_DO: DurableObjectNamespace;
 }
 
 export interface AccountRecord {

@@ -36,8 +36,8 @@ This is the cheapest path that gets us a real, globally-deployable AMS instance 
                                          ▼
                               ┌─────────────────────┐
                               │                     │
-   wss .../{ns}/conv/{a}    ► │   Conversation      │
-   /connect                   │   Durable Object    │
+   wss /{ns}/conv/{a}/connect► │   Conversation      │
+   ?t=<permissive-token>      │   Durable Object    │
                               │   (one per conv)    │
                               │                     │
                               │   - stream registry │

@@ -150,7 +150,7 @@ Useful for a subscriber that wants to know who else is in a conversation — and
 ### 4.1 Connect
 
 ```
-GET wss://<host>/v1/{namespace}/conversations/{alias}/connect?t=<permissive-token>
+GET wss://<host>/{namespace}/conversations/{alias}/connect?t=<permissive-token>
   Upgrade: websocket
   Authorization: Bearer ams_sk_...
   X-AMS-Stream-Name: klappy-assistant            // optional; defaults to UUID
@@ -158,7 +158,7 @@ GET wss://<host>/v1/{namespace}/conversations/{alias}/connect?t=<permissive-toke
   X-AMS-Self-Subscribe: false                    // optional; default false. See "Self-Subscription" below.
 ```
 
-The full magic link URL with `/connect` appended is the WebSocket endpoint. The `t` query parameter (the permissive token from the magic link) authorizes conversation admission. The `Authorization` header authorizes stream ownership. The optional `X-AMS-Stream-Metadata` header carries the initial metadata for this stream as base64-encoded JSON; subscribers may also set or update metadata after connect via the `set_metadata` client frame (§4.2). The optional `X-AMS-Self-Subscribe` header opts the connection into receiving its own stream's tokens (default: false; see "Self-Subscription" below).
+The full magic link URL with `/connect` appended is the WebSocket endpoint. The connect URL inherits the magic-link path shape from §2 / §3.2, which clients treat as opaque — there is no separate `/v1/` prefix on the stream-plane. The version prefix is a control-plane convention (§3, §8); the magic link IS the v1 stream URL, with no per-shape rewriting required. The `t` query parameter (the permissive token from the magic link) authorizes conversation admission. The `Authorization` header authorizes stream ownership. The optional `X-AMS-Stream-Metadata` header carries the initial metadata for this stream as base64-encoded JSON; subscribers may also set or update metadata after connect via the `set_metadata` client frame (§4.2). The optional `X-AMS-Self-Subscribe` header opts the connection into receiving its own stream's tokens (default: false; see "Self-Subscription" below).
 
 **Server response on success:** `101 Switching Protocols` followed by a server frame:
 
