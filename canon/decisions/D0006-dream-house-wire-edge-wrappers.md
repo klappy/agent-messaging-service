@@ -7,7 +7,7 @@ tier: 1
 voice: neutral
 stability: stable
 tags: ["ams", "canon", "decision", "architecture", "wire", "edge-wrapper", "vodka-architecture", "irreversible"]
-epoch: E0008.3
+epoch: E0008.4
 date: 2026-05-01
 derives_from: "POC-INFRA.md §2 §3 §4, PATTERNS.md §2, journal/2026-05-01-ams-dream-house-edge-wrappers.tsv"
 governs: "Where the wire ends and runtime adaptation begins. Why the Conversation DO never grows a runtime opinion. How new runtimes are added without protocol revision."
@@ -16,11 +16,11 @@ status: active
 
 # D0006 — Dream-House Wire, Edge-Wrapped Reality
 
-> The wire spec is push-native, WebSocket, opaque, broadcast — the dream house. Most agent runtimes are not. The wire does not bend to runtimes; per-session edge wrappers absorb the impedance mismatch. The wire stays the same shape regardless of which runtimes consume it.
+> The wire spec is push-native, WebSocket, opaque, stream-scoped broadcast — the dream house. Most agent runtimes are not. The wire does not bend to runtimes; per-session edge wrappers absorb the impedance mismatch. The wire stays the same shape regardless of which runtimes consume it.
 
 ## Description
 
-The AMS wire (`PROTOCOL.md`) is designed for what AMS wants to be when nothing is in the way: WebSocket-first, server-push, real-time, opaque tokens, broadcast metadata. Most agent runtimes (Claude Code, Claude Desktop, Cursor, claude.ai, MCP clients in general) are request/response or notification-with-fallback shaped. They cannot sit on a WebSocket waiting for events.
+The AMS wire (`PROTOCOL.md`) is designed for what AMS wants to be when nothing is in the way: WebSocket-first, server-push, real-time, opaque tokens, stream-scoped delivery with structural exclusion of self-echo (per `ams://canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription`). Most agent runtimes (Claude Code, Claude Desktop, Cursor, claude.ai, MCP clients in general) are request/response or notification-with-fallback shaped. They cannot sit on a WebSocket waiting for events.
 
 The decision is to **not** reshape the wire to fit the runtimes. Instead, every runtime gets its own thin, single-purpose **edge wrapper** that holds the wire WebSocket on the runtime's behalf and translates I/O patterns in both directions. The wrapper is the disposable layer; the wire is the permanent layer.
 
@@ -54,8 +54,9 @@ The MCP Session DO in the reference deployment is the canonical example.
 **In the wire / Conversation DO:**
 
 - Stream registry (who owns what stream).
+- Subscription registry (who reads what stream; owners structurally excluded by default per D0009).
 - Connected WebSocket list.
-- Broadcast loop (token + metadata frames).
+- Stream-scoped broadcast loop (token + metadata frames delivered per-stream, not per-conversation).
 - Per-stream ordering guarantee.
 - Authorization checks (D0003).
 
@@ -73,6 +74,8 @@ The wrapper holds **no persistent durable state**. Its lifetime is the session's
 **The Conversation DO does not learn about MCP.** A new MCP version, a new MCP transport quirk, a new MCP client behavior — none of these reach the wire. They are absorbed in the wrapper.
 
 **Adding a new runtime is a new wrapper, not a wire revision.** A Slack adapter, a webhook adapter, an SMS gateway, an A2A bridge — each is its own per-session wrapper class. The wire spec does not change to accommodate them.
+
+**The wrapper does not inherit responsibilities the wire already handles.** Under D0009, the wire structurally excludes self-delivery; wrappers do not implement echo filters. Subscriber-side filtering, deduplication, and emit-history state are not wrapper responsibilities because the wire does not surface anything that requires them.
 
 **Vodka discipline survives at both layers.** The wire is opaque about token contents. The wrapper is opaque about token contents. Neither layer interprets, validates, or schemas application data. Per the wrapper-stays-cheap rule (`ams://canon/constraints/wrapper-stays-cheap`), a wrapper that grows beyond translation has stopped being a wrapper and gets factored out.
 
@@ -100,3 +103,4 @@ This is the minimum proof that the wrapper boundary works. The second wrapper cl
 - `PATTERNS.md` §2 — the edge-wrapper pattern as a documented surface
 - `ams://canon/constraints/wrapper-stays-cheap` — the rule that prevents wrappers from accreting domain logic
 - `ams://canon/decisions/D0001-tokens-not-messages` — the wire unit the wrapper translates around
+- `ams://canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription` — the wire delivery model that simplifies wrapper responsibilities

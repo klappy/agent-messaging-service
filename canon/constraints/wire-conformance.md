@@ -7,9 +7,9 @@ tier: 1
 voice: neutral
 stability: stable
 tags: ["ams", "canon", "constraint", "wire", "protocol", "conformance", "implementation"]
-epoch: E0008.3
+epoch: E0008.4
 date: 2026-05-01
-derives_from: "PROTOCOL.md §7 (Conformance), PROTOCOL.md §3 §4 §5 §6"
+derives_from: "PROTOCOL.md §7 (Conformance), PROTOCOL.md §3 §4 §5 §6, ams://canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription"
 governs: "Any implementation that claims to be AMS-conformant. Any wrapper, broker, or alternative-transport experiment that wants to interop with the reference deployment."
 status: active
 ---
@@ -44,10 +44,11 @@ A conforming AMS implementation must:
    - `GET /v1/{namespace}/conversations/{alias}` (conversation inspection).
 2. **Implement the WebSocket connect path and the frame formats** in `PROTOCOL.md` §4. Both client→server frames (`token`, `set_metadata`, `ping`) and server→client frames (`joined`, `token`, `stream_joined`, `stream_left`, `stream_metadata`, `pong`) are required.
 3. **Enforce per-account stream ownership.** Only the account that owns a stream may emit on it or set its metadata. (Restated as `ams://canon/decisions/D0003-per-account-stream-ownership`.)
-4. **Broadcast every token emitted on any stream in a conversation to every connected subscriber on that conversation.** Per-stream ordering is preserved; cross-stream ordering is whatever the broadcast loop produces.
-5. **Broadcast every metadata change on any stream in a conversation to every connected subscriber on that conversation**, via a `stream_metadata` frame. Initial metadata rides on `stream_joined`.
-6. **Treat magic links as opaque on the client side.** Do not parse, do not modify, do not infer structure. Present intact when joining.
-7. **Treat metadata payloads as opaque** — never modify, schema-validate, or filter their contents.
+4. **Broadcast every token emitted on a stream to every subscriber attached to that stream, except the stream's owning account.** Per-stream ordering is preserved; cross-stream ordering is whatever the broadcast loop produces. Conversation membership is the admission boundary; broadcast is per-stream within that boundary. (Established by `ams://canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription`.)
+5. **Broadcast every metadata change on a stream to every subscriber attached to that stream, except the stream's owning account**, via a `stream_metadata` frame. Initial metadata rides on `stream_joined`.
+6. **Structurally exclude self-delivery by default.** The wire MUST NOT deliver a stream's `token` or `stream_metadata` frames to the stream's owning account unless the owner has explicitly opted into self-subscription via the opt-in path in `PROTOCOL.md` §4. The exclusion is a property of subscription registration, not a runtime filter.
+7. **Treat magic links as opaque on the client side.** Do not parse, do not modify, do not infer structure. Present intact when joining.
+8. **Treat metadata payloads as opaque** — never modify, schema-validate, or filter their contents.
 
 ## MUST NOT
 
@@ -58,6 +59,7 @@ A conforming AMS implementation must not:
 3. **Allow accounts to emit on streams they do not own.** Reject with a malformed-frame close or equivalent.
 4. **Allow accounts to set metadata on streams they do not own.** Same enforcement.
 5. **Break the per-stream ordering guarantee** in `PROTOCOL.md` §5. Tokens within a single stream are delivered to subscribers in emission order, full stop.
+6. **Deliver a stream's tokens to its owning account by default.** Self-delivery is opt-in only; the wire's default is structural exclusion. A broker that echoes own-stream tokens by default is non-conformant under D0009.
 
 ## MAY
 
@@ -68,6 +70,8 @@ A conforming AMS implementation may:
 - **Persist tokens for replay.** If replay is offered, declare it in the conversation metadata so subscribers know to expect catch-up.
 - **Apply rate limits, concurrency caps, or quota enforcement.** Declare these in the account metadata where useful.
 - **Support `jcs-sha256` conversation identifiers** (post-PoC; UUID is the v1 default).
+- **Offer opt-in self-subscription.** The wire MAY expose a registration option that lets an account subscribe to a stream it owns. Default behavior remains structural exclusion. If an implementation supports opt-in self-subscription, it should declare the capability in the conversation or account metadata so peers and tooling can detect it.
+- **Offer optional emit receipts.** The wire MAY expose an acknowledgment frame returned to the emitter when a token has been accepted for broadcast. Fire-and-forget remains the v1 default; receipts are an opt-in extension. Per D0009 §"Hard Cases Resolved" #1.
 
 ## How to Use This Checklist
 
@@ -87,4 +91,5 @@ The MAYs are not test items. They are licenses that allow implementations to dif
 - `PROTOCOL.md` §7 — the authoritative source
 - `PROTOCOL.md` §6 — error and close codes referenced by the rules above
 - `ams://canon/decisions/D0003-per-account-stream-ownership` — the ownership rule expanded
+- `ams://canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription` — the structural-exclusion rule that MUSTs #4, #5, #6 derive from
 - `ams://canon/constraints/two-agent-conversation-conventions` — application-level conventions that sit above conformance

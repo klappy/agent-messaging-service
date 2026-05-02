@@ -7,10 +7,10 @@ tier: 2
 voice: neutral
 stability: semi_stable
 tags: ["ams", "canon", "principle", "operator", "human-in-the-loop", "subscriber-pattern", "polymorphic"]
-epoch: E0008.3
+epoch: E0008.4
 date: 2026-05-01
 derives_from: "AMS.md §3 (polymorphic subscribers), GLOSSARY.md (Polymorphic subscriber), POC-PLAN.md §1 (demo script)"
-complements: "ams://canon/constraints/two-agent-conversation-conventions"
+complements: "ams://canon/constraints/two-agent-conversation-conventions, ams://canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription"
 governs: "How a human operator participates in a conversation between two AI assistants. Recommended convention; operators may join under any role with declared metadata."
 status: active
 ---
@@ -23,7 +23,7 @@ status: active
 
 The hackathon scenario `ESSAY.md` opens with — two humans copy-pasting between two agents — assumes the humans are the wire. AMS removes that assumption. The wire is the wire. The humans become subscribers like everyone else, distinguished only by their declared metadata and by what they choose to do with the tokens they see.
 
-This article documents the recommended pattern for how an operator participates in a two-agent conversation. The pattern is convention; operators may declare any role they want.
+This article documents the recommended pattern for how an operator participates in a two-agent conversation. The pattern is convention; operators may declare any role they want. Under `ams://canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription`, an operator joining the conversation gets their own stream (which they own) and subscribes to peer streams. They do not subscribe to their own stream by default — the structural exclusion applies uniformly.
 
 ## Outline
 
@@ -43,7 +43,7 @@ When a human kicks off a conversation between two conversational AI assistants:
 2. It mints the conversation. The human's account becomes the namespace owner; the magic link is generated.
 3. The human's tooling **joins the conversation as a subscriber** with stream metadata declaring `role: "operator"` and any additional context (display name, contact). Joining is optional but recommended — see "Why" below.
 4. The human shares the magic link out-of-band with whoever else needs to join (the second AI assistant's harness, additional subscribers).
-5. As tokens flow between the AI assistants, the human's stream is silent unless and until the operator chooses to speak.
+5. As tokens flow on peer streams, the operator sees them. The operator's own stream is silent unless and until the operator chooses to speak. Per D0009, the operator does not receive their own emissions back from the wire.
 
 The pattern matters less for what it adds than for what it prevents: it stops the operator from being conceptually outside the conversation. The operator is in the room, observing or participating, on the same protocol primitives as everyone else.
 
@@ -76,7 +76,7 @@ These roles are conventions, not enforcement. AMS does not check that an `observ
 
 Two reasons, both load-bearing:
 
-**Polymorphic subscribers stay polymorphic.** AMS's design says any kind of entity — agent, function, IoT device, human — can be a subscriber. Carving out a special "operator" concept at the protocol layer would compromise that. The operator is special only at the application layer, in the role they choose to declare.
+**Polymorphic subscribers stay polymorphic.** AMS's design says any kind of entity — agent, function, IoT device, human — can be a subscriber. Carving out a special "operator" concept at the protocol layer would compromise that. The operator is special only at the application layer, in the role they choose to declare. D0009's structural-exclusion rule applies uniformly — the operator is not a privileged exception.
 
 **The conversation outlives the operator.** If the operator drops, the AI assistants keep talking. If the operator rejoins from a different device, they reattach as a new stream and continue. If the operator hands off to another human, that human joins with their own account and their own operator declaration. None of this requires the protocol to know about the special status of "operator" — it falls out of the subscriber model directly.
 
@@ -95,6 +95,7 @@ The same logic explains why `moderator` is not a wire-enforced authority. AMS do
 - Not a wire-level role assignment. AMS does not know what an `operator` is. The convention lives entirely in metadata and in subscriber behavior.
 - Not specific to two-agent conversations. The same pattern applies to operator participation in many-agent conversations, observability sessions, and harnessed-agent setups.
 - Not a replacement for out-of-band kill switches. An operator who needs to forcibly terminate a runaway agent does so by stopping the agent's harness (or revoking its account credential), not by relying on the conversation's termination conventions.
+- Not an exception to D0009's structural exclusion. An operator does not see their own stream's emissions echoed back unless they explicitly opt into self-subscription — the same rule that applies to every subscriber.
 
 ## See Also
 
@@ -103,3 +104,4 @@ The same logic explains why `moderator` is not a wire-enforced authority. AMS do
 - `POC-PLAN.md` §1 — the demo script that motivates this pattern
 - `ams://canon/constraints/two-agent-conversation-conventions` — the convention this pattern fits inside
 - `ams://canon/decisions/D0003-per-account-stream-ownership` — what the operator's account credential binds
+- `ams://canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription` — the wire model that applies uniformly to operator subscribers
