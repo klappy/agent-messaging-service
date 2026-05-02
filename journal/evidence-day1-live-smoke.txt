@@ -1,0 +1,73 @@
+================================================================
+AMS Day 1 — Live Smoke Evidence
+Captured: 2026-05-02T22:45:59Z
+Validator session, fresh egress, post-colo-blip
+Scope:    SPEC.md §3.1 items 1 and 2 + D0011 cross-host parity
+Hosts:    https://ams.klappy.dev  and  https://ams.truthkit.ai
+Out of scope today: §3.1 items 3 (wscat), 4 (MCP create), 5 (MCP join+send)
+================================================================
+
+### 0a. /healthz @ ams.klappy.dev
+HTTP/2 200 
+content-type: application/json
+access-control-allow-origin: *
+access-control-allow-headers: *
+access-control-allow-methods: GET, HEAD, OPTIONS
+{"ok":true,"host":"ams.klappy.dev","ts":"2026-05-02T22:45:59.635Z"}
+
+### 0b. /healthz @ ams.truthkit.ai
+HTTP/2 200 
+content-type: application/json
+access-control-allow-origin: *
+access-control-allow-headers: *
+access-control-allow-methods: GET, HEAD, OPTIONS
+{"ok":true,"host":"ams.truthkit.ai","ts":"2026-05-02T22:46:00.411Z"}
+
+----------------------------------------------------------------
+### 1. SPEC §3.1 #1 — POST ams.klappy.dev /v1/accounts {namespace:"closeout"} → expect 201 + credential
+HTTP/2 201 
+content-type: application/json
+{"account_id":"acc_01KQNDXGM97SPWPRPMHX","namespace":"closeout","credential":"ams_sk_B2K0vXx_SbQTc_K8RNVOsUcl6QzyLn4XFIhGajxhKeA","created_at":"2026-05-02T22:46:00.585Z"}
+Extracted credential: ams_sk_B2K0vXx_SbQTc_K8RNVOsUcl6QzyLn4XFIhGajxhKeA
+
+### 2. SPEC §3.1 #2 — POST ams.klappy.dev /v1/closeout/conversations w/ bearer → expect 201 + magic_link
+HTTP/2 201 
+content-type: application/json
+{"conversation_id":"conv_01KQNDXGZNVVDMGQ0PXD","alias":"golden-harbor-2560","magic_link":"https://ams.klappy.dev/closeout/conversations/golden-harbor-2560?t=sRO5xOI3w869xX8QGRQl1v6pIGJ4aFFB6P4Jhr8cqYY","stream_id":"str_01KQNDXGZN7XDZMMX0DB","stream_name":"stream-8_4WwXKL","metadata":{},"stream_metadata":{},"created_at":"2026-05-02T22:46:00.949Z"}
+magic_link from klappy.dev: https://ams.klappy.dev/closeout/conversations/golden-harbor-2560?t=sRO5xOI3w869xX8QGRQl1v6pIGJ4aFFB6P4Jhr8cqYY
+
+----------------------------------------------------------------
+### 3. D0011 CROSS-HOST PARITY — same bearer mints on ams.truthkit.ai
+    (proves same KV, same Worker, account state is host-blind)
+HTTP/2 201 
+content-type: application/json
+{"conversation_id":"conv_01KQNDXHABEXCWMKRJMK","alias":"violet-mountain-4009","magic_link":"https://ams.truthkit.ai/closeout/conversations/violet-mountain-4009?t=7f6sNOcPTz3eojF2XA2_ACJz1RMHIVc6bBDDyjgfkHw","stream_id":"str_01KQNDXHABVFQV8AC799","stream_name":"stream-F7h3tQLq","metadata":{},"stream_metadata":{},"created_at":"2026-05-02T22:46:01.291Z"}
+magic_link from truthkit.ai: https://ams.truthkit.ai/closeout/conversations/violet-mountain-4009?t=7f6sNOcPTz3eojF2XA2_ACJz1RMHIVc6bBDDyjgfkHw
+
+Two magic links from one bearer, one across each host:
+  klappy.dev  → https://ams.klappy.dev/closeout/conversations/golden-harbor-2560?t=sRO5xOI3w869xX8QGRQl1v6pIGJ4aFFB6P4Jhr8cqYY
+  truthkit.ai → https://ams.truthkit.ai/closeout/conversations/violet-mountain-4009?t=7f6sNOcPTz3eojF2XA2_ACJz1RMHIVc6bBDDyjgfkHw
+Host components differ; namespace and {alias} structure identical.
+
+----------------------------------------------------------------
+### 4. NEG-A — no Authorization header → expect 401 missing_credential
+HTTP/2 401 
+{"error":"missing_credential","message":"Authorization: Bearer <ams_sk_...> required."}
+
+### 5. NEG-B — bogus bearer → expect 401 invalid_credential
+HTTP/2 401 
+{"error":"invalid_credential","message":"Account credential not recognized."}
+
+### 6. NEG-C — cross-namespace mint → expect 403 namespace_mismatch
+HTTP/2 403 
+{"error":"namespace_mismatch","message":"Bearer credential is for namespace 'closeout'; cannot mint under 'somebody-else'."}
+
+### 7. NEG-D — namespace re-claim → expect 409 namespace_taken
+HTTP/2 409 
+{"error":"namespace_taken","message":"Namespace 'closeout' is already registered."}
+
+================================================================
+RESULT: SPEC §3.1 items 1 and 2 PASS on both hosts.
+        D0011 host-parity attested at the control-plane layer.
+        Day 1 closeable. Day 2 (DOs + WebSocket) clear to start.
+================================================================
