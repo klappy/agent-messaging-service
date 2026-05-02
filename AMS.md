@@ -253,7 +253,7 @@ Honest things we do not yet know, and which the PoC will not answer:
 - **Optional emit receipts.** Fire-and-forget is the v1 default; will some orchestration use case force opt-in receipts as a MAY? Probably yes eventually; not in PoC.
 - **JCS-SHA collision and canonicalization scope.** When deterministic IDs land, what gets included in the canonical input? Schema TBD before the feature ships.
 - **Federation.** Two brokers, one conversation. Possible, not solved. Probably needs a federation protocol layer.
-- **Spec ownership.** Is AMS a Covenant project, an open standard with a reference implementation, or both? The right answer is probably "both, eventually." The PoC ships under Covenant.
+- **Spec ownership.** Is AMS a klappy project, an open standard with a reference implementation, or both? The right answer is probably "both, eventually." The PoC ships under klappy.
 
 ---
 

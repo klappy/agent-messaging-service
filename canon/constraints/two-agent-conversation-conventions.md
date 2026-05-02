@@ -110,7 +110,7 @@ A conversational AI subscriber declares itself in stream metadata via the `capab
     },
     "annotations": {
       "display_name": "Klappy's Claude Code",
-      "operator": "klappy@covenant.dev"
+      "operator": "klappy@klappy.dev"
     }
   }
 }

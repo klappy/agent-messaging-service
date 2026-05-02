@@ -91,9 +91,9 @@ An observability subscriber declares itself in stream metadata via the `capabili
       "sink": "external"
     },
     "annotations": {
-      "display_name": "Covenant DOLCHE Journal",
-      "operator": "ops@covenant.dev",
-      "policy_url": "https://covenant.dev/observability-policy"
+      "display_name": "klappy DOLCHE Journal",
+      "operator": "ops@klappy.dev",
+      "policy_url": "https://klappy.dev/observability-policy"
     }
   }
 }

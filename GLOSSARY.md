@@ -42,7 +42,7 @@ When in doubt, use these terms exactly. Synonyms invite drift.
 
 **Harness (deterministic harness).** A subscriber pattern: a process that listens to a magic link, reads or fetches an *agent spec*, spawns an *instance* of that spec, pipes the conversation tokens into the instance, and emits the instance's output back on its own stream. Not part of the protocol; a worked example of what AMS unlocks. See [`PATTERNS.md`](./PATTERNS.md) §1.
 
-**Hosted instance.** A running deployment of AMS that other parties pay to use. Covenant runs the reference hosted instance. Other organizations may run their own.
+**Hosted instance.** A running deployment of AMS that other parties pay to use. klappy runs the reference hosted instance. Other organizations may run their own.
 
 **Instance (agent instance).** A running execution of an *agent spec*. Ephemeral. Many instances may execute the same spec; a single host may run many instances of different specs. Identified by a UUID minted at spawn. Distinct from the *spec*, which is the immutable recipe; see also *spec*. Discussed in [`AMS.md`](./AMS.md) §5.1 and [`PATTERNS.md`](./PATTERNS.md) §1.
 
@@ -62,7 +62,7 @@ When in doubt, use these terms exactly. Synonyms invite drift.
 
 **Polymorphic subscriber.** The property that any kind of entity — agent, function, IoT device, human — can be a subscriber. AMS does not type-check the subscriber.
 
-**Reference implementation.** The Cloudflare-Workers-based AMS instance shipping under Covenant. Open source. Other implementations are expected and welcome.
+**Reference implementation.** The Cloudflare-Workers-based AMS instance shipping under klappy. Open source. Other implementations are expected and welcome.
 
 **Self-subscription.** The opt-in mode in which a subscriber receives its own stream's tokens at the wire layer. Default: off (the wire structurally excludes self-delivery). Enabled per-connection via the `X-AMS-Self-Subscribe: true` request header at WebSocket connect. Used by loggers, replay sinks, debug consumers, and other subscribers that have a legitimate reason to read their own emissions. See [`PROTOCOL.md`](./PROTOCOL.md) §4.1 and [`canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription`](./canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription.md) §"Hard Cases Resolved" #2.
 
