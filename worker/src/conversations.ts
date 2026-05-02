@@ -177,8 +177,12 @@ export async function createConversation(
   );
 }
 
-async function readJsonAllowEmpty(req: Request): Promise<unknown> {
+async function readJsonAllowEmpty(req: Request): Promise<Record<string, unknown>> {
   const text = await req.text();
   if (!text || text.trim() === "") return {};
-  return JSON.parse(text);
+  const parsed = JSON.parse(text);
+  if (!isPlainObject(parsed)) {
+    throw new SyntaxError("Request body must be a JSON object.");
+  }
+  return parsed;
 }
