@@ -1563,7 +1563,6 @@ const randHex = (n) => {
     removeCaret(sBody);
     removeCaret(rBody);
     // tail markers
-    const tailHead = (senderLog === logA ? logA : logB);
     appendFrame(senderLog, 'sys', '— wire —', '').textContent = 'emit complete · ' + tokens.length + ' tokens · self-echo suppressed';
   }
 
@@ -1725,6 +1724,11 @@ export function homepageHeadResponse(): Response {
     status: 200,
     headers: {
       "content-type": "text/html; charset=utf-8",
+      // Brief edge cache — the page is static-ish, but we want updates to roll
+      // out within a minute of a deploy.
+      "cache-control": "public, max-age=60",
+      "x-frame-options": "DENY",
+      "referrer-policy": "strict-origin-when-cross-origin",
     },
   });
 }
