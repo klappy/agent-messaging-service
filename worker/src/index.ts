@@ -11,6 +11,7 @@ import {
   pepperedHash,
   randomToken,
   timingSafeEqualHex,
+  utf8ToBase64,
 } from "./util";
 
 // Re-export the DO class so wrangler's [[migrations]] / [[durable_objects.bindings]]
@@ -216,7 +217,7 @@ async function handleConnect(
     method: "GET",
     headers: {
       upgrade: "websocket",
-      "x-ams-join-payload": btoa(JSON.stringify(payload)),
+      "x-ams-join-payload": utf8ToBase64(JSON.stringify(payload)),
     },
   });
   return stub.fetch(doReq);

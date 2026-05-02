@@ -1,5 +1,5 @@
 import type { Env } from "./types";
-import { ulid } from "./util";
+import { base64ToUtf8, isPlainObject, ulid } from "./util";
 
 // Payload the Worker hands the DO at upgrade time. Carried as a base64 JSON
 // blob in the X-AMS-Join-Payload header on the internal Worker→DO request,
@@ -22,10 +22,6 @@ interface ConnectionState {
   stream_name: string;
   self_subscribe: boolean;
   metadata: Record<string, unknown>;
-}
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 // One ConversationDO per conversation_id. The Worker resolves alias → conv_id
@@ -56,7 +52,7 @@ export class ConversationDO {
     }
     let payload: JoinPayload;
     try {
-      payload = JSON.parse(atob(payloadHeader)) as JoinPayload;
+      payload = JSON.parse(base64ToUtf8(payloadHeader)) as JoinPayload;
     } catch {
       return new Response("invalid join payload", { status: 400 });
     }
