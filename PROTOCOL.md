@@ -101,7 +101,7 @@ Content-Type: application/json
 {
   "conversation_id": "conv_01H...",
   "alias": "falcon-pulse-9421",
-  "magic_link": "https://ams.covenant.dev/klappy/conversations/falcon-pulse-9421?t=...",
+  "magic_link": "https://ams.klappy.dev/klappy/conversations/falcon-pulse-9421?t=...",
   "stream_id": "str_01H...",
   "stream_name": "klappy-assistant",
   "metadata": { ... },

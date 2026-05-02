@@ -77,7 +77,7 @@ The non-overlap test is the design check. If a proposed observability feature wo
 - AMS cannot ship a wire frame that says "this is an observability event" without breaking the polymorphic-subscriber rule.
 - AMS cannot grant subscribers privileged access to events outside their joined conversations. Cross-conversation observability is built by holding many magic links and joining each, not by a wire-level subscription firehose.
 - AMS cannot persist tokens for replay as part of the wire (replay is `SPEC.md` §5 deferred work). Observability subscribers that miss tokens during disconnect cannot recover them through the protocol.
-- The reference deployment cannot present observability data as a built-in dashboard route on `ams.covenant.dev`. Dashboards run as separate services that consume the hook sink and the subscriber sink, not as broker features.
+- The reference deployment cannot present observability data as a built-in dashboard route on the broker hosts (`ams.klappy.dev`, `ams.truthkit.ai`, or any future CNAME per `ams://canon/decisions/D0011-multi-host-cname-deployment`). Dashboards run as separate services that consume the hook sink and the subscriber sink, not as broker features.
 
 ## What This Is Not
 

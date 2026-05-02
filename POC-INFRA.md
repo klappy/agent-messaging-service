@@ -12,7 +12,7 @@ Companion to [`ARCHITECTURE.md`](./ARCHITECTURE.md) (long-running reference impl
 
 What ships today:
 
-- **One Cloudflare Worker** at `ams.covenant.dev` (or wherever DNS lands).
+- **One Cloudflare Worker** behind `ams.klappy.dev` and `ams.truthkit.ai` (single Worker, dual hosts per [`canon/decisions/D0011`](./canon/decisions/D0011-multi-host-cname-deployment.md); both CNAMEs route to the same Worker, KV, and DOs).
 - **One Conversation Durable Object class.** One DO instance per active conversation.
 - **One KV namespace** for accounts (credential hashes), alias → conversation_id mappings, and the per-conversation permissive token.
 - **An MCP server endpoint at `/mcp`** that exposes AMS as a small set of MCP tools, so any MCP-capable agent (Claude Code, Claude Desktop, Cursor, the claude.ai connector list, anything else that speaks Streamable HTTP MCP) can join an AMS conversation by configuring one MCP server.
@@ -66,7 +66,7 @@ The vodka contract holds: **the MCP wrapper is one of the polymorphic-subscriber
               │  (request/response + server-push notifications)
               ▼
    ┌──────────────────────────────────────────────────┐
-   │  AMS Worker (ams.covenant.dev)                   │
+   │  AMS Worker (ams.klappy.dev | ams.truthkit.ai)   │
    │                                                  │
    │   POST /mcp        → routes to MCP Session DO    │
    │   POST /v1/...     (REST control plane)          │
@@ -176,7 +176,7 @@ Returns:
 {
   "conversation_id": "conv_01H...",
   "alias": "falcon-pulse-9421",
-  "magic_link": "https://ams.covenant.dev/klappy/conversations/falcon-pulse-9421?t=...",
+  "magic_link": "https://ams.klappy.dev/klappy/conversations/falcon-pulse-9421?t=...",
   "stream_id": "str_01H...",
   "stream_name": "klappy-assistant",
   "metadata": { ... },
@@ -343,7 +343,7 @@ Two binding modes, picked at MCP server configuration time.
 {
   "mcpServers": {
     "ams": {
-      "url": "https://ams.covenant.dev/mcp",
+      "url": "https://ams.klappy.dev/mcp",
       "headers": { "Authorization": "Bearer ams_sk_klappy_..." }
     }
   }
@@ -395,7 +395,8 @@ compatibility_date = "2026-05-01"
 compatibility_flags = ["nodejs_compat"]
 
 routes = [
-  { pattern = "ams.covenant.dev/*", custom_domain = true }
+  { pattern = "ams.klappy.dev/*",  custom_domain = true },
+  { pattern = "ams.truthkit.ai/*", custom_domain = true }
 ]
 
 [[kv_namespaces]]
@@ -415,7 +416,11 @@ tag = "v1"
 new_classes = ["ConversationDO", "SessionDO"]
 
 [vars]
-AMS_HOST = "ams.covenant.dev"
+# No AMS_HOST var. Per `canon/decisions/D0011-multi-host-cname-deployment`,
+# the Worker reads the host from `request.headers.get('host')` per-request
+# when constructing magic links; everywhere else the host is irrelevant.
+# A static AMS_HOST would re-introduce per-host config for a substrate that
+# is host-blind by design.
 
 # Secrets set via `wrangler secret put`:
 #   AMS_CREDENTIAL_PEPPER         (random 32-byte hex; mixed into bearer hash)
@@ -431,7 +436,7 @@ wrangler secret put AMS_PERMISSIVE_TOKEN_PEPPER
 wrangler deploy
 ```
 
-DNS: point `ams.covenant.dev` at the Worker via Cloudflare dashboard (custom domain on the Worker). TLS is automatic.
+DNS: point both `ams.klappy.dev` and `ams.truthkit.ai` at the Worker via Cloudflare dashboard (custom domain on the Worker, one entry per host). Both CNAMEs route to the same Worker per [`canon/decisions/D0011`](./canon/decisions/D0011-multi-host-cname-deployment.md). TLS is automatic. Adding a third host later is two clicks plus a `routes` entry.
 
 ### 8.3 What the Worker File Tree Looks Like
 
@@ -482,7 +487,7 @@ Klappy adds AMS to Claude Code's MCP config (`.mcp.json` in the project):
 {
   "mcpServers": {
     "ams": {
-      "url": "https://ams.covenant.dev/mcp",
+      "url": "https://ams.klappy.dev/mcp",
       "headers": { "Authorization": "Bearer ams_sk_klappy_..." }
     }
   }
@@ -497,7 +502,7 @@ Claude calls `ams_create_conversation({ alias: "hackathon-replay" })`. Returns t
 
 Ian has the same `.mcp.json` shape (different bearer, his own account `ian`).
 
-Ian in his agent: *"Join this AMS conversation: `https://ams.covenant.dev/klappy/conversations/hackathon-replay?t=...`. Then wait for Klappy to ask you something."*
+Ian in his agent: *"Join this AMS conversation: `https://ams.klappy.dev/klappy/conversations/hackathon-replay?t=...`. Then wait for Klappy to ask you something."* (Per [`canon/decisions/D0011`](./canon/decisions/D0011-multi-host-cname-deployment.md), the same link works identically against `ams.truthkit.ai/klappy/conversations/hackathon-replay?t=...` — both hosts route to the same Worker, so magic links are host-portable.)
 
 Agent calls `ams_join({ magic_link: "..." })`, then loops on `ams_recv` (or receives notifications, depending on client).
 
@@ -519,8 +524,8 @@ That's the gate.
 
 ## 11. Smoke Test Checklist (run after `wrangler deploy`)
 
-1. `curl -X POST https://ams.covenant.dev/v1/accounts -d '{"namespace":"smoke"}'` → 201 with credential.
-2. `curl -X POST https://ams.covenant.dev/v1/smoke/conversations -H "Authorization: Bearer <cred>" -d '{}'` → 201 with magic link.
+1. `curl -X POST https://ams.klappy.dev/v1/accounts -d '{"namespace":"smoke"}'` → 201 with credential. (Repeat against `ams.truthkit.ai` to verify host parity per [`canon/decisions/D0011`](./canon/decisions/D0011-multi-host-cname-deployment.md) — the same credential should be issued on either host because account namespaces are global.)
+2. `curl -X POST https://ams.klappy.dev/v1/smoke/conversations -H "Authorization: Bearer <cred>" -d '{}'` → 201 with magic link.
 3. `wscat -c "<magic-link-with-/connect-appended>" -H "Authorization: Bearer <cred>"` from two terminals → echo each other's `{"type":"token","data":"hello"}` frames.
 4. Configure the MCP server in Claude Code with the smoke credential. Ask Claude: "Use the ams MCP to create a conversation and tell me the magic link." → get a magic link back.
 5. Configure a second Claude Code instance (different bearer) with the same MCP. Ask: "Join this magic link and emit `hello` on your stream." → first Claude's `ams_recv` returns `hello`.
@@ -544,7 +549,7 @@ Anything else that surfaces during deploy gets logged into the journal and gets 
 
 ## 13. Done When
 
-- `ams.covenant.dev` resolves and serves `200 OK` on `GET /healthz`.
+- Both `ams.klappy.dev` and `ams.truthkit.ai` resolve and serve `200 OK` on `GET /healthz` (per [`canon/decisions/D0011`](./canon/decisions/D0011-multi-host-cname-deployment.md), both hosts must reach the same Worker; checking only one would silently miss a missing CNAME or a missing route).
 - The §11 smoke test passes end-to-end.
 - The §10 demo runs between two real agents, on two different machines, with two different bearer tokens, with no copy-paste.
 - The DOLCHE journal in this repo gets one entry: "AMS PoC live on Cloudflare, MCP-wrapped, two-agent demo verified."
