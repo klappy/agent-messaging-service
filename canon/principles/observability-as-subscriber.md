@@ -10,7 +10,7 @@ tags: ["ams", "canon", "principle", "observability", "subscriber-pattern", "poly
 epoch: E0008.3
 date: 2026-05-01
 derives_from: "AMS.md §3 (polymorphic subscribers), GLOSSARY.md (Polymorphic subscriber, DOLCHE journal), PATTERNS.md §3 (Observability sink), ARCHITECTURE.md §8"
-complements: "ams://canon/decisions/D0009-observability-via-subscriber-not-wire, ams://canon/constraints/observability-payload-boundary, ams://canon/principles/operator-as-subscriber, ams://canon/principles/own-stream-echo-must-be-filtered"
+complements: "ams://canon/decisions/D0010-observability-via-subscriber-not-wire, ams://canon/constraints/observability-payload-boundary, ams://canon/principles/operator-as-subscriber, ams://canon/principles/own-stream-echo-must-be-filtered"
 governs: "How an observability service participates in AMS conversations and where broker-side hooks fill what subscribers cannot see. Recommended convention; observability sinks may operate under different conventions if they declare them."
 status: active
 ---
@@ -142,7 +142,7 @@ Peers that recognize the `observability_sink` role may adapt their behavior. A c
 - `ARCHITECTURE.md` §8 — the PoC observability staging this principle formalizes
 - `PATTERNS.md` §3 — observability sink as a future pattern
 - `GLOSSARY.md` — "Polymorphic subscriber", "DOLCHE journal"
-- `ams://canon/decisions/D0009-observability-via-subscriber-not-wire` — the architectural decision this principle operates under
+- `ams://canon/decisions/D0010-observability-via-subscriber-not-wire` — the architectural decision this principle operates under
 - `ams://canon/constraints/observability-payload-boundary` — the safety contract
 - `ams://canon/principles/operator-as-subscriber` — the cousin pattern for human operators (different role, same polymorphic-subscriber base)
 - `ams://canon/principles/own-stream-echo-must-be-filtered` — observability subscribers are named as a filter-required class

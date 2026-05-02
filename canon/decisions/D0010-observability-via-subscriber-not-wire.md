@@ -1,6 +1,6 @@
 ---
-uri: ams://canon/decisions/D0009-observability-via-subscriber-not-wire
-title: "D0009 — Observability Lives as a Subscriber Pattern, Not as a Wire Feature"
+uri: ams://canon/decisions/D0010-observability-via-subscriber-not-wire
+title: "D0010 — Observability Lives as a Subscriber Pattern, Not as a Wire Feature"
 audience: canon
 exposure: nav
 tier: 1
@@ -15,7 +15,7 @@ governs: "Where observability lives in the AMS architecture. The choice cannot b
 status: active
 ---
 
-# D0009 — Observability Lives as a Subscriber Pattern, Not as a Wire Feature
+# D0010 — Observability Lives as a Subscriber Pattern, Not as a Wire Feature
 
 > AMS observability is split across two layers. Wire-visible activity is captured by polymorphic subscribers that join conversations like any other peer. Broker-internal activity that no subscriber can see is captured by infrastructure hooks in the Worker and Durable Object. Neither layer adds opinions to the wire. The two layers do not overlap.
 

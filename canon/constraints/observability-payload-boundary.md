@@ -10,7 +10,7 @@ tags: ["ams", "canon", "constraint", "observability", "privacy", "safety", "payl
 epoch: E0008.3
 date: 2026-05-01
 derives_from: "PROTOCOL.md §4.1, PROTOCOL.md §4.4, PROTOCOL.md §7 (must not modify or schema-validate metadata in transit), ARCHITECTURE.md §8 (PoC does not log token contents), klappy://canon/constraints/telemetry-governance"
-complements: "ams://canon/decisions/D0009-observability-via-subscriber-not-wire, ams://canon/principles/observability-as-subscriber"
+complements: "ams://canon/decisions/D0010-observability-via-subscriber-not-wire, ams://canon/principles/observability-as-subscriber"
 governs: "Every observability subscriber on AMS, every infrastructure hook on the broker, and every sink that receives data from either. Defines the safety floor for what may be captured at the wire and what must never leave the broker."
 status: active
 ---
@@ -168,7 +168,7 @@ The hash is unkeyed SHA-256 truncated to 12 hex characters. Truncation prevents 
 - `PROTOCOL.md` §4.1 — the wire's broadcast rule
 - `PROTOCOL.md` §7 — the wire's payload-opacity rule
 - `ARCHITECTURE.md` §8 — the PoC observability staging
-- `ams://canon/decisions/D0009-observability-via-subscriber-not-wire` — the architectural commit this constraint enforces
+- `ams://canon/decisions/D0010-observability-via-subscriber-not-wire` — the architectural commit this constraint enforces
 - `ams://canon/principles/observability-as-subscriber` — how subscribers operate under this constraint
 - `ams://canon/principles/own-stream-echo-must-be-filtered` — observability subscribers are explicitly named as a class that must filter
 - `ams://canon/constraints/permanent-non-goals` — item 1 (identity) and item 2 (metadata schema) frame why this constraint is needed
