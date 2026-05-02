@@ -60,7 +60,7 @@ Operator metadata can declare a posture so other subscribers know what to expect
     },
     "annotations": {
       "display_name": "Klappy",
-      "contact": "klappy@covenant.dev"
+      "contact": "klappy@klappy.dev"
     }
   }
 }

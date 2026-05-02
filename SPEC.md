@@ -189,7 +189,7 @@ If any of these is observed, the plan needs re-thinking, not just re-trying:
 - **A second wrapper class (e.g. webhook, Slack) cannot be added without modifying `conversation.ts`.** Means the wrapper-pattern abstraction leaked, and the ConversationDO is not as pure as the spec claims.
 - **An agent's emitted tokens are observably re-ordered within a single stream.** Means the per-stream ordering guarantee in [`PROTOCOL.md`](./PROTOCOL.md) §5 is broken in the implementation; this is a wire-conformance failure.
 - **Subscribers receive their own emitted tokens by default at the wire layer.** Means the structural exclusion in [`PROTOCOL.md`](./PROTOCOL.md) §7 MUST #6 is broken in the implementation; this is a wire-conformance failure under D0009.
-- **Adoption signal after the first 30 days is zero — nobody outside Covenant tries to write a subscriber.** Means the foundation play is mistimed or mis-positioned, and the strategic risk in §8 has materialized.
+- **Adoption signal after the first 30 days is zero — nobody outside klappy tries to write a subscriber.** Means the foundation play is mistimed or mis-positioned, and the strategic risk in §8 has materialized.
 
 ## 11. Open Decisions Still Inside v1 Scope
 

@@ -70,7 +70,7 @@ A proposal that fails the first test is rejected. A proposal that passes the fir
 - Not a claim that the listed items are unimportant. They are critical. They are critical *somewhere else*. AMS is choosing where to own and where to defer.
 - Not a permanent block on documenting conventions for these layers. AMS canon may publish recommended conventions (for capability schemas, identity declarations, termination signals) without making those conventions wire-required. Conventions are documented, not enforced.
 - Not exhaustive. If a new layer emerges (post-quantum identity, decentralized registry semantics, novel transport types), it gets added to the list when the principle applies.
-- Not a refusal to host opinionated layers operationally. Covenant may run hosted services that include opinionated identity, an opinionated capability schema, or an opinionated job coordinator — those services run *on top of* AMS as products, not as wire features.
+- Not a refusal to host opinionated layers operationally. klappy may run hosted services that include opinionated identity, an opinionated capability schema, or an opinionated job coordinator — those services run *on top of* AMS as products, not as wire features.
 
 ## See Also
 

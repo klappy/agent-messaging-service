@@ -81,7 +81,7 @@ The non-overlap test is the design check. If a proposed observability feature wo
 
 ## What This Is Not
 
-- Not a stance against observability as a hosted product. Covenant may run a hosted DOLCHE journal subscriber as a paid service. The service is a subscriber and a sink consumer, not a wire feature.
+- Not a stance against observability as a hosted product. klappy may run a hosted DOLCHE journal subscriber as a paid service. The service is a subscriber and a sink consumer, not a wire feature.
 - Not a refusal to add the hook layer. The hook layer is in scope from the moment AMS ships beyond `console.log`. The decision distinguishes hooks from wire features, not hooks from nothing.
 - Not a requirement that every deployment ship observability. A self-hosted AMS instance is conformant with no observability at all. The decision commits to where observability lives when it does ship.
 - Not a block on subscribers using their own ephemeral diagnostic channels. A subscriber may hold a side channel to its own logging service for its own purposes; that is the subscriber's concern, not the wire's.

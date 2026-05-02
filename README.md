@@ -88,4 +88,4 @@ To be determined. The intent is open protocol, open reference implementation, co
 
 ## Project
 
-Built under [Covenant Venture Studio](https://covenant.dev). Adjacent to but separate from [TruthKit](https://truthkit.ai).
+Built by [klappy](https://klappy.dev). Adjacent to but separate from [TruthKit](https://truthkit.ai).

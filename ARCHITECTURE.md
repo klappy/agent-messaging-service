@@ -1,6 +1,6 @@
 # AMS Reference Architecture
 
-How the PoC is built. The protocol in [`PROTOCOL.md`](./PROTOCOL.md) is implementation-agnostic; this document describes the specific reference implementation shipping under Covenant.
+How the PoC is built. The protocol in [`PROTOCOL.md`](./PROTOCOL.md) is implementation-agnostic; this document describes the specific reference implementation shipping under klappy.
 
 ---
 
@@ -10,7 +10,7 @@ The PoC ships on **Cloudflare Workers + Durable Objects + KV**.
 
 | Component | Cloudflare Primitive | Why |
 |-----------|---------------------|-----|
-| HTTP / WebSocket edge | Worker | Already hosting the rest of the Covenant stack here. Zero cold start. Global edge. URL routing is native. |
+| HTTP / WebSocket edge | Worker | Already hosting the rest of the klappy stack here. Zero cold start. Global edge. URL routing is native. |
 | Per-conversation state and broadcast loop | Durable Object | One DO per conversation. Holds the WebSocket connections, the stream registry, the broadcast loop. Naturally serialized — no concurrency hell. |
 | Account directory + alias resolution | KV | Read-heavy, write-rare. KV's eventual consistency is acceptable because account credentials and conversation aliases are immutable once created. |
 | Account credential issuance | Worker (no storage) | Hash the credential, store the hash in KV. Return the credential exactly once. |

@@ -1135,7 +1135,7 @@ curl https://ams.klappy.dev/healthz
   <div class="foot-inner">
     <div>
       <p class="foot-brand"><em>Token stream routing.</em></p>
-      <p class="foot-tag">Built under Covenant Venture Studio · Adjacent to TruthKit</p>
+      <p class="foot-tag">Built by klappy · Adjacent to TruthKit</p>
     </div>
     <div class="foot-col">
       <h6>Read</h6>
@@ -1161,7 +1161,6 @@ curl https://ams.klappy.dev/healthz
         <li><a href="https://klappy.dev" target="_blank" rel="noopener">klappy.dev</a></li>
         <li><a href="https://oddkit.klappy.dev" target="_blank" rel="noopener">oddkit — epistemic guide</a></li>
         <li><a href="https://truthkit.ai" target="_blank" rel="noopener">truthkit.ai</a></li>
-        <li><a href="https://covenant.dev" target="_blank" rel="noopener">covenant.dev</a></li>
       </ul>
     </div>
   </div>
