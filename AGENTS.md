@@ -19,6 +19,19 @@
 
 ---
 
+## Scope: Build-Side Only
+
+**This file is for agents *building* AMS** — coding sessions opened in this repository to write protocol code, edit specs, update canon, or otherwise modify the AMS source. Two distinct contexts use AMS-related tooling, and they are not the same:
+
+- **Build-side (this file's audience):** Claude Code, Cursor, Cline, Codex, etc. opened in `klappy/agent-messaging-service` to work on the source. The MCP server attached is **oddkit** (epistemic discipline, canon search). The `.mcp.json` here is for these sessions.
+- **Consume-side (out of scope here):** Agents that *use* AMS at runtime — joining conversations via the MCP wrapper at `ams.klappy.dev/mcp`, calling `ams_create_conversation` / `ams_join` / `ams_send` / `ams_recv`. The MCP server attached is **AMS itself**. Consumers configure their own `.mcp.json` with a Bearer token; see [`POC-INFRA.md`](./POC-INFRA.md) §8.4 and §10 for the current example shape.
+
+Comprehensive consumer-side onboarding documentation — equivalent to this file, but for runtime AMS consumers, with their own creed/posture/canon-pointer pattern — is **future work**. Today, consumers learn the conventions through `canon/constraints/two-agent-conversation-conventions.md` and the long-form spec docs. A parallel `docs/consumer-onboarding.md` (or similar) will follow once the PoC ships and there are real consumers shaping the requirements.
+
+**The build/consume distinction also shows up in oddkit telemetry.** This config identifies the build-side as `agent-messaging-service-dev` (with the `-dev` suffix). Future consumer-side oddkit configurations should use a distinct label so the public leaderboard at `klappy://canon/constraints/telemetry-governance` does not conflate two different populations of caller into one row.
+
+---
+
 ## Identity of Proactive Integrity
 
 Before I speak, I observe.
@@ -148,14 +161,16 @@ Two separate identification channels are in play, and they answer different ques
 
 Per `klappy://canon/constraints/telemetry-governance`, the oddkit hosted service resolves a consumer label from the request, in priority order: `?consumer=` query parameter first, then `x-oddkit-client` header, then MCP `initialize.clientInfo.name`, then `User-Agent`, then `"unknown"`. The `.mcp.json` at repo root configures both the highest-priority identifiers and the self-report headers used for the transparency leaderboard:
 
-- **`?consumer=agent-messaging-service`** in the URL — the canonical consumer label per the telemetry policy's recommended identification method.
-- **`x-oddkit-client: agent-messaging-service`** — same value via the header path, so the consumer label is set whether the server reads from URL or header.
+- **`?consumer=agent-messaging-service-dev`** in the URL — the canonical consumer label per the telemetry policy's recommended identification method. The `-dev` suffix explicitly scopes this to the build-side (per "Scope: Build-Side Only" above) so the leaderboard does not conflate AMS *builders* with AMS *consumers* under one row.
+- **`x-oddkit-client: agent-messaging-service-dev`** — same value via the header path, so the consumer label is set whether the server reads from URL or header.
 - **`x-oddkit-surface: claude-code`** — where this config is intended to run. Cursor sessions can override.
-- **`x-oddkit-contact-url: https://github.com/klappy/agent-messaging-service`** — links the consumer label to this project on the public leaderboard, signaling that AMS is a real consumer of oddkit, not an anonymous one.
+- **`x-oddkit-contact-url: https://github.com/klappy/agent-messaging-service`** — links the consumer label to this project on the public leaderboard, signaling that AMS-dev is a real consumer of oddkit, not an anonymous one.
 
 This is participation in oddkit's transparency model per its social contract: oddkit is maintained by one person making decisions about where to invest attention, and identifying as a real consumer helps those decisions be informed. Per the same policy: identification is encouraged and scored, never coerced; the data is public and any user can call `telemetry_public` to see the same dashboard the maintainer sees.
 
 Self-report fields not currently set — `x-oddkit-client-version`, `x-oddkit-agent-name`, `x-oddkit-agent-version`, `x-oddkit-policy-url`, `x-oddkit-capabilities` — are either unknowable at config time (the agent name/version depends on which Claude session is running) or not yet applicable to AMS (no project-level telemetry policy exists yet). They can be added when the values become real.
+
+**Future consumer-side oddkit configurations** (when consumer-side onboarding gets written — see "Scope" above) should use a different consumer label like `agent-messaging-service-consumer` (or per-deployment labels like `acme-bot-on-ams`) so build-vs-consume populations stay separable in telemetry.
 
 ### Knowledge base identification — passed per call, every call
 
