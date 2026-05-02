@@ -192,7 +192,7 @@ ams/
 wrangler deploy --env production
 ```
 
-…to `ams.covenant.dev` (or wherever we land DNS).
+…to `ams.klappy.dev` and `ams.truthkit.ai` (single Worker behind both custom domains per [`canon/decisions/D0011`](./canon/decisions/D0011-multi-host-cname-deployment.md); adding a third host is a DNS+routes change).
 
 KV namespace and Durable Object binding declared in `wrangler.toml`. No other infrastructure required.
 
