@@ -50,7 +50,7 @@ export function isValidStreamName(s: unknown): s is string {
   return typeof s === "string" && STREAM_NAME_RE.test(s);
 }
 
-// ULID-ish: timestamp-prefixed 26-char base32. Sortable, opaque to clients.
+// ULID-ish: timestamp-prefixed 20-char base32 (10 time + 10 random). Sortable, opaque to clients.
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 export function ulid(): string {
   const time = Date.now();

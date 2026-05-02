@@ -21,7 +21,3 @@ export interface ConversationRecord {
   metadata: Record<string, unknown>;
   created_at: string;
 }
-
-export interface AuthedRequest {
-  account: AccountRecord;
-}
