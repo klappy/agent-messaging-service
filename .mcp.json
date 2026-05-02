@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "oddkit": {
+      "type": "http",
+      "url": "https://oddkit.klappy.dev/mcp?consumer=agent-messaging-service-dev",
+      "headers": {
+        "x-oddkit-client": "agent-messaging-service-dev",
+        "x-oddkit-surface": "claude-code",
+        "x-oddkit-contact-url": "https://github.com/klappy/agent-messaging-service"
+      }
+    }
+  }
+}
