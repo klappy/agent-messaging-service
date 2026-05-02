@@ -38,6 +38,11 @@ export default {
       return new Response(null, { status: 204, headers: HEALTHZ_CORS });
     }
     if ((method === "GET" || method === "HEAD") && path === "/healthz") {
+      if (method === "HEAD") {
+        return new Response(null, {
+          headers: { "content-type": "application/json", ...HEALTHZ_CORS },
+        });
+      }
       return jsonResponse(
         {
           ok: true,
