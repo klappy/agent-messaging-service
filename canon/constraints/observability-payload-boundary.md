@@ -10,9 +10,9 @@ tags: ["ams", "canon", "constraint", "observability", "privacy", "safety", "payl
 epoch: E0008.3
 date: 2026-05-01
 amended: 2026-05-03
-amendments: "2026-05-03 — §'Hashing and Pseudonymization' promoted HMAC-SHA-256 to the AMS reference deployment default; unkeyed SHA-256 retained as a documented downgrade. Drove by D0013 + the wire-layer-latency / token-count cluster landing in the same observability gap-fill pass."
+amendments: "2026-05-03 — §'Hashing and Pseudonymization' promoted HMAC-SHA-256 to the AMS reference deployment default; unkeyed SHA-256 retained as a documented downgrade. Drove by D0015 + the wire-layer-latency / token-count cluster landing in the same observability gap-fill pass."
 derives_from: "PROTOCOL.md §4.1, PROTOCOL.md §4.4, PROTOCOL.md §7 (must not modify or schema-validate metadata in transit), ARCHITECTURE.md §8 (PoC does not log token contents), klappy://canon/constraints/telemetry-governance"
-complements: "ams://canon/decisions/D0010-observability-via-subscriber-not-wire, ams://canon/decisions/D0013-state-totals-via-snapshot-worker, ams://canon/principles/observability-as-subscriber, ams://canon/principles/wire-layer-latency-vocabulary, ams://canon/principles/token-count-derivation-on-subscribers"
+complements: "ams://canon/decisions/D0010-observability-via-subscriber-not-wire, ams://canon/decisions/D0015-state-totals-via-snapshot-worker, ams://canon/principles/observability-as-subscriber, ams://canon/principles/wire-layer-latency-vocabulary, ams://canon/principles/token-count-derivation-on-subscribers"
 governs: "Every observability subscriber on AMS, every infrastructure hook on the broker, and every sink that receives data from either. Defines the safety floor for what may be captured at the wire and what must never leave the broker."
 status: active
 ---

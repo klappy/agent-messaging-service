@@ -7,7 +7,7 @@
 Operators of the AMS reference deployment querying the `ams_telemetry` Analytics Engine dataset. The recipes assume the schema defined in `ams://canon/constraints/observability-payload-boundary` §"The Hook-Layer Schema" and the conventions established in:
 
 - `ams://canon/decisions/D0010-observability-via-subscriber-not-wire` — the activity stream
-- `ams://canon/decisions/D0013-state-totals-via-snapshot-worker` — the snapshot stream
+- `ams://canon/decisions/D0015-state-totals-via-snapshot-worker` — the snapshot stream
 - `ams://canon/principles/wire-layer-latency-vocabulary` — TTFF and TTFT honesty
 - `ams://canon/principles/token-count-derivation-on-subscribers` — token-count approximation
 
@@ -282,7 +282,7 @@ Per `ams://canon/principles/wire-layer-latency-vocabulary`, `ams://canon/princip
 ## See Also
 
 - `ams://canon/decisions/D0010-observability-via-subscriber-not-wire`
-- `ams://canon/decisions/D0013-state-totals-via-snapshot-worker` (superseded 2026-05-03 by D0014)
+- `ams://canon/decisions/D0015-state-totals-via-snapshot-worker` (superseded 2026-05-03 by D0014)
 - `ams://canon/decisions/D0014-tail-worker-and-activity-stream-derived-totals`
 - `ams://canon/constraints/observability-payload-boundary` (amended 2026-05-03)
 - `ams://canon/principles/observability-as-subscriber`

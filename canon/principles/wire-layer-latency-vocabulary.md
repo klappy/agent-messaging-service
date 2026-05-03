@@ -10,7 +10,7 @@ tags: ["ams", "canon", "principle", "observability", "latency", "ttft", "ttff", 
 epoch: E0008.3
 date: 2026-05-03
 derives_from: "ams://canon/decisions/D0010-observability-via-subscriber-not-wire, ams://canon/constraints/observability-payload-boundary §'The Subscriber-Layer Schema', PROTOCOL.md §4.2 (server-pushed frames), AMS.md §3 (polymorphic subscribers), klappy://canon/constraints/telemetry-governance"
-complements: "ams://canon/decisions/D0013-state-totals-via-snapshot-worker, ams://canon/principles/token-count-derivation-on-subscribers, ams://canon/principles/observability-as-subscriber"
+complements: "ams://canon/decisions/D0015-state-totals-via-snapshot-worker, ams://canon/principles/token-count-derivation-on-subscribers, ams://canon/principles/observability-as-subscriber"
 governs: "Naming and measurement of latency metrics at the AMS wire layer. Recommended convention; deployments that name metrics differently document the discrepancy and the conversion."
 status: active
 ---
@@ -125,7 +125,7 @@ The hook-layer schema in `observability-payload-boundary` is preserved unchanged
 }
 ```
 
-`ttff_user_ms` requires a hook-layer join the subscriber may or may not perform. `ttff_within_conversation_ms` requires the subscriber to have observed an earlier anchoring frame in the same conversation. `ttft_anchored_ms` is null when no `model_invoked` anchor was observed. Subscribers that aggregate to the hook-layer-shaped Analytics Engine dataset use the existing `peer_count_at_event` slot for the latency value (consistent with the snapshot pattern in D0013) and use `event_type='stream_first_token'`, with the variant named in `endpoint_or_close_code` (e.g., `ttff_user`, `ttft_anchored`).
+`ttff_user_ms` requires a hook-layer join the subscriber may or may not perform. `ttff_within_conversation_ms` requires the subscriber to have observed an earlier anchoring frame in the same conversation. `ttft_anchored_ms` is null when no `model_invoked` anchor was observed. Subscribers that aggregate to the hook-layer-shaped Analytics Engine dataset use the existing `peer_count_at_event` slot for the latency value (consistent with the snapshot pattern in D0015) and use `event_type='stream_first_token'`, with the variant named in `endpoint_or_close_code` (e.g., `ttff_user`, `ttft_anchored`).
 
 ## Why Naming This Matters
 
@@ -148,7 +148,7 @@ Three failure modes the principle prevents.
 ## See Also
 
 - `ams://canon/decisions/D0010-observability-via-subscriber-not-wire` — the architectural commit that puts latency measurement on subscribers
-- `ams://canon/decisions/D0013-state-totals-via-snapshot-worker` — sister gap-fill, same observability cluster
+- `ams://canon/decisions/D0015-state-totals-via-snapshot-worker` — sister gap-fill, same observability cluster
 - `ams://canon/principles/token-count-derivation-on-subscribers` — sister gap-fill on token-count honesty
 - `ams://canon/constraints/observability-payload-boundary` — the schema this principle extends
 - `PROTOCOL.md` §4.2 — server-pushed frames the latency metrics observe
