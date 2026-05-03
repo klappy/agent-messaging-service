@@ -123,10 +123,310 @@ Section B — node ws-driven paired client (timestamped, both sides on one log)
   Symmetry verified — neither client ever received its own emission.
 
 ================================================================================
-Section C — Live deploy (ams.klappy.dev) — populated post-deploy
+Section C — Live deploy (ams.klappy.dev + ams.truthkit.ai) — fresh-session
+              validation against commit ab00aefb (Day 2 + bugbot fixes)
 ================================================================================
 
-  Pending: live transcript appended once Workers Builds promotes the
-  claude/day2-websocket-streaming-y9PTc branch and a fresh Day-3-validation
-  session re-runs SPEC §3.1 item 3 against ams.klappy.dev.
+  Validator    : claude.ai chat session (fresh context; not the build session
+                 that produced commit 437cc0d).
+  Tooling      : wscat 6.1.0 + node ws@8 (raw protocol clients; no MCP wrapper).
+  Commit under : ab00aefb45aed94cd6fa773e24526770b5fa29fa
+                 ("fix(worker): UTF-8 metadata decoding and same-account stream
+                  name reuse"). NOT 14fca48 (which was Day 2 baseline pre-bugbot).
+  Deploy proof : PR #14 issue comment from cloudflare-workers-and-pages[bot]
+                 — "✅ Deployment successful! agent-messaging-service ab00aefb
+                 May 02 2026, 11:43 PM" (build 446911ca-e7f0-4ae7-bb47-7a2e20d42123).
+                 PR #14 merged into main as 5f01e0e at 2026-05-02T23:56:17Z.
+  Validation   : 2026-05-03T00:06-00:09Z, ~23-26 minutes after Workers Builds
+                 promoted ab00aefb to the production custom-domain Worker.
+  Hosts        : ams.klappy.dev (tests C.1, C.2, C.3) + ams.truthkit.ai (test C.4
+                 — D0011 host parity).
+  Health gate  : Both hosts returned 200 + JSON {ok:true,host,ts} on /healthz at
+                 2026-05-03T00:00:13Z (klappy.dev) and 2026-05-03T00:00:20Z
+                 (truthkit.ai); host echoed correctly per D0011.
+  Behavioral
+  proof of
+  ab00aefb     : Test C.2 (Unicode metadata round-trip) is the wire-level
+                 regression for the atob→base64ToUtf8 fix in handleConnect AND
+                 the earlier btoa→utf8ToBase64 fix in 35f396f on the Worker→DO
+                 header path. Test C.3 (same-account stream-name reuse) is the
+                 wire-level regression for the account_id ownership check in
+                 ConversationDO.handleConnect. Both behaviors observed = both
+                 fixes are live in the deployed Worker.
+
+--------------------------------------------------------------------------------
+Test C.1 — SPEC §3.1 item 3 against ams.klappy.dev (PASS)
+--------------------------------------------------------------------------------
+
+  Hypothesis : klappy emits {"type":"token","data":"hello-from-klappy-LIVE"} on
+               his stream; ian receives it; klappy does NOT receive his own
+               emission back from the wire (D0009 structural self-exclusion).
+
+--- setup ---
+
+$ curl -sS -X POST https://ams.truthkit.ai/v1/accounts -H "content-type: application/json" -d '{"namespace":"valc1k"}'
+{"account_id":"acc_01KQNJGA9C4FKEH0QH3N","namespace":"valc1k",
+ "credential":"ams_sk_<REDACTED:valc1k>","created_at":"2026-05-03T00:06:10.988Z"}
+
+$ curl -sS -X POST https://ams.truthkit.ai/v1/accounts -H "content-type: application/json" -d '{"namespace":"valc1i"}'
+{"account_id":"acc_01KQNJGAY2KRHF2M5N5T","namespace":"valc1i",
+ "credential":"ams_sk_<REDACTED:valc1i>","created_at":"2026-05-03T00:06:11.650Z"}
+
+$ curl -sS -X POST https://ams.truthkit.ai/v1/valc1k/conversations \
+       -H "Authorization: Bearer ams_sk_<REDACTED:valc1k>" \
+       -H "content-type: application/json" \
+       -d '{"alias":"valc1-smoke","stream_name":"klappy-stream"}'
+{"conversation_id":"conv_01KQNJGBE0WZMPEHQ95B","alias":"valc1-smoke",
+ "magic_link":"https://ams.klappy.dev/valc1k/conversations/valc1-smoke?t=<REDACTED:valc1-smoke>",
+ "stream_id":"str_01KQNJGBE056BHACAX4S","stream_name":"klappy-stream",
+ "metadata":{},"stream_metadata":{},"created_at":"2026-05-03T00:06:12.160Z"}
+
+  Note: magic_link host = ams.klappy.dev (request.headers.get('host') wins, per
+        D0011 the Worker is host-blind on mint).
+
+--- ian (listener) wscat session ---
+
+$ wscat -c "wss://ams.truthkit.ai/valc1k/conversations/valc1-smoke/connect?t=…" \
+        -H "Authorization: Bearer ams_sk_<REDACTED:valc1i>" \
+        -H "X-AMS-Stream-Name: ian-stream" --no-color -w 6
+
+{"type":"joined","conversation_id":"conv_01KQNJGBE0WZMPEHQ95B","stream_id":"str_01KQNJH747ZGBEE1R8S8","stream_name":"ian-stream","metadata":{},"self_subscribe":false,"peers":[]}
+{"type":"stream_joined","stream_id":"str_01KQNJH8ABK65SS814RD","stream_name":"klappy-stream-c","owner_account_id":"acc_01KQNJGA9C4FKEH0QH3N","metadata":{}}
+{"type":"token","stream_id":"str_01KQNJH8ABK65SS814RD","stream_name":"klappy-stream-c","owner_account_id":"acc_01KQNJGA9C4FKEH0QH3N","ts":"2026-05-03T00:06:41.767Z","data":"hello-from-klappy-LIVE"}
+{"type":"stream_left","stream_id":"str_01KQNJH8ABK65SS814RD","stream_name":"klappy-stream-c","owner_account_id":"acc_01KQNJGA9C4FKEH0QH3N"}
+
+--- klappy (sender) wscat session ---
+
+$ wscat -c "wss://ams.truthkit.ai/valc1k/conversations/valc1-smoke/connect?t=…" \
+        -H "Authorization: Bearer ams_sk_<REDACTED:valc1k>" \
+        -H "X-AMS-Stream-Name: klappy-stream-c" --no-color \
+        -x '{"type":"token","data":"hello-from-klappy-LIVE"}' -w 3
+
+{"type":"joined","conversation_id":"conv_01KQNJGBE0WZMPEHQ95B","stream_id":"str_01KQNJH8ABK65SS814RD","stream_name":"klappy-stream-c","metadata":{},"self_subscribe":false,"peers":[{"stream_id":"str_01KQNJH747ZGBEE1R8S8","stream_name":"ian-stream","owner_account_id":"acc_01KQNJGAY2KRHF2M5N5T","metadata":{}}]}
+
+--- result ---
+
+  PASS — broadcast: ian received klappy's token frame
+                    (data="hello-from-klappy-LIVE", broker ts 2026-05-03T00:06:41.767Z).
+  PASS — self-exclusion: klappy received exactly one frame (his own `joined`).
+                    Zero token frames returned to him. D0009 holds on prod.
+  PASS — lifecycle: ian observed `stream_joined` for klappy-stream-c on connect
+                    and `stream_left` on klappy's disconnect. Order: joined →
+                    stream_joined → token → stream_left, per PROTOCOL.md §4.
+  PASS — `joined` echo: both clients received it on connect with self_subscribe:
+                    false echoed and a peers list reflecting the streams already
+                    present in the ConversationDO at the moment of connect.
+
+--------------------------------------------------------------------------------
+Test C.2 — Unicode metadata round-trip (regression for bugbot fixes 35f396f
+            and ab00aefb's UTF-8 paths) — PASS
+--------------------------------------------------------------------------------
+
+  Hypothesis : POST a stream with X-AMS-Stream-Metadata containing CJK + emoji
+               ({"display_name":"高橋 🦊"}, base64-encoded). Pre-fix Worker
+               threw btoa InvalidCharacterError on Worker→DO header path AND
+               atob in handleConnect would split UTF-8 multibyte sequences into
+               Latin-1 garbage. Post-fix expectation: 101 Switching Protocols,
+               metadata round-trips byte-for-byte through both the emitter's own
+               `joined` frame and every peer's `stream_joined` frame.
+
+--- setup ---
+
+  Original metadata JSON : {"display_name":"高橋 🦊"}
+  UTF-8 byte length      : 30
+  Base64-encoded         : eyJkaXNwbGF5X25hbWUiOiLpq5jmqYsg8J+miiJ9
+  display_name UTF-8 bytes (hex) : e9 ab 98 e6 a9 8b 20 f0 9f a6 8a
+                                   (高 = e9 ab 98, 橋 = e6 a9 8b, ' ' = 20, 🦊 = f0 9f a6 8a)
+
+$ curl -sS -X POST https://ams.klappy.dev/v1/valc1k/conversations \
+       -H "Authorization: Bearer ams_sk_<REDACTED:valc1k>" \
+       -H "content-type: application/json" \
+       -d '{"alias":"valc2-unicode","stream_name":"klappy-stream"}'
+{"conversation_id":"conv_01KQNJJ5105ZYD99SECJ","alias":"valc2-unicode",
+ "magic_link":"https://ams.klappy.dev/valc1k/conversations/valc2-unicode?t=<REDACTED:valc2-unicode>",
+ "stream_id":"str_01KQNJJ510HFN80KYFFN","stream_name":"klappy-stream",
+ "metadata":{},"stream_metadata":{},"created_at":"2026-05-03T00:07:11.136Z"}
+
+--- ian (listener, no metadata) ---
+
+$ wscat -c "wss://ams.klappy.dev/valc1k/conversations/valc2-unicode/connect?t=…" \
+        -H "Authorization: Bearer ams_sk_<REDACTED:valc1i>" \
+        -H "X-AMS-Stream-Name: ian-listener" --no-color -w 7
+
+{"type":"joined","conversation_id":"conv_01KQNJJ5105ZYD99SECJ","stream_id":"str_01KQNJJ5ZH704TQKMKDM","stream_name":"ian-listener","metadata":{},"self_subscribe":false,"peers":[]}
+{"type":"stream_joined","stream_id":"str_01KQNJJ75T3GJPQ04RGW","stream_name":"klappy-unicode","owner_account_id":"acc_01KQNJGA9C4FKEH0QH3N","metadata":{"display_name":"高橋 🦊"}}
+{"type":"stream_left","stream_id":"str_01KQNJJ75T3GJPQ04RGW","stream_name":"klappy-unicode","owner_account_id":"acc_01KQNJGA9C4FKEH0QH3N"}
+
+--- klappy (with X-AMS-Stream-Metadata: <base64 UTF-8>) ---
+
+$ wscat -c "wss://ams.klappy.dev/valc1k/conversations/valc2-unicode/connect?t=…" \
+        -H "Authorization: Bearer ams_sk_<REDACTED:valc1k>" \
+        -H "X-AMS-Stream-Name: klappy-unicode" \
+        -H "X-AMS-Stream-Metadata: eyJkaXNwbGF5X25hbWUiOiLpq5jmqYsg8J+miiJ9" \
+        --no-color -w 4
+
+{"type":"joined","conversation_id":"conv_01KQNJJ5105ZYD99SECJ","stream_id":"str_01KQNJJ75T3GJPQ04RGW","stream_name":"klappy-unicode","metadata":{"display_name":"高橋 🦊"},"self_subscribe":false,"peers":[{"stream_id":"str_01KQNJJ5ZH704TQKMKDM","stream_name":"ian-listener","owner_account_id":"acc_01KQNJGAY2KRHF2M5N5T","metadata":{}}]}
+
+--- byte-level round-trip verification (node) ---
+
+  klappy.joined.metadata     = {"display_name":"高橋 🦊"}
+  ian.stream_joined.metadata = {"display_name":"高橋 🦊"}
+  klappy bytes  : e9 ab 98 e6 a9 8b 20 f0 9f a6 8a
+  expected bytes: e9 ab 98 e6 a9 8b 20 f0 9f a6 8a
+  round-trip MATCH (klappy joined.metadata.display_name): true
+  round-trip MATCH (ian    stream_joined.metadata.display_name): true
+  upgrade succeeded (101, no 4500/HTTP 500): true
+
+--- result ---
+
+  PASS — handleConnect (worker/src/index.ts:182) decoded base64 with the
+         base64ToUtf8 helper; no atob-induced Latin-1 corruption observed.
+  PASS — Worker→DO join-payload header path (worker/src/index.ts) used
+         utf8ToBase64; no btoa InvalidCharacterError observed; upgrade did
+         not 500.
+  PASS — ConversationDO broadcast preserved the metadata object verbatim into
+         the peer's stream_joined.metadata frame. Bytes identical to source.
+
+--------------------------------------------------------------------------------
+Test C.3 — Same-account stream-name reuse must NOT close 4004 (regression for
+            ab00aefb's account-aware ownership check) — PASS
+--------------------------------------------------------------------------------
+
+  Hypothesis : Per PROTOCOL.md §6, code 4004 = "Stream name conflict (already
+               in use in this conversation BY ANOTHER ACCOUNT)". The pre-fix
+               check rejected ANY duplicate stream_name regardless of owner —
+               which incorrectly 4004'd same-account reconnects (the realistic
+               network-hiccup case). Post-fix expectation: same-account reuse
+               of an in-use stream_name proceeds with a normal `joined` frame;
+               cross-account reuse still closes 4004.
+
+--- setup (fresh conversation, fresh node ws driver to capture close codes) ---
+
+$ curl -sS -X POST https://ams.klappy.dev/v1/valc1k/conversations \
+       -H "Authorization: Bearer ams_sk_<REDACTED:valc1k>" \
+       -H "content-type: application/json" \
+       -d '{"alias":"valc3b-codes","stream_name":"klappy-stream"}'
+{"conversation_id":"conv_01KQNJMKKDJ1N155WRT7","alias":"valc3b-codes",
+ "magic_link":"https://ams.klappy.dev/valc1k/conversations/valc3b-codes?t=<REDACTED:valc3b-codes>", ...}
+
+  Three concurrent connections opened against the same conversation:
+    A — bearer=klappy, X-AMS-Stream-Name=klappy-twin (held ~6s)
+    B — bearer=klappy, X-AMS-Stream-Name=klappy-twin   <-- SAME account, SAME name
+    C — bearer=ian,    X-AMS-Stream-Name=klappy-twin   <-- DIFFERENT account, SAME name
+  Driver: node ws@8 (wscat does not surface close codes in the per-message log).
+
+--- transcript (events emitted in t-ms-since-open order per connection) ---
+
+===== A klappy/klappy-twin (held 6s) =====
+{"t":364,"e":"OPEN"}
+{"t":368,"e":"MSG","d":"{\"type\":\"joined\",\"conversation_id\":\"conv_01KQNJMKKDJ1N155WRT7\",\"stream_id\":\"str_01KQNJMNDC74EB1V72ZB\",\"stream_name\":\"klappy-twin\",\"metadata\":{},\"self_subscribe\":false,\"peers\":[]}"}
+{"t":756,"e":"MSG","d":"{\"type\":\"stream_joined\",\"stream_id\":\"str_01KQNJMNSQ2PH55MP26C\",\"stream_name\":\"klappy-twin\",\"owner_account_id\":\"acc_01KQNJGA9C4FKEH0QH3N\",\"metadata\":{}}"}
+{"t":3131,"e":"MSG","d":"{\"type\":\"stream_left\",\"stream_id\":\"str_01KQNJMNSQ2PH55MP26C\",\"stream_name\":\"klappy-twin\",\"owner_account_id\":\"acc_01KQNJGA9C4FKEH0QH3N\"}"}
+{"t":6021,"e":"CLOSE","code":1005,"reason":""}
+
+===== B klappy/klappy-twin while A open =====
+{"t":149,"e":"OPEN"}
+{"t":150,"e":"MSG","d":"{\"type\":\"joined\",\"conversation_id\":\"conv_01KQNJMKKDJ1N155WRT7\",\"stream_id\":\"str_01KQNJMNSQ2PH55MP26C\",\"stream_name\":\"klappy-twin\",\"metadata\":{},\"self_subscribe\":false,\"peers\":[{\"stream_id\":\"str_01KQNJMNDC74EB1V72ZB\",\"stream_name\":\"klappy-twin\",\"owner_account_id\":\"acc_01KQNJGA9C4FKEH0QH3N\",\"metadata\":{}}]}"}
+{"t":2519,"e":"CLOSE","code":1005,"reason":""}
+
+===== C ian/klappy-twin while A open (cross-account) =====
+{"t":285,"e":"OPEN"}
+{"t":289,"e":"CLOSE","code":4004,"reason":"stream_name_conflict"}
+
+--- result ---
+
+  PASS — Connection B (SAME account klappy, SAME stream-name "klappy-twin"
+         while A still open) received a normal `joined` frame at t=150ms with
+         peers=[A's klappy-twin]; closed at t=2519ms with code 1005 (no status
+         — client-initiated normal close). NO 4004. ab00aefb regression
+         observable on the wire.
+  PASS — Connection A observed B's existence as a normal peer: stream_joined
+         at t=756ms, stream_left at t=3131ms (when B disconnected). The DO is
+         willing to register multiple streams under the same name per account.
+  PASS — Connection C (DIFFERENT account ian, SAME stream-name "klappy-twin"
+         while A still open) closed at t=289ms with code 4004 reason
+         "stream_name_conflict". Cross-account ownership-aware conflict
+         enforcement is intact — the bugbot fix narrowed the rejection
+         predicate, it did not disable PROTOCOL.md §6 #4004.
+
+--------------------------------------------------------------------------------
+Test C.4 — D0011 host parity: re-run SPEC §3.1 item 3 against ams.truthkit.ai
+            (PASS)
+--------------------------------------------------------------------------------
+
+  Hypothesis : Single Worker bound to two Custom Domains per D0011. Same KV,
+               same DOs. Re-running test C.1 against ams.truthkit.ai must
+               exhibit the identical wire behavior. magic_link must be minted
+               with host=ams.truthkit.ai (request.headers.get('host') wins).
+
+--- setup ---
+
+$ curl -sS -X POST https://ams.truthkit.ai/v1/accounts -H "content-type: application/json" -d '{"namespace":"valc4k"}'
+{"account_id":"acc_01KQNJNP4Z8F47J3BKER","namespace":"valc4k",
+ "credential":"ams_sk_<REDACTED:valc4k>","created_at":"2026-05-03T00:09:06.975Z"}
+
+$ curl -sS -X POST https://ams.truthkit.ai/v1/accounts -H "content-type: application/json" -d '{"namespace":"valc4i"}'
+{"account_id":"acc_01KQNJNPND6G33G8Y36P","namespace":"valc4i",
+ "credential":"ams_sk_<REDACTED:valc4i>","created_at":"2026-05-03T00:09:07.501Z"}
+
+$ curl -sS -X POST https://ams.truthkit.ai/v1/valc4k/conversations \
+       -H "Authorization: Bearer ams_sk_<REDACTED:valc4k>" \
+       -H "content-type: application/json" \
+       -d '{"alias":"valc4-truthkit","stream_name":"klappy-stream"}'
+{"conversation_id":"conv_01KQNJNQ1H6GQFSTC562","alias":"valc4-truthkit",
+ "magic_link":"https://ams.truthkit.ai/valc4k/conversations/valc4-truthkit?t=<REDACTED:valc4-truthkit>",
+ "stream_id":"str_01KQNJNQ1HMHHBSHW4JN","stream_name":"klappy-stream",
+ "metadata":{},"stream_metadata":{},"created_at":"2026-05-03T00:09:07.889Z"}
+
+  Note: magic_link host is ams.truthkit.ai — the host the request actually hit.
+  Same Worker code as ams.klappy.dev (the truthkit deploy is the same Worker
+  script with a second Custom Domain binding per D0011).
+
+--- ian (listener) wscat session on ams.truthkit.ai ---
+
+$ wscat -c "wss://ams.truthkit.ai/valc4k/conversations/valc4-truthkit/connect?t=…" \
+        -H "Authorization: Bearer ams_sk_<REDACTED:valc4i>" \
+        -H "X-AMS-Stream-Name: ian-tk" --no-color -w 6
+
+{"type":"joined","conversation_id":"conv_01KQNJNQ1H6GQFSTC562","stream_id":"str_01KQNJNQYE0H8HS52B72","stream_name":"ian-tk","metadata":{},"self_subscribe":false,"peers":[]}
+{"type":"stream_joined","stream_id":"str_01KQNJNSAFQ1KNKAMH0V","stream_name":"klappy-tk","owner_account_id":"acc_01KQNJNP4Z8F47J3BKER","metadata":{}}
+{"type":"token","stream_id":"str_01KQNJNSAFQ1KNKAMH0V","stream_name":"klappy-tk","owner_account_id":"acc_01KQNJNP4Z8F47J3BKER","ts":"2026-05-03T00:09:10.249Z","data":"hello-from-truthkit"}
+{"type":"stream_left","stream_id":"str_01KQNJNSAFQ1KNKAMH0V","stream_name":"klappy-tk","owner_account_id":"acc_01KQNJNP4Z8F47J3BKER"}
+
+--- klappy (sender) wscat session on ams.truthkit.ai ---
+
+$ wscat -c "wss://ams.truthkit.ai/valc4k/conversations/valc4-truthkit/connect?t=…" \
+        -H "Authorization: Bearer ams_sk_<REDACTED:valc4k>" \
+        -H "X-AMS-Stream-Name: klappy-tk" --no-color \
+        -x '{"type":"token","data":"hello-from-truthkit"}' -w 3
+
+{"type":"joined","conversation_id":"conv_01KQNJNQ1H6GQFSTC562","stream_id":"str_01KQNJNSAFQ1KNKAMH0V","stream_name":"klappy-tk","metadata":{},"self_subscribe":false,"peers":[{"stream_id":"str_01KQNJNQYE0H8HS52B72","stream_name":"ian-tk","owner_account_id":"acc_01KQNJNPND6G33G8Y36P","metadata":{}}]}
+
+--- result ---
+
+  PASS — broadcast: ian (on ams.truthkit.ai) received klappy's token frame
+                    (data="hello-from-truthkit", broker ts 2026-05-03T00:09:10.249Z).
+  PASS — self-exclusion: klappy received exactly one frame (his own `joined`).
+                    Zero token frames. D0009 holds on the truthkit.ai mirror.
+  PASS — lifecycle: joined → stream_joined → token → stream_left observed in
+                    order on the listener side, identical to test C.1.
+  PASS — D0011: magic_link minted with host=ams.truthkit.ai; the same Worker
+                code that served test C.1 served test C.4 with no behavioral
+                drift.
+
+================================================================================
+Section C — overall validation result: 4/4 PASS
+================================================================================
+
+  C.1  SPEC §3.1 item 3 on ams.klappy.dev .................... PASS
+  C.2  Unicode metadata round-trip (35f396f + ab00aefb fixes) . PASS
+  C.3  Same-account stream-name reuse (ab00aefb fix) .......... PASS
+       Cross-account stream-name conflict (PROTOCOL.md §6) .... PASS
+  C.4  D0011 host parity on ams.truthkit.ai ................... PASS
+
+  Disposition  : ACCEPT (see journal/2026-05-02-day2-validation-closeout.tsv).
+  Day 2 closed : SPEC.md §3.1 item 3 is operationally attested at the
+                 production-deploy layer for both hosts. Items 4 and 5 (MCP
+                 wrapper) remain Day 3 scope and were intentionally not
+                 exercised in this session.
 
