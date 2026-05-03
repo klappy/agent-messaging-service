@@ -1421,6 +1421,11 @@ const randHex = (n) => {
   setInterval(tick, 8000);
 })();
 
+// Shared between door (i) and door (ii): the most-recently-minted bearer.
+// Door (i) sets it after a successful mint; door (ii) inlines it into the
+// generated wscat command so the snippet is actually copy-pasteable.
+let lastCredential = null;
+
 // ═══════════════════ Door 1 — Mint (real API call) ═══════════════════
 (function mintDoor() {
   const ns   = $('#mint-ns');
@@ -1464,6 +1469,7 @@ const randHex = (n) => {
       out.innerHTML += row('<span class="ok">← 201 · ' + fmtDur(accDur) + '</span>');
       out.innerHTML += row('  <span class="k">account_id</span>: <span class="s">' + escapeHtml(accJson.account_id) + '</span>');
       out.innerHTML += row('  <span class="k">credential</span>: <span class="s">' + escapeHtml(accJson.credential.slice(0, 14)) + '…</span>');
+      lastCredential = accJson.credential;
 
       // Step 2 — POST /v1/{ns}/conversations
       const t1 = performance.now();
@@ -1545,9 +1551,13 @@ const randHex = (n) => {
     out.innerHTML += row('<span class="ok">→ WS /connect URL:</span>');
     out.innerHTML += row('  <span class="s">' + escapeHtml(u.origin.replace(/^https/, 'wss') + u.pathname) + '/connect?t=' + escapeHtml(t.slice(0,8)) + '…</span>');
     out.innerHTML += row('');
-    out.innerHTML += row('<span class="n">// run this in your terminal (uses your bearer from door (i)):</span>');
+    const bearer = lastCredential || 'ams_sk_…';
+    const bearerNote = lastCredential
+      ? '// run this in your terminal (uses your bearer from door (i)):'
+      : '// run this in your terminal (mint in door (i) first to inline the bearer):';
+    out.innerHTML += row('<span class="n">' + bearerNote + '</span>');
     out.innerHTML += row('<span class="s">wscat -c "' + escapeHtml(u.origin.replace(/^https/, 'wss') + u.pathname) + '/connect?t=' + escapeHtml(t) + '" \\</span>');
-    out.innerHTML += row('<span class="s">  -H "Authorization: Bearer ams_sk_…" \\</span>');
+    out.innerHTML += row('<span class="s">  -H "Authorization: Bearer ' + escapeHtml(bearer) + '" \\</span>');
     out.innerHTML += row('<span class="s">  -H "X-AMS-Stream-Name: ' + escapeHtml(streamName) + '"</span>');
     out.innerHTML += row('');
     out.innerHTML += row('<span class="n">// expected first frame:  {"type":"joined","stream_id":"' + escapeHtml(streamId) + '",…}</span>');
