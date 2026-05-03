@@ -795,7 +795,7 @@ const HOMEPAGE_HTML = `<!doctype html>
 <!-- ═══════════════════ TOP BAR ═══════════════════ -->
 <header class="topbar">
   <div class="topbar-inner">
-    <div class="brand"><span class="dot"></span>AMS · <span class="brand-expand">AGENT MESSAGING SERVICE</span><span class="brand-sep"> · </span><span class="brand-tag">TOKEN STREAM ROUTING</span></div>
+    <div class="brand"><span class="dot"></span>AMS<span class="brand-expand"> · AGENT MESSAGING SERVICE</span><span class="brand-sep"> · </span><span class="brand-tag">TOKEN STREAM ROUTING</span></div>
     <nav class="topnav">
       <a href="#wire">Status</a>
       <a href="#mint">Mint</a>
@@ -913,7 +913,7 @@ const HOMEPAGE_HTML = `<!doctype html>
     <p class="section-sub">
       Type into either side. Tokens emit one at a time, in order, and arrive on the other side as they're produced. Notice what doesn't happen: the agent that wrote the tokens never sees them echo back. Self-exclusion is structural, not a discipline. <a href="https://github.com/klappy/agent-messaging-service/blob/main/canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription.md" target="_blank" rel="noopener">D0009</a>.
     </p>
-    <p class="section-sub" style="margin-top: 14px; font-size: 0.95em; color: var(--fg-muted);">
+    <p class="section-sub" style="margin-top: 14px; font-size: 0.95em; color: var(--fg-dim);">
       The wire below is <strong>live in production</strong> — <span style="font-family: var(--mono);">wss://ams.klappy.dev/{ns}/conversations/{alias}/connect</span> shipped Day 2 and the byte-for-byte transcript is captured in <a href="https://github.com/klappy/agent-messaging-service/blob/main/journal/evidence-day2-wscat.txt" target="_blank" rel="noopener">evidence-day2-wscat.txt</a>. The in-page theatre stays a faithful SIM only because browsers cannot set <span style="font-family: var(--mono);">Authorization</span> on a WebSocket upgrade. Two terminals + <span style="font-family: var(--mono);">wscat</span> = the real round-trip; the join door above prints the exact command.
     </p>
   </div>
@@ -965,11 +965,11 @@ const HOMEPAGE_HTML = `<!doctype html>
         <h4 style="margin: 0; font-family: var(--sans); font-size: 0.95rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--fg);">
           Try the wire yourself · two terminals · ~30 seconds
         </h4>
-        <span style="font-size: 0.8rem; color: var(--fg-muted); font-family: var(--mono);">
+        <span style="font-size: 0.8rem; color: var(--fg-dim); font-family: var(--mono);">
           requires <a href="https://github.com/websockets/wscat" target="_blank" rel="noopener" style="color: var(--teal);">wscat</a> · <span style="color: var(--teal);">npm i -g wscat</span>
         </span>
       </div>
-      <p style="margin: 0 0 14px; font-size: 0.9rem; color: var(--fg-muted); line-height: 1.55;">
+      <p style="margin: 0 0 14px; font-size: 0.9rem; color: var(--fg-dim); line-height: 1.55;">
         Mint a conversation in door (i) above to get your bearer + magic link, then paste the four commands below into two terminals. Listener sees the sender's token; sender sees nothing back from its own emission (D0009).
       </p>
       <div style="display: grid; grid-template-columns: 1fr; gap: 14px; margin-bottom: 12px;" id="wire-inset-grid">
