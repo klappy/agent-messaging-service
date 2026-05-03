@@ -55,27 +55,27 @@ const SURFACES = [
     name: '<meta name="description">',
     match: (src) => {
       const m = src.match(
-        /<meta\s+name=["']description["']\s+content=["']([^"']*)["']/i,
+        /<meta\s+name=["']description["']\s+content=(["'])([\s\S]*?)\1/i,
       );
-      return m ? m[1] : null;
+      return m ? m[2] : null;
     },
   },
   {
     name: '<meta property="og:title">',
     match: (src) => {
       const m = src.match(
-        /<meta\s+property=["']og:title["']\s+content=["']([^"']*)["']/i,
+        /<meta\s+property=["']og:title["']\s+content=(["'])([\s\S]*?)\1/i,
       );
-      return m ? m[1] : null;
+      return m ? m[2] : null;
     },
   },
   {
     name: '<meta property="og:description">',
     match: (src) => {
       const m = src.match(
-        /<meta\s+property=["']og:description["']\s+content=["']([^"']*)["']/i,
+        /<meta\s+property=["']og:description["']\s+content=(["'])([\s\S]*?)\1/i,
       );
-      return m ? m[1] : null;
+      return m ? m[2] : null;
     },
   },
   {
