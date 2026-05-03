@@ -25,10 +25,10 @@ const HOMEPAGE_HTML = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AMS — Agent Messaging Service · Token Stream Routing</title>
-<meta name="description" content="AMS = Agent Messaging Service. Real-time pub-sub for agents. Two agents join a conversation, each writes to their own stream, tokens flow in real time. The TCP/IP play for agent communication.">
+<meta name="description" content="AMS = Agent Messaging Service. Real-time pub-sub for agents. N peers, any subscribers — humans, observers, services — all equal at the wire. The TCP/IP play for agent communication.">
 <meta name="color-scheme" content="dark">
 <meta property="og:title" content="AMS — Agent Messaging Service · Token Stream Routing">
-<meta property="og:description" content="AMS = Agent Messaging Service. The TCP/IP play for agent communication. We were the wire. AMS is the rewiring.">
+<meta property="og:description" content="AMS = Agent Messaging Service. N peers, any subscribers — humans, observers, services — all equal at the wire. The TCP/IP play for agent communication. We were the wire. AMS is the rewiring.">
 <meta property="og:type" content="website">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -868,10 +868,13 @@ const HOMEPAGE_HTML = `<!doctype html>
       <h1>
         We <span class="accent">were</span> the wire.<br>
         <em>AMS</em> is the rewiring.
-        <span class="small"><strong>AMS · Agent Messaging Service.</strong> Real-time pub-sub for agents. Two of them join a conversation. Each writes to its own stream. Tokens flow between them. No copy-paste. No human in the wire.</span>
+        <span class="small"><strong>AMS · Agent Messaging Service.</strong> Real-time pub-sub for agents. N peers join a conversation. Each owns a stream. Tokens fan out to every subscriber — peers, operators, observers, anything that can listen. No copy-paste. No human in the wire.</span>
       </h1>
       <p class="lede">
         The TCP/IP play for agent communication: a thin, unopinionated foundation that any stack can sit on. Bring your identity, your auth, your queue. AMS just brokers tokens.
+      </p>
+      <p class="lede" style="margin-top: 14px; opacity: 0.78; font-size: 0.95em;">
+        A dumb pipe for agent tokens — the acronym is a deliberate echo of SMS. Carriers move bytes; they don't read them. AMS moves tokens; it doesn't parse them.
       </p>
       <div class="cta-row">
         <a href="#theatre" class="btn btn-primary">Watch tokens move <span class="arrow">→</span></a>
@@ -886,6 +889,17 @@ const HOMEPAGE_HTML = `<!doctype html>
       <div class="stage-label tr"><span class="live-dot"></span><span id="hero-tps">— TPS</span></div>
       <canvas id="hero-canvas"></canvas>
     </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ POLYMORPHIC SUBSCRIBERS ═══════════════════ -->
+<section id="subscribers">
+  <div class="section-head">
+    <p class="section-eyebrow">The wire's promise · One emission, N subscribers</p>
+    <h2 class="section-title">Agents. Humans. Observers. Services. <em>Same wire, same primitive.</em></h2>
+    <p class="section-sub">
+      A subscriber is anything that can join a conversation and read a stream — an LLM agent, a human operator on a UI, a logging sink, a translation service, a kettle. None are privileged at the protocol layer. <a href="https://github.com/klappy/agent-messaging-service/blob/main/canon/principles/operator-as-subscriber.md" target="_blank" rel="noopener">Operators</a> and <a href="https://github.com/klappy/agent-messaging-service/blob/main/canon/principles/observability-as-subscriber.md" target="_blank" rel="noopener">observers</a> attach exactly the way agents do. <strong>One emission, N subscribers</strong> — the wire fans out, the topology is yours to compose per-query (<a href="https://github.com/klappy/agent-messaging-service/blob/main/canon/decisions/D0001-tokens-not-messages.md" target="_blank" rel="noopener">D0001</a>).
+    </p>
   </div>
 </section>
 
@@ -961,6 +975,9 @@ const HOMEPAGE_HTML = `<!doctype html>
   <div class="section-head">
     <p class="section-eyebrow">§ 02 · Watch tokens move</p>
     <h2 class="section-title">Two agents. <em>Two streams.</em> One wire.</h2>
+    <p class="section-sub" style="font-style: italic; opacity: 0.7; margin-top: 6px; font-size: 0.92em;">
+      The demo shows two. <a href="#subscribers">The wire's the same at N.</a>
+    </p>
     <p class="section-sub">
       Type into either side. Tokens emit one at a time, in order, and arrive on the other side as they're produced. Notice what doesn't happen: the agent that wrote the tokens never sees them echo back. Self-exclusion is structural, not a discipline. <a href="https://github.com/klappy/agent-messaging-service/blob/main/canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription.md" target="_blank" rel="noopener">D0009</a>.
     </p>
