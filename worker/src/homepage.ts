@@ -176,7 +176,7 @@ const HOMEPAGE_HTML = `<!doctype html>
     gap: clamp(32px, 5vw, 72px);
     align-items: center;
   }
-  @media (max-width: 920px) { .hero-grid { grid-template-columns: 1fr; gap: 36px; } }
+  @media (max-width: 920px) { .hero-grid { grid-template-columns: minmax(0, 1fr); gap: 36px; } }
 
   .hero-eyebrow {
     font-family: var(--mono); font-size: 12px; letter-spacing: 0.18em;
@@ -341,7 +341,7 @@ const HOMEPAGE_HTML = `<!doctype html>
     border: 1px solid var(--hairline);
     background: var(--bg-panel);
   }
-  @media (max-width: 880px) { .doors { grid-template-columns: 1fr; } }
+  @media (max-width: 880px) { .doors { grid-template-columns: minmax(0, 1fr); } }
 
   .door {
     padding: 32px;
@@ -449,7 +449,7 @@ const HOMEPAGE_HTML = `<!doctype html>
     gap: 0;
     min-height: 440px;
   }
-  @media (max-width: 880px) { .theatre-stage { grid-template-columns: 1fr; } }
+  @media (max-width: 880px) { .theatre-stage { grid-template-columns: minmax(0, 1fr); } }
 
   .agent {
     display: flex; flex-direction: column;
@@ -579,7 +579,7 @@ const HOMEPAGE_HTML = `<!doctype html>
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 32px;
   }
-  @media (max-width: 880px) { .protocol { grid-template-columns: 1fr; } }
+  @media (max-width: 880px) { .protocol { grid-template-columns: minmax(0, 1fr); } }
   .endpoint {
     border: 1px solid var(--hairline);
     background: var(--bg-panel);
@@ -627,7 +627,7 @@ const HOMEPAGE_HTML = `<!doctype html>
     grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
     gap: 32px;
   }
-  @media (max-width: 880px) { .telem-grid { grid-template-columns: 1fr; } }
+  @media (max-width: 880px) { .telem-grid { grid-template-columns: minmax(0, 1fr); } }
   .telem-card {
     border: 1px solid var(--hairline);
     background: var(--bg-panel);
@@ -712,7 +712,7 @@ const HOMEPAGE_HTML = `<!doctype html>
     gap: 28px;
     margin-top: 40px;
   }
-  @media (max-width: 880px) { .three-points { grid-template-columns: 1fr; } }
+  @media (max-width: 880px) { .three-points { grid-template-columns: minmax(0, 1fr); } }
   .point { border-top: 1px solid var(--amber); padding-top: 16px; }
   .point .num { font-family: var(--mono); font-size: 11px; color: var(--amber); letter-spacing: 0.18em; }
   .point h5 { font-family: var(--serif); font-weight: 400; font-size: 19px; line-height: 1.25; margin: 6px 0 8px; }
@@ -760,7 +760,7 @@ const HOMEPAGE_HTML = `<!doctype html>
     grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 1fr));
     gap: 36px;
   }
-  @media (max-width: 880px) { .foot-inner { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 880px) { .foot-inner { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
   .foot-brand {
     font-family: var(--serif); font-style: italic; font-size: 28px; line-height: 1.15;
     color: var(--fg); margin: 0 0 12px;
@@ -787,6 +787,57 @@ const HOMEPAGE_HTML = `<!doctype html>
     font-family: var(--mono); font-size: 11px; color: var(--fg-faint); letter-spacing: 0.06em;
   }
   .foot-bottom .creed { font-style: italic; color: var(--fg-dim); font-family: var(--serif); font-size: 13.5px; letter-spacing: 0; }
+
+  /* ─── Mobile refinements ──────────────────────────────────────────────
+     The grids above all collapse to minmax(0, 1fr) on mobile so unwrappable
+     pre.code blocks scroll inside their cards rather than expanding the
+     page. The rules below address the remaining mobile-specific concerns:
+     long inline tokens that don't wrap, iOS auto-zoom on inputs < 16px,
+     vertical padding inflation, sub-44px tap targets, and door padding
+     that eats too much horizontal real estate on a 320px screen. */
+  @media (max-width: 720px) {
+    /* Long URLs and ws:// snippets inside prose must wrap, otherwise they
+       force horizontal overflow even when their grid cell is constrained.
+       Targeting typography containers (not just .mono) catches inline-
+       styled spans too, e.g. style="font-family: var(--mono)". */
+    p, .section-sub, .door-text, .tl-detail, .door-output, .frame .body,
+    .mono, code {
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    /* pre.code keeps white-space: pre (intentional — these are shell
+       snippets where leading whitespace is meaningful). The card scrolls
+       horizontally inside via overflow-x: auto on .endpoint code blocks
+       and the wire-inset code blocks; that's now safe because the parent
+       grid gives them a min-width of 0. */
+    pre.code { white-space: pre; }
+
+    /* iOS Safari auto-zooms on focus when input font-size < 16px. */
+    .field, .agent-input input { font-size: 16px; }
+
+    /* Sections compress vertical rhythm on phones. */
+    section { padding: 56px 0 40px; }
+    .section-head { margin-bottom: 36px; }
+    .hero { padding: 40px var(--gut) 32px; }
+    .door { padding: 22px; min-height: 0; }
+    footer.foot { padding: 40px var(--gut); }
+
+    /* Tap targets — Apple HIG = 44pt minimum. */
+    .door-action, .ghost-btn, .btn { min-height: 44px; }
+    .agent-input button { min-height: 44px; }
+
+    /* Inputs in flex rows need min-width: 0 to shrink below their default
+       size; otherwise the adjacent button is pushed off the card edge on
+       320px screens. Two flex rows on this page: .field-row in the doors,
+       and .agent-input in the demo theatre. */
+    .field-row, .field { min-width: 0; }
+    .agent-input { min-width: 0; }
+    .agent-input input { min-width: 0; }
+
+    /* The full-page grain costs paint on mobile and adds nothing visible
+       when the screen is small. Disable to lighten scroll. */
+    body::before { display: none; }
+  }
 </style>
 </head>
 
@@ -972,29 +1023,29 @@ const HOMEPAGE_HTML = `<!doctype html>
       <p style="margin: 0 0 14px; font-size: 0.9rem; color: var(--fg-dim); line-height: 1.55;">
         Mint a conversation in door (i) above to get your bearer + magic link, then paste the four commands below into two terminals. Listener sees the sender's token; sender sees nothing back from its own emission (D0009).
       </p>
-      <div style="display: grid; grid-template-columns: 1fr; gap: 14px; margin-bottom: 12px;" id="wire-inset-grid">
+      <div style="display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; margin-bottom: 12px;" id="wire-inset-grid">
         <div>
           <div style="font-family: var(--mono); font-size: 0.78rem; color: var(--teal); margin-bottom: 6px; letter-spacing: 0.04em;">▸ TERMINAL A · listener</div>
 <pre class="code" style="margin: 0; font-size: 0.82rem;"><span class="c"># mint an account (returns ams_sk_… as 'credential')</span>
-curl -X POST https://ams.klappy.dev/v1/accounts \
-     -H 'content-type: application/json' \
+curl -X POST https://ams.klappy.dev/v1/accounts \\
+     -H 'content-type: application/json' \\
      -d '{"namespace":"yours-1234"}'
 
 <span class="c"># mint a conversation (returns magic_link)</span>
-curl -X POST https://ams.klappy.dev/v1/yours-1234/conversations \
+curl -X POST https://ams.klappy.dev/v1/yours-1234/conversations \\
      -H "Authorization: Bearer $A" -H 'content-type: application/json' -d '{}'
 
 <span class="c"># attach as listener (paste full magic link with /connect appended)</span>
-wscat -c "wss://ams.klappy.dev/yours-1234/conversations/&lt;alias&gt;/connect?t=&lt;t&gt;" \
-      -H "Authorization: Bearer $A" \
+wscat -c "wss://ams.klappy.dev/yours-1234/conversations/&lt;alias&gt;/connect?t=&lt;t&gt;" \\
+      -H "Authorization: Bearer $A" \\
       -H "X-AMS-Stream-Name: listener"</pre>
         </div>
         <div>
           <div style="font-family: var(--mono); font-size: 0.78rem; color: var(--amber); margin-bottom: 6px; letter-spacing: 0.04em;">▸ TERMINAL B · sender (same magic link, different stream name)</div>
 <pre class="code" style="margin: 0; font-size: 0.82rem;"><span class="c"># attach as sender + send a token in one shot</span>
-wscat -c "wss://ams.klappy.dev/yours-1234/conversations/&lt;alias&gt;/connect?t=&lt;t&gt;" \
-      -H "Authorization: Bearer $A" \
-      -H "X-AMS-Stream-Name: sender" \
+wscat -c "wss://ams.klappy.dev/yours-1234/conversations/&lt;alias&gt;/connect?t=&lt;t&gt;" \\
+      -H "Authorization: Bearer $A" \\
+      -H "X-AMS-Stream-Name: sender" \\
       -x '{"type":"token","data":"hello-from-sender"}' -w 2
 
 <span class="c"># expected on TERMINAL A:</span>
