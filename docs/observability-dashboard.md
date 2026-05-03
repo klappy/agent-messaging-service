@@ -48,15 +48,10 @@ Same logic: `blob5` is the HMAC-hashed `conversation_id`. Conversation deletion 
 
 ```sql
 SELECT
-  COALESCE(joined.c, 0) - COALESCE(left.c, 0) AS streams_live
-FROM
-  (SELECT SUM(_sample_interval) AS c
-     FROM ams_telemetry
-     WHERE event_type = 'connect_succeeded') joined
-CROSS JOIN
-  (SELECT SUM(_sample_interval) AS c
-     FROM ams_telemetry
-     WHERE event_type = 'stream_left') left
+  sumIf(_sample_interval, event_type = 'connect_succeeded')
+    - sumIf(_sample_interval, event_type = 'stream_left') AS streams_live
+FROM ams_telemetry
+WHERE event_type IN ('connect_succeeded', 'stream_left')
 ```
 
 `connect_succeeded` is written by the Tail Worker (hook layer, broker-side WS upgrade success). `stream_left` is written by the observability subscriber (subscriber layer, wire-visible frame). Cross-layer math is honest because D0010's non-overlap discipline assigns each event class to exactly one layer.

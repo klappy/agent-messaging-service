@@ -95,11 +95,10 @@ WHERE event_type = 'conversation_minted'
 
 -- Live streams (as observed by the broker hook + subscriber wire-layer cooperation)
 SELECT
-  COALESCE(joined.c, 0) - COALESCE(left.c, 0) AS streams_live
-FROM
-  (SELECT SUM(_sample_interval) AS c FROM ams_telemetry WHERE event_type = 'connect_succeeded') joined
-CROSS JOIN
-  (SELECT SUM(_sample_interval) AS c FROM ams_telemetry WHERE event_type = 'stream_left') left
+  sumIf(_sample_interval, event_type = 'connect_succeeded')
+    - sumIf(_sample_interval, event_type = 'stream_left') AS streams_live
+FROM ams_telemetry
+WHERE event_type IN ('connect_succeeded', 'stream_left')
 ```
 
 The `streams_live` query is cross-layer by design: `connect_succeeded` is a hook-layer row (Tail Worker writes it on WS upgrade success); `stream_left` is a subscriber-layer row (the observability subscriber writes it on receiving the wire frame). The cross-layer math is honest because D0010's non-overlap discipline assigns each event class to exactly one layer — no double-counting.
