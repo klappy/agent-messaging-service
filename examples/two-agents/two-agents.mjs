@@ -12,7 +12,6 @@
 
 import { createAccount, createConversation, connect } from "./ams-client.mjs";
 
-const TS_RE = /\.\d+Z$/;
 function rel(start) {
   const ms = Date.now() - start;
   return `+${String(ms).padStart(4, "0")}ms`;

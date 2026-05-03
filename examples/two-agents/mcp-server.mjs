@@ -258,8 +258,8 @@ server.registerTool(
     const wait = args.max_wait_ms ?? 0;
     if (recv.frames.length === 0 && wait > 0 && connection) {
       await new Promise((resolve) => {
-        const t = setTimeout(resolve, wait);
         const onFrame = () => { clearTimeout(t); resolve(); };
+        const t = setTimeout(() => { connection.removeListener("frame", onFrame); resolve(); }, wait);
         connection.once("frame", onFrame);
       });
     }
