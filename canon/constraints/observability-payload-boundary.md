@@ -9,8 +9,10 @@ stability: stable
 tags: ["ams", "canon", "constraint", "observability", "privacy", "safety", "payload-opacity"]
 epoch: E0008.3
 date: 2026-05-01
+amended: 2026-05-03
+amendments: "2026-05-03 — §'Hashing and Pseudonymization' promoted HMAC-SHA-256 to the AMS reference deployment default; unkeyed SHA-256 retained as a documented downgrade. Drove by D0013 + the wire-layer-latency / token-count cluster landing in the same observability gap-fill pass."
 derives_from: "PROTOCOL.md §4.1, PROTOCOL.md §4.4, PROTOCOL.md §7 (must not modify or schema-validate metadata in transit), ARCHITECTURE.md §8 (PoC does not log token contents), klappy://canon/constraints/telemetry-governance"
-complements: "ams://canon/decisions/D0010-observability-via-subscriber-not-wire, ams://canon/principles/observability-as-subscriber"
+complements: "ams://canon/decisions/D0010-observability-via-subscriber-not-wire, ams://canon/decisions/D0013-state-totals-via-snapshot-worker, ams://canon/principles/observability-as-subscriber, ams://canon/principles/wire-layer-latency-vocabulary, ams://canon/principles/token-count-derivation-on-subscribers"
 governs: "Every observability subscriber on AMS, every infrastructure hook on the broker, and every sink that receives data from either. Defines the safety floor for what may be captured at the wire and what must never leave the broker."
 status: active
 ---
@@ -146,7 +148,9 @@ The hook layer hashes `account_id` and `conversation_id` before they leave the b
 
 Sinks that aggregate data from multiple subscribers across multiple conversations (e.g., a hosted DOLCHE journal serving several operators) treat the aggregated view as hook-equivalent and apply hashing on ingest.
 
-The hash is unkeyed SHA-256 truncated to 12 hex characters. Truncation prevents trivial reversal while preserving aggregation cardinality. Operators that need stronger pseudonymization apply a keyed HMAC with a sink-local secret; the secret stays out of the sink.
+The AMS reference deployment uses **HMAC-SHA-256 with a sink-local secret**, truncated to 12 hex characters. The secret is provisioned as a Cloudflare Workers secret (`AMS_TELEMETRY_HASH_KEY`) at deploy time and stays out of every sink. HMAC defends against the realistic attack on identifier hashing — an adversary with read access to the telemetry sink and a candidate `account_id` cannot confirm a match without the secret. Plain SHA-256 leaks that confirmation; HMAC closes the leak. Truncation to 12 hex characters preserves aggregation cardinality at typical AMS scales while keeping the hash short enough for SQL convenience.
+
+Deployments that decline to provision a secret may fall back to **unkeyed SHA-256 truncated to 12 hex characters**. The fallback is permissible — it preserves the aggregation property — but it is a downgrade, not a default, and it must be documented in the deployment's service docs as such. Rotating the HMAC secret is a one-way break with prior aggregations; cross-rotation joins are not supported by design (rotating the secret is one mechanism for the right-to-be-forgotten purge path described below).
 
 ## Retention and Sink Hygiene
 
