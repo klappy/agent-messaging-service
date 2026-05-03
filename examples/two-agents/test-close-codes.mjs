@@ -40,7 +40,7 @@ const conv = await createConversation(acc.credential, acc.namespace, { host: HOS
 
 // Substitute origin for AMS_HOST when set (matches ams-client.mjs convention).
 function liveUrl(magicLinkPath, opts = {}) {
-  const u = new URL(conv.magic_link);
+  const u = new URL(magicLinkPath);
   u.protocol = WS_HOST.startsWith("wss") ? "wss:" : "ws:";
   u.host = new URL(WS_HOST).host;
   if (opts.namespace) u.pathname = u.pathname.replace(/^\/[^/]+/, `/${opts.namespace}`);

@@ -177,8 +177,17 @@ const HANDLERS = {
           self_subscribe: !!args.self_subscribe,
         });
         wireConnection(connection);
-        const joined = await connection.ready();
-        return toolResult({ ok: true, joined });
+        try {
+          const joined = await connection.ready();
+          return toolResult({ ok: true, joined });
+        } catch (err) {
+          if (connection) {
+            connection.removeAllListeners();
+            connection.close();
+            connection = null;
+          }
+          throw err;
+        }
       }
       case "ams_send": {
         if (!connection) throw new RpcError(-32602, "not_joined: call ams_join first");
