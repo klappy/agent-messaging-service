@@ -166,18 +166,18 @@ Test C.1 — SPEC §3.1 item 3 against ams.klappy.dev (PASS)
 
 $ curl -sS -X POST https://ams.truthkit.ai/v1/accounts -H "content-type: application/json" -d '{"namespace":"valc1k"}'
 {"account_id":"acc_01KQNJGA9C4FKEH0QH3N","namespace":"valc1k",
- "credential":"ams_sk_gmr8uKjtIpZlO6CR-9BrzMQFtGoIGtGqaJa7_oELWmc","created_at":"2026-05-03T00:06:10.988Z"}
+ "credential":"ams_sk_<REDACTED:valc1k>","created_at":"2026-05-03T00:06:10.988Z"}
 
 $ curl -sS -X POST https://ams.truthkit.ai/v1/accounts -H "content-type: application/json" -d '{"namespace":"valc1i"}'
 {"account_id":"acc_01KQNJGAY2KRHF2M5N5T","namespace":"valc1i",
- "credential":"ams_sk_nrZHOKkLf-X1IADkUm5kOeEvE4qVQUbz647QBbpbP8Y","created_at":"2026-05-03T00:06:11.650Z"}
+ "credential":"ams_sk_<REDACTED:valc1i>","created_at":"2026-05-03T00:06:11.650Z"}
 
 $ curl -sS -X POST https://ams.truthkit.ai/v1/valc1k/conversations \
-       -H "Authorization: Bearer ams_sk_gmr8uKjtIpZlO6CR-9BrzMQFtGoIGtGqaJa7_oELWmc" \
+       -H "Authorization: Bearer ams_sk_<REDACTED:valc1k>" \
        -H "content-type: application/json" \
        -d '{"alias":"valc1-smoke","stream_name":"klappy-stream"}'
 {"conversation_id":"conv_01KQNJGBE0WZMPEHQ95B","alias":"valc1-smoke",
- "magic_link":"https://ams.klappy.dev/valc1k/conversations/valc1-smoke?t=1ZxsMGwGZJTMB_8f1hzPg0C0d-9l8OaTyH87AO_o1KM",
+ "magic_link":"https://ams.klappy.dev/valc1k/conversations/valc1-smoke?t=<REDACTED:valc1-smoke>",
  "stream_id":"str_01KQNJGBE056BHACAX4S","stream_name":"klappy-stream",
  "metadata":{},"stream_metadata":{},"created_at":"2026-05-03T00:06:12.160Z"}
 
@@ -187,7 +187,7 @@ $ curl -sS -X POST https://ams.truthkit.ai/v1/valc1k/conversations \
 --- ian (listener) wscat session ---
 
 $ wscat -c "wss://ams.truthkit.ai/valc1k/conversations/valc1-smoke/connect?t=…" \
-        -H "Authorization: Bearer ams_sk_nrZHOKkLf-X1IADkUm5kOeEvE4qVQUbz647QBbpbP8Y" \
+        -H "Authorization: Bearer ams_sk_<REDACTED:valc1i>" \
         -H "X-AMS-Stream-Name: ian-stream" --no-color -w 6
 
 {"type":"joined","conversation_id":"conv_01KQNJGBE0WZMPEHQ95B","stream_id":"str_01KQNJH747ZGBEE1R8S8","stream_name":"ian-stream","metadata":{},"self_subscribe":false,"peers":[]}
@@ -198,7 +198,7 @@ $ wscat -c "wss://ams.truthkit.ai/valc1k/conversations/valc1-smoke/connect?t=…
 --- klappy (sender) wscat session ---
 
 $ wscat -c "wss://ams.truthkit.ai/valc1k/conversations/valc1-smoke/connect?t=…" \
-        -H "Authorization: Bearer ams_sk_gmr8uKjtIpZlO6CR-9BrzMQFtGoIGtGqaJa7_oELWmc" \
+        -H "Authorization: Bearer ams_sk_<REDACTED:valc1k>" \
         -H "X-AMS-Stream-Name: klappy-stream-c" --no-color \
         -x '{"type":"token","data":"hello-from-klappy-LIVE"}' -w 3
 
@@ -239,18 +239,18 @@ Test C.2 — Unicode metadata round-trip (regression for bugbot fixes 35f396f
                                    (高 = e9 ab 98, 橋 = e6 a9 8b, ' ' = 20, 🦊 = f0 9f a6 8a)
 
 $ curl -sS -X POST https://ams.klappy.dev/v1/valc1k/conversations \
-       -H "Authorization: Bearer ams_sk_gmr8uKjtIpZlO6CR-9BrzMQFtGoIGtGqaJa7_oELWmc" \
+       -H "Authorization: Bearer ams_sk_<REDACTED:valc1k>" \
        -H "content-type: application/json" \
        -d '{"alias":"valc2-unicode","stream_name":"klappy-stream"}'
 {"conversation_id":"conv_01KQNJJ5105ZYD99SECJ","alias":"valc2-unicode",
- "magic_link":"https://ams.klappy.dev/valc1k/conversations/valc2-unicode?t=MyscZUxcRfswpyzVcvyTg77fSPHcCviS5H6cC4jB8L8",
+ "magic_link":"https://ams.klappy.dev/valc1k/conversations/valc2-unicode?t=<REDACTED:valc2-unicode>",
  "stream_id":"str_01KQNJJ510HFN80KYFFN","stream_name":"klappy-stream",
  "metadata":{},"stream_metadata":{},"created_at":"2026-05-03T00:07:11.136Z"}
 
 --- ian (listener, no metadata) ---
 
 $ wscat -c "wss://ams.klappy.dev/valc1k/conversations/valc2-unicode/connect?t=…" \
-        -H "Authorization: Bearer ams_sk_nrZHOKkLf-X1IADkUm5kOeEvE4qVQUbz647QBbpbP8Y" \
+        -H "Authorization: Bearer ams_sk_<REDACTED:valc1i>" \
         -H "X-AMS-Stream-Name: ian-listener" --no-color -w 7
 
 {"type":"joined","conversation_id":"conv_01KQNJJ5105ZYD99SECJ","stream_id":"str_01KQNJJ5ZH704TQKMKDM","stream_name":"ian-listener","metadata":{},"self_subscribe":false,"peers":[]}
@@ -260,7 +260,7 @@ $ wscat -c "wss://ams.klappy.dev/valc1k/conversations/valc2-unicode/connect?t=�
 --- klappy (with X-AMS-Stream-Metadata: <base64 UTF-8>) ---
 
 $ wscat -c "wss://ams.klappy.dev/valc1k/conversations/valc2-unicode/connect?t=…" \
-        -H "Authorization: Bearer ams_sk_gmr8uKjtIpZlO6CR-9BrzMQFtGoIGtGqaJa7_oELWmc" \
+        -H "Authorization: Bearer ams_sk_<REDACTED:valc1k>" \
         -H "X-AMS-Stream-Name: klappy-unicode" \
         -H "X-AMS-Stream-Metadata: eyJkaXNwbGF5X25hbWUiOiLpq5jmqYsg8J+miiJ9" \
         --no-color -w 4
@@ -303,11 +303,11 @@ Test C.3 — Same-account stream-name reuse must NOT close 4004 (regression for
 --- setup (fresh conversation, fresh node ws driver to capture close codes) ---
 
 $ curl -sS -X POST https://ams.klappy.dev/v1/valc1k/conversations \
-       -H "Authorization: Bearer ams_sk_gmr8uKjtIpZlO6CR-9BrzMQFtGoIGtGqaJa7_oELWmc" \
+       -H "Authorization: Bearer ams_sk_<REDACTED:valc1k>" \
        -H "content-type: application/json" \
        -d '{"alias":"valc3b-codes","stream_name":"klappy-stream"}'
 {"conversation_id":"conv_01KQNJMKKDJ1N155WRT7","alias":"valc3b-codes",
- "magic_link":"https://ams.klappy.dev/valc1k/conversations/valc3b-codes?t=1dwzsQ5w_Kx1ehZR5zswGl9nTZRTWP_SoHXFhEUbYrI", ...}
+ "magic_link":"https://ams.klappy.dev/valc1k/conversations/valc3b-codes?t=<REDACTED:valc3b-codes>", ...}
 
   Three concurrent connections opened against the same conversation:
     A — bearer=klappy, X-AMS-Stream-Name=klappy-twin (held ~6s)
@@ -363,18 +363,18 @@ Test C.4 — D0011 host parity: re-run SPEC §3.1 item 3 against ams.truthkit.ai
 
 $ curl -sS -X POST https://ams.truthkit.ai/v1/accounts -H "content-type: application/json" -d '{"namespace":"valc4k"}'
 {"account_id":"acc_01KQNJNP4Z8F47J3BKER","namespace":"valc4k",
- "credential":"ams_sk_NynOA2CdzHlnDkkpnsECaKg-8Oc11iUa72ftr-OPxwI","created_at":"2026-05-03T00:09:06.975Z"}
+ "credential":"ams_sk_<REDACTED:valc4k>","created_at":"2026-05-03T00:09:06.975Z"}
 
 $ curl -sS -X POST https://ams.truthkit.ai/v1/accounts -H "content-type: application/json" -d '{"namespace":"valc4i"}'
 {"account_id":"acc_01KQNJNPND6G33G8Y36P","namespace":"valc4i",
- "credential":"ams_sk_a0lZi9YWLF0TgvF4ROJrTGvXDFpDT0SLlJEWpxJWVFg","created_at":"2026-05-03T00:09:07.501Z"}
+ "credential":"ams_sk_<REDACTED:valc4i>","created_at":"2026-05-03T00:09:07.501Z"}
 
 $ curl -sS -X POST https://ams.truthkit.ai/v1/valc4k/conversations \
-       -H "Authorization: Bearer ams_sk_NynOA2CdzHlnDkkpnsECaKg-8Oc11iUa72ftr-OPxwI" \
+       -H "Authorization: Bearer ams_sk_<REDACTED:valc4k>" \
        -H "content-type: application/json" \
        -d '{"alias":"valc4-truthkit","stream_name":"klappy-stream"}'
 {"conversation_id":"conv_01KQNJNQ1H6GQFSTC562","alias":"valc4-truthkit",
- "magic_link":"https://ams.truthkit.ai/valc4k/conversations/valc4-truthkit?t=7hJrCsyy0l9Bmmvby4oLr8PolbPE7KwdYoYkODIkMUE",
+ "magic_link":"https://ams.truthkit.ai/valc4k/conversations/valc4-truthkit?t=<REDACTED:valc4-truthkit>",
  "stream_id":"str_01KQNJNQ1HMHHBSHW4JN","stream_name":"klappy-stream",
  "metadata":{},"stream_metadata":{},"created_at":"2026-05-03T00:09:07.889Z"}
 
@@ -385,7 +385,7 @@ $ curl -sS -X POST https://ams.truthkit.ai/v1/valc4k/conversations \
 --- ian (listener) wscat session on ams.truthkit.ai ---
 
 $ wscat -c "wss://ams.truthkit.ai/valc4k/conversations/valc4-truthkit/connect?t=…" \
-        -H "Authorization: Bearer ams_sk_a0lZi9YWLF0TgvF4ROJrTGvXDFpDT0SLlJEWpxJWVFg" \
+        -H "Authorization: Bearer ams_sk_<REDACTED:valc4i>" \
         -H "X-AMS-Stream-Name: ian-tk" --no-color -w 6
 
 {"type":"joined","conversation_id":"conv_01KQNJNQ1H6GQFSTC562","stream_id":"str_01KQNJNQYE0H8HS52B72","stream_name":"ian-tk","metadata":{},"self_subscribe":false,"peers":[]}
@@ -396,7 +396,7 @@ $ wscat -c "wss://ams.truthkit.ai/valc4k/conversations/valc4-truthkit/connect?t=
 --- klappy (sender) wscat session on ams.truthkit.ai ---
 
 $ wscat -c "wss://ams.truthkit.ai/valc4k/conversations/valc4-truthkit/connect?t=…" \
-        -H "Authorization: Bearer ams_sk_NynOA2CdzHlnDkkpnsECaKg-8Oc11iUa72ftr-OPxwI" \
+        -H "Authorization: Bearer ams_sk_<REDACTED:valc4k>" \
         -H "X-AMS-Stream-Name: klappy-tk" --no-color \
         -x '{"type":"token","data":"hello-from-truthkit"}' -w 3
 
