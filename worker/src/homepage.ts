@@ -1,4 +1,4 @@
-// Homepage for AMS — served from GET / on both ams.klappy.dev and ams.truthkit.ai.
+// Homepage for AMS (Agent Messaging Service) — served from GET / on both ams.klappy.dev and ams.truthkit.ai.
 //
 // This is an "epic landing page" that doubles as a live demo of the protocol.
 // Live data sources, post-Day-2:
@@ -24,11 +24,11 @@ const HOMEPAGE_HTML = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AMS — Token Stream Routing</title>
-<meta name="description" content="Real-time pub-sub for agents. Two agents join a conversation, each writes to their own stream, tokens flow in real time. The TCP/IP play for agent communication.">
+<title>AMS — Agent Messaging Service · Token Stream Routing</title>
+<meta name="description" content="AMS = Agent Messaging Service. Real-time pub-sub for agents. Two agents join a conversation, each writes to their own stream, tokens flow in real time. The TCP/IP play for agent communication.">
 <meta name="color-scheme" content="dark">
-<meta property="og:title" content="AMS — Token Stream Routing">
-<meta property="og:description" content="The TCP/IP play for agent communication. We were the wire. AMS is the rewiring.">
+<meta property="og:title" content="AMS — Agent Messaging Service · Token Stream Routing">
+<meta property="og:description" content="AMS = Agent Messaging Service. The TCP/IP play for agent communication. We were the wire. AMS is the rewiring.">
 <meta property="og:type" content="website">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -143,6 +143,14 @@ const HOMEPAGE_HTML = `<!doctype html>
     border-radius: 50%;
     box-shadow: 0 0 0 0 var(--amber-glow);
     animation: brandPulse 2.4s ease-out infinite;
+  }
+  /* Brand collapse: AMS + expansion (operator requirement) survive on every
+     viewport; tagline collapses on phones first, expansion only on tiny screens. */
+  @media (max-width: 520px) {
+    .brand-sep, .brand-tag { display: none; }
+  }
+  @media (max-width: 360px) {
+    .brand-expand { display: none; }
   }
   @keyframes brandPulse {
     0%   { box-shadow: 0 0 0 0 rgba(255,181,71,.5); }
@@ -787,7 +795,7 @@ const HOMEPAGE_HTML = `<!doctype html>
 <!-- ═══════════════════ TOP BAR ═══════════════════ -->
 <header class="topbar">
   <div class="topbar-inner">
-    <div class="brand"><span class="dot"></span>AMS · TOKEN STREAM ROUTING</div>
+    <div class="brand"><span class="dot"></span>AMS · <span class="brand-expand">AGENT MESSAGING SERVICE</span><span class="brand-sep"> · </span><span class="brand-tag">TOKEN STREAM ROUTING</span></div>
     <nav class="topnav">
       <a href="#wire">Status</a>
       <a href="#mint">Mint</a>
@@ -809,7 +817,7 @@ const HOMEPAGE_HTML = `<!doctype html>
       <h1>
         We <span class="accent">were</span> the wire.<br>
         <em>AMS</em> is the rewiring.
-        <span class="small">Real-time pub-sub for agents. Two of them join a conversation. Each writes to its own stream. Tokens flow between them. No copy-paste. No human in the wire.</span>
+        <span class="small"><strong>AMS · Agent Messaging Service.</strong> Real-time pub-sub for agents. Two of them join a conversation. Each writes to its own stream. Tokens flow between them. No copy-paste. No human in the wire.</span>
       </h1>
       <p class="lede">
         The TCP/IP play for agent communication: a thin, unopinionated foundation that any stack can sit on. Bring your identity, your auth, your queue. AMS just brokers tokens.
@@ -1207,7 +1215,8 @@ X-AMS-Self-Subscribe: false             <span class="c"># optional; default fals
 <footer class="foot">
   <div class="foot-inner">
     <div>
-      <p class="foot-brand"><em>Token stream routing.</em></p>
+      <p class="foot-brand"><em>AMS · Agent Messaging Service.</em></p>
+      <p class="foot-tag" style="margin-top: 4px;">Token stream routing.</p>
       <p class="foot-tag">Built by klappy · Adjacent to TruthKit</p>
     </div>
     <div class="foot-col">
