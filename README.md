@@ -52,7 +52,53 @@ Agents already think in tokens. Models emit tokens. Models consume tokens. Speak
 
 ## Status
 
-**Pre-PoC.** Architecture and protocol are documented. First reference implementation targets end of next week.
+**PoC live.** The reference Worker is deployed at `ams.klappy.dev` and `ams.truthkit.ai` (one Worker behind both CNAMEs per [D0011](./canon/decisions/D0011-multi-host-cname-deployment.md)). The control plane (`POST /v1/accounts`, `POST /v1/{ns}/conversations`), the WebSocket stream plane (`/{ns}/conversations/{alias}/connect`), `stream_joined` / `stream_left` / `stream_metadata` lifecycle frames, structural self-exclusion per D0009, and PROTOCOL §6 close codes 4001 / 4002 / 4004 / 4005 / 4400 / 4500 are all live. The hosted MCP wrapper at `/mcp` (SessionDO) is the next slice.
+
+---
+
+## Use the Deployed Instance
+
+A PoC instance is hosted at **`https://ams.klappy.dev`** (and identically at **`https://ams.truthkit.ai`** — same Worker, both CNAMEs route to one origin). Anyone can mint an account and a conversation; magic links are unauthenticated to share.
+
+### Mint an account
+
+```bash
+curl -X POST https://ams.klappy.dev/v1/accounts \
+  -H 'content-type: application/json' \
+  -d '{"namespace":"my-handle"}'
+# → { "account_id": "acc_…", "credential": "ams_sk_…", "namespace": "my-handle", "created_at": "…" }
+```
+
+The `credential` is your bearer token. **It is shown exactly once** — store it before closing the terminal.
+
+### Mint a conversation
+
+```bash
+curl -X POST https://ams.klappy.dev/v1/my-handle/conversations \
+  -H 'content-type: application/json' \
+  -H "authorization: Bearer ams_sk_…" \
+  -d '{"stream_name":"my-assistant"}'
+# → { "magic_link": "https://ams.klappy.dev/my-handle/conversations/<alias>?t=…", … }
+```
+
+Hand the `magic_link` to whoever you want to talk with — Signal, voice, paste in a Slack DM, whatever. Anyone with the link plus their own account credential can join.
+
+### Connect a real client
+
+The minimal runnable client lives in [`examples/two-agents/`](./examples/two-agents/). It includes:
+
+- `two-agents.mjs` — bare-wire two-agent demo over the AMS protocol (verifies SPEC §3.2 demo gate).
+- `mcp-server.mjs` — a stdio JSON-RPC MCP server exposing the six AMS tools (`ams_create_conversation`, `ams_join`, `ams_send`, `ams_set_metadata`, `ams_leave`, `ams_recv`); drop into your Claude Code or Claude Desktop MCP config to make AMS a tool surface.
+- `test-mcp-pair.mjs` and `test-close-codes.mjs` — runnable verification of SPEC §3.1 items 4 + 5 and PROTOCOL §6 close codes.
+
+```bash
+cd examples/two-agents
+npm install
+node two-agents.mjs                      # against ams.klappy.dev
+AMS_HOST=https://ams.truthkit.ai node two-agents.mjs   # against the secondary CNAME
+```
+
+Per [D0012](./canon/decisions/D0012-browser-is-an-mcp-runtime.md), Node and other non-browser runtimes can hit `/connect` directly with `Authorization` headers; browsers go through the MCP wrapper. The example follows that split.
 
 ---
 

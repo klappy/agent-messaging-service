@@ -38,7 +38,16 @@ export class ConversationDO {
 
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
-    if (url.pathname === "/__do__/connect") return this.handleConnect(req);
+    if (url.pathname === "/__do__/connect") {
+      try {
+        return await this.handleConnect(req);
+      } catch {
+        // PROTOCOL §6 close 4500 — server error. Any unexpected throw inside
+        // the DO surfaces as a wire close so clients get a uniform error path
+        // rather than an opaque HTTP 500 from workerd.
+        return wsClose(4500, "internal_error");
+      }
+    }
     return new Response("not found", { status: 404 });
   }
 
@@ -48,13 +57,16 @@ export class ConversationDO {
     }
     const payloadHeader = req.headers.get("x-ams-join-payload");
     if (!payloadHeader) {
-      return new Response("missing join payload", { status: 400 });
+      // The Worker is the only caller and always sets this header. Missing it
+      // is an invariant break, not user input — surface as 4500 so a bug shows
+      // up on the wire instead of as an opaque HTTP 400.
+      return wsClose(4500, "internal_error");
     }
     let payload: JoinPayload;
     try {
       payload = JSON.parse(base64ToUtf8(payloadHeader)) as JoinPayload;
     } catch {
-      return new Response("invalid join payload", { status: 400 });
+      return wsClose(4500, "internal_error");
     }
 
     // PROTOCOL.md §6 close 4004 — stream-name conflict within this conversation.
@@ -63,11 +75,7 @@ export class ConversationDO {
         conn.stream_name === payload.stream_name &&
         conn.account_id !== payload.account_id
       ) {
-        const pair = new WebSocketPair();
-        const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
-        server.accept();
-        server.close(4004, "stream_name_conflict");
-        return new Response(null, { status: 101, webSocket: client });
+        return wsClose(4004, "stream_name_conflict");
       }
     }
 
@@ -138,6 +146,18 @@ export class ConversationDO {
   private handleMessage(stream_id: string, event: MessageEvent) {
     const conn = this.streams.get(stream_id);
     if (!conn) return;
+    try {
+      this.dispatchMessage(stream_id, conn, event);
+    } catch {
+      // PROTOCOL §6 close 4500 — anything unexpected becomes a server-error
+      // close so the wire stays well-defined.
+      try {
+        conn.ws.close(4500, "internal_error");
+      } catch {}
+    }
+  }
+
+  private dispatchMessage(stream_id: string, conn: ConnectionState, event: MessageEvent) {
     let data: unknown;
     try {
       data = typeof event.data === "string" ? JSON.parse(event.data) : null;
@@ -210,4 +230,16 @@ export class ConversationDO {
       } catch {}
     }
   }
+}
+
+// Build a 101 Switching Protocols response that immediately closes with the
+// given AMS close code. PROTOCOL §4.1: connect failures return WS close, not
+// HTTP — so even invariant breaks inside the DO surface as a wire close
+// rather than an HTTP error the upstream Worker would otherwise pass through.
+function wsClose(code: number, reason: string): Response {
+  const pair = new WebSocketPair();
+  const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
+  server.accept();
+  server.close(code, reason);
+  return new Response(null, { status: 101, webSocket: client });
 }
