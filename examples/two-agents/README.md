@@ -5,7 +5,7 @@ The two-agent demo for the AMS PoC. Three runnable artifacts in one directory:
 | Artifact | What it proves |
 |----------|----------------|
 | `two-agents.mjs` | SPEC §3.2 demo gate — two agents in one Node process exchange tokens through one AMS conversation; D0009 structural self-exclusion holds on the wire. |
-| `mcp-server.mjs` | A stdio JSON-RPC 2.0 MCP server that exposes the six AMS tools (`ams_create_conversation`, `ams_join`, `ams_send`, `ams_set_metadata`, `ams_leave`, `ams_recv`) and the two notifications (`notifications/ams/token`, `notifications/ams/stream_metadata`) per [`ams://canon/constraints/mcp-wrapper-conformance-for-conversational-ai`](../../canon/constraints/mcp-wrapper-conformance-for-conversational-ai.md). |
+| `mcp-server.mjs` | A stdio MCP server (built on the official [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/typescript-sdk)) that exposes the six AMS tools (`ams_create_conversation`, `ams_join`, `ams_send`, `ams_set_metadata`, `ams_leave`, `ams_recv`) and the two notifications (`notifications/ams/token`, `notifications/ams/stream_metadata`) per [`ams://canon/constraints/mcp-wrapper-conformance-for-conversational-ai`](../../canon/constraints/mcp-wrapper-conformance-for-conversational-ai.md). The SDK handles the JSON-RPC framing, initialize handshake, and tool dispatch — this file only declares tool surfaces and translates them into AMS wire calls. |
 | `test-mcp-pair.mjs` | SPEC §3.1 items 4 + 5 — two MCP-server subprocesses driven through the create / join / send / receive sequence end-to-end. |
 | `test-close-codes.mjs` | PROTOCOL.md §6 — verifies 4001 / 4002 / 4004 / 4005 / 4400 close codes fire on the wire. |
 
@@ -79,6 +79,6 @@ In scope (and demonstrated here):
 
 Out of scope for this directory:
 
-- The hosted `/mcp` endpoint (SessionDO). Local stdio MCP is sufficient to exercise SPEC §3.1 items 4 + 5. The hosted wrapper lands when there's a browser or hosted-Claude consumer demanding it.
+- The hosted `/mcp` endpoint (SessionDO). Local stdio MCP is sufficient to exercise SPEC §3.1 items 4 + 5. The hosted wrapper lands when there's a browser or hosted-Claude consumer demanding it; the planned shape is a Cloudflare `agents/mcp` `McpAgent` (Worker-hosted Durable Object), not a stdio server.
 - Backpressure observation (PROTOCOL §6 close 4290) — `recvBuffer` enforces a soft drop policy with `truncated` signaling, but the wire-side 4290 close requires bufferedAmount tracking that is post-PoC.
 - Per-account concurrency caps (PROTOCOL §6 close 4003) — SPEC §8 names the cap as 10 streams/account; enforcement requires global state across DOs and is post-PoC.

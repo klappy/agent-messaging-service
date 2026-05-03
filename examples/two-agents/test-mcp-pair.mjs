@@ -61,6 +61,12 @@ class McpClient {
       }, TIMEOUT_MS);
     });
   }
+  // Notifications have no id (JSON-RPC 2.0). The MCP initialize handshake
+  // requires the client to send `notifications/initialized` after the
+  // initialize response — the SDK rejects requests until it has seen this.
+  notify(method, params) {
+    this.proc.stdin.write(JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n");
+  }
   waitForNotification(method, predicate = () => true, timeoutMs = TIMEOUT_MS) {
     const found = this.notifications.find((n) => n.method === method && predicate(n.params));
     if (found) return Promise.resolve(found);
@@ -101,8 +107,14 @@ const b = new McpClient("B", { AMS_HOST: HOST, AMS_NAMESPACE: NS_B });
 
 try {
   // --- MCP initialize handshake (both clients) ---
-  await a.call("initialize", { protocolVersion: "2024-11-05", capabilities: {} });
-  await b.call("initialize", { protocolVersion: "2024-11-05", capabilities: {} });
+  // Per MCP spec, the client sends initialize → receives capabilities →
+  // sends notifications/initialized. The SDK enforces this; without the
+  // initialized notification, subsequent tools/list and tools/call requests
+  // are rejected.
+  await a.call("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "test-mcp-pair", version: "0.1.0" } });
+  await b.call("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "test-mcp-pair", version: "0.1.0" } });
+  a.notify("notifications/initialized", {});
+  b.notify("notifications/initialized", {});
   check("both MCP servers initialize", true);
 
   const aTools = await a.call("tools/list", {});

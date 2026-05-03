@@ -115,27 +115,36 @@ async function handleConnect(
   // upgrade header is present, then either route to the DO or close with the
   // appropriate spec'd code. Pre-upgrade HTTP errors only fire when the
   // request isn't even a WS upgrade attempt.
-  const resolution = await resolveConnect(req, env, ns, alias, url);
-  if ("error" in resolution) {
-    return wsClose(resolution.error.code, resolution.error.reason);
-  }
+  //
+  // Defense in depth: any unexpected throw from resolveConnect (KV failure,
+  // crypto error, JSON.parse on a corrupt KV record) or stub.fetch surfaces
+  // as a wire close 4500 instead of an opaque HTTP 500 from workerd. Mirrors
+  // the DO's own try/catch around handleConnect.
+  try {
+    const resolution = await resolveConnect(req, env, ns, alias, url);
+    if ("error" in resolution) {
+      return wsClose(resolution.error.code, resolution.error.reason);
+    }
 
-  // Hand off to the ConversationDO. The DO is named by conversation_id; that
-  // way every connect for the same conversation lands on the same DO instance
-  // regardless of which CF colo terminated the WebSocket.
-  const stub = env.CONVERSATION_DO.get(
-    env.CONVERSATION_DO.idFromName(resolution.payload.conversation_id),
-  );
-  // The DO's fetch() reads the join payload from this header. We can't put it
-  // in a body — WebSocket-upgrade requests have no readable body in workerd.
-  const doReq = new Request("https://do.internal/__do__/connect", {
-    method: "GET",
-    headers: {
-      upgrade: "websocket",
-      "x-ams-join-payload": utf8ToBase64(JSON.stringify(resolution.payload)),
-    },
-  });
-  return stub.fetch(doReq);
+    // Hand off to the ConversationDO. The DO is named by conversation_id; that
+    // way every connect for the same conversation lands on the same DO instance
+    // regardless of which CF colo terminated the WebSocket.
+    const stub = env.CONVERSATION_DO.get(
+      env.CONVERSATION_DO.idFromName(resolution.payload.conversation_id),
+    );
+    // The DO's fetch() reads the join payload from this header. We can't put it
+    // in a body — WebSocket-upgrade requests have no readable body in workerd.
+    const doReq = new Request("https://do.internal/__do__/connect", {
+      method: "GET",
+      headers: {
+        upgrade: "websocket",
+        "x-ams-join-payload": utf8ToBase64(JSON.stringify(resolution.payload)),
+      },
+    });
+    return await stub.fetch(doReq);
+  } catch {
+    return wsClose(4500, "internal_error");
+  }
 }
 
 // Resolve a /connect request into either a JoinPayload or a (code, reason)
