@@ -16,6 +16,7 @@
 - **Cross-program canon:** `klappy://canon/...` upstream at [klappy.dev](https://github.com/klappy/klappy.dev). Referenced from this overlay; never duplicated.
 - **The journal:** `journal/*.tsv` — DOLCHEO+ artifacts encoded session-by-session. DOLCHEO = the seven default encoding types (Decision, Observation, Learning, Constraint, Handoff, Encode, Open); the `+` is open-ended for custom types defined per use case via governance articles per `klappy://odd/encoding-types/how-to-write-encoding-types`. New work adds new TSV files; existing entries are immutable evidence.
 - **AMS-specific overlay reading:** [`docs/operating-contract-pointer.md`](./docs/operating-contract-pointer.md) names the AMS-specific D-numbers and overlay-specific guidance to know.
+- **Homepage / PoC surface governance:** [`docs/homepage-governance.md`](./docs/homepage-governance.md) governs every change to `worker/src/homepage.ts`. Read first if your work touches the homepage. The architectural-cardinality rule from [`canon/decisions/D0013`](./canon/decisions/D0013-homepage-as-poc-surface.md) is mechanically enforced by `scripts/check-homepage-architectural-claims.mjs` on PR via `.github/workflows/homepage-architectural-claims.yml`.
 
 ---
 

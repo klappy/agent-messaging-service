@@ -1,0 +1,36 @@
+name: Homepage architectural claims
+
+# Enforces ams://canon/decisions/D0013 — the homepage's architectural
+# surfaces (title, meta description, og description, og title, hero
+# subhead) must reflect AMS's N-peer wire shape. Demo body copy is not
+# scanned. See ams://docs/homepage-governance for the full rule set.
+
+on:
+  pull_request:
+    paths:
+      - "worker/src/homepage.ts"
+      - "scripts/check-homepage-architectural-claims.mjs"
+      - "docs/homepage-governance.md"
+      - ".github/workflows/homepage-architectural-claims.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "worker/src/homepage.ts"
+      - "scripts/check-homepage-architectural-claims.mjs"
+      - "docs/homepage-governance.md"
+      - ".github/workflows/homepage-architectural-claims.yml"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Run architectural claims check
+        run: node scripts/check-homepage-architectural-claims.mjs
