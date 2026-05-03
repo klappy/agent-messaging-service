@@ -1,0 +1,19 @@
+{
+  "name": "ams-example-two-agents",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Two-agent AMS demo: bare-wire Node script + stdio MCP server. Reference for SPEC §3.1 items 4 and 5 and §3.2 demo gate.",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "ws": "^8.18.0"
+  },
+  "scripts": {
+    "demo": "node two-agents.mjs",
+    "mcp": "node mcp-server.mjs",
+    "test": "node test-mcp-pair.mjs"
+  }
+}

@@ -1,6 +1,6 @@
 import { createAccount } from "./accounts";
 import { authenticate } from "./auth";
-import { ConversationDO, type JoinPayload } from "./conversation";
+import { ConversationDO, type JoinPayload, wsClose } from "./conversation";
 import { ALIAS_KEY, CONVERSATION_KEY } from "./conversations";
 import { homepageHeadResponse, homepageResponse } from "./homepage";
 import type { ConversationRecord, Env } from "./types";
@@ -109,61 +109,93 @@ async function handleConnect(
   if (req.headers.get("upgrade") !== "websocket") {
     return errorResponse(426, "upgrade_required", "WebSocket upgrade required for /connect.");
   }
+
+  // Per PROTOCOL §4.1, "Server response on failure: WebSocket close with one
+  // of the codes in §6." We accept the WS upgrade unconditionally once the
+  // upgrade header is present, then either route to the DO or close with the
+  // appropriate spec'd code. Pre-upgrade HTTP errors only fire when the
+  // request isn't even a WS upgrade attempt.
+  //
+  // Defense in depth: any unexpected throw from resolveConnect (KV failure,
+  // crypto error, JSON.parse on a corrupt KV record) or stub.fetch surfaces
+  // as a wire close 4500 instead of an opaque HTTP 500 from workerd. Mirrors
+  // the DO's own try/catch around handleConnect.
+  try {
+    const resolution = await resolveConnect(req, env, ns, alias, url);
+    if ("error" in resolution) {
+      return wsClose(resolution.error.code, resolution.error.reason);
+    }
+
+    // Hand off to the ConversationDO. The DO is named by conversation_id; that
+    // way every connect for the same conversation lands on the same DO instance
+    // regardless of which CF colo terminated the WebSocket.
+    const stub = env.CONVERSATION_DO.get(
+      env.CONVERSATION_DO.idFromName(resolution.payload.conversation_id),
+    );
+    // The DO's fetch() reads the join payload from this header. We can't put it
+    // in a body — WebSocket-upgrade requests have no readable body in workerd.
+    const doReq = new Request("https://do.internal/__do__/connect", {
+      method: "GET",
+      headers: {
+        upgrade: "websocket",
+        "x-ams-join-payload": utf8ToBase64(JSON.stringify(resolution.payload)),
+      },
+    });
+    return await stub.fetch(doReq);
+  } catch {
+    return wsClose(4500, "internal_error");
+  }
+}
+
+// Resolve a /connect request into either a JoinPayload or a (code, reason)
+// pair. Codes come from PROTOCOL §6:
+//   4001 — invalid magic link (missing/invalid permissive token)
+//   4002 — invalid or missing account credential
+//   4005 — conversation not found
+//   4400 — malformed connect header (extends "malformed frame" to the
+//          handshake; closest semantic match in §6 for header-validation
+//          failures that happen post-upgrade)
+async function resolveConnect(
+  req: Request,
+  env: Env,
+  ns: string,
+  alias: string,
+  url: URL,
+): Promise<{ payload: JoinPayload } | { error: { code: number; reason: string } }> {
   const permissiveToken = url.searchParams.get("t");
   if (!permissiveToken) {
-    return errorResponse(
-      401,
-      "missing_permissive_token",
-      "Magic link 't' query parameter required.",
-    );
+    return { error: { code: 4001, reason: "invalid_magic_link" } };
   }
 
   // Resolve alias → conversation_id.
   const conversationId = await env.AMS_KV.get(ALIAS_KEY(ns, alias));
   if (!conversationId) {
-    return errorResponse(
-      404,
-      "conversation_not_found",
-      "No conversation matches this magic link.",
-    );
+    return { error: { code: 4005, reason: "conversation_not_found" } };
   }
-
   const recordRaw = await env.AMS_KV.get(CONVERSATION_KEY(conversationId));
   if (!recordRaw) {
-    return errorResponse(
-      404,
-      "conversation_not_found",
-      "No conversation matches this magic link.",
-    );
+    return { error: { code: 4005, reason: "conversation_not_found" } };
   }
   const record = JSON.parse(recordRaw) as ConversationRecord;
 
-  // Validate the permissive token (timing-safe compare against the stored hash).
-  // PROTOCOL.md §6 close 4001 maps to this; we return HTTP 401 pre-upgrade
-  // since no WebSocket has been established yet.
+  // Validate the permissive token (timing-safe compare against stored hash).
   const tokenHash = await pepperedHash(env.AMS_PERMISSIVE_TOKEN_PEPPER, permissiveToken);
   if (!timingSafeEqualHex(tokenHash, record.permissive_token_hash)) {
-    return errorResponse(
-      401,
-      "invalid_permissive_token",
-      "Magic link permissive token is not valid.",
-    );
+    return { error: { code: 4001, reason: "invalid_magic_link" } };
   }
 
   // Authenticate the bearer (ownership of the joining stream).
   const account = await authenticate(req, env);
-  if (account instanceof Response) return account;
+  if (account instanceof Response) {
+    return { error: { code: 4002, reason: "invalid_credential" } };
+  }
 
-  // Stream name (optional header). Defaults to a stream-* token.
+  // Optional stream-name header. Defaults to a stream-* token.
   const streamNameHeader = req.headers.get("x-ams-stream-name");
   let streamName: string;
   if (streamNameHeader) {
     if (!isValidStreamName(streamNameHeader)) {
-      return errorResponse(
-        400,
-        "invalid_stream_name",
-        "X-AMS-Stream-Name must match [A-Za-z0-9][A-Za-z0-9._-]{0,62}.",
-      );
+      return { error: { code: 4400, reason: "invalid_stream_name_header" } };
     }
     streamName = streamNameHeader;
   } else {
@@ -174,7 +206,7 @@ async function handleConnect(
   const selfHeader = (req.headers.get("x-ams-self-subscribe") ?? "false").toLowerCase();
   const selfSubscribe = selfHeader === "true" || selfHeader === "1";
 
-  // Optional stream metadata (base64-encoded JSON object).
+  // Optional stream-metadata header (base64-encoded JSON object).
   const metadataHeader = req.headers.get("x-ams-stream-metadata");
   let streamMetadata: Record<string, unknown> = {};
   if (metadataHeader) {
@@ -182,44 +214,25 @@ async function handleConnect(
       const decoded = base64ToUtf8(metadataHeader);
       const parsed = JSON.parse(decoded);
       if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-        return errorResponse(
-          400,
-          "invalid_stream_metadata",
-          "X-AMS-Stream-Metadata must decode to a JSON object.",
-        );
+        return { error: { code: 4400, reason: "invalid_stream_metadata_header" } };
       }
       streamMetadata = parsed as Record<string, unknown>;
     } catch {
-      return errorResponse(
-        400,
-        "invalid_stream_metadata",
-        "X-AMS-Stream-Metadata must be base64-encoded JSON.",
-      );
+      return { error: { code: 4400, reason: "invalid_stream_metadata_header" } };
     }
   }
 
-  // Hand off to the ConversationDO. The DO is named by conversation_id; that
-  // way every connect for the same conversation lands on the same DO instance
-  // regardless of which CF colo terminated the WebSocket.
-  const stub = env.CONVERSATION_DO.get(env.CONVERSATION_DO.idFromName(conversationId));
-  const payload: JoinPayload = {
-    conversation_id: conversationId,
-    conversation_namespace: ns,
-    alias,
-    conversation_metadata: record.metadata,
-    account_id: account.account_id,
-    stream_name: streamName,
-    self_subscribe: selfSubscribe,
-    stream_metadata: streamMetadata,
-  };
-  // The DO's fetch() reads the join payload from this header. We can't put it
-  // in a body — WebSocket-upgrade requests have no readable body in workerd.
-  const doReq = new Request("https://do.internal/__do__/connect", {
-    method: "GET",
-    headers: {
-      upgrade: "websocket",
-      "x-ams-join-payload": utf8ToBase64(JSON.stringify(payload)),
+  return {
+    payload: {
+      conversation_id: conversationId,
+      conversation_namespace: ns,
+      alias,
+      conversation_metadata: record.metadata,
+      account_id: account.account_id,
+      stream_name: streamName,
+      self_subscribe: selfSubscribe,
+      stream_metadata: streamMetadata,
     },
-  });
-  return stub.fetch(doReq);
+  };
 }
+
