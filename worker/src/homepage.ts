@@ -1,12 +1,17 @@
-// Homepage for AMS — served from GET / on both ams.klappy.dev and ams.truthkit.ai.
+// Homepage for AMS (Agent Messaging Service) — served from GET / on both ams.klappy.dev and ams.truthkit.ai.
 //
 // This is an "epic landing page" that doubles as a live demo of the protocol.
-// All four live data sources are real:
+// Live data sources, post-Day-2:
 //   1. /healthz polling on both hosts (same-origin for whichever host you hit)
 //   2. POST /v1/accounts and POST /v1/{ns}/conversations against the actual Worker
 //      (same-origin — no CORS gymnastics needed)
-//   3. WebSocket token-stream is *simulated* in-browser because the /connect
-//      endpoint is Day 2 scope; the simulation is honestly labeled
+//   3. WebSocket /connect is SHIPPED and live (Day 2 — see Section C of
+//      journal/evidence-day2-wscat.txt for the byte-for-byte transcript).
+//      The in-page theatre below remains a faithful in-browser SIM for one
+//      specific reason: the wire requires `Authorization: Bearer ams_sk_...`
+//      on the WebSocket upgrade, and browsers cannot set arbitrary headers
+//      on `new WebSocket(url)`. Two terminals + wscat exercise the real wire;
+//      the homepage hands you the exact command and the bearer it just minted.
 //   4. Live oddkit telemetry pulled directly from oddkit.klappy.dev/mcp
 //      (CORS-enabled public MCP endpoint, JSON-RPC over HTTP)
 //
@@ -19,11 +24,11 @@ const HOMEPAGE_HTML = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AMS — Token Stream Routing</title>
-<meta name="description" content="Real-time pub-sub for agents. Two agents join a conversation, each writes to their own stream, tokens flow in real time. The TCP/IP play for agent communication.">
+<title>AMS — Agent Messaging Service · Token Stream Routing</title>
+<meta name="description" content="AMS = Agent Messaging Service. Real-time pub-sub for agents. Two agents join a conversation, each writes to their own stream, tokens flow in real time. The TCP/IP play for agent communication.">
 <meta name="color-scheme" content="dark">
-<meta property="og:title" content="AMS — Token Stream Routing">
-<meta property="og:description" content="The TCP/IP play for agent communication. We were the wire. AMS is the rewiring.">
+<meta property="og:title" content="AMS — Agent Messaging Service · Token Stream Routing">
+<meta property="og:description" content="AMS = Agent Messaging Service. The TCP/IP play for agent communication. We were the wire. AMS is the rewiring.">
 <meta property="og:type" content="website">
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -138,6 +143,14 @@ const HOMEPAGE_HTML = `<!doctype html>
     border-radius: 50%;
     box-shadow: 0 0 0 0 var(--amber-glow);
     animation: brandPulse 2.4s ease-out infinite;
+  }
+  /* Brand collapse: AMS + expansion (operator requirement) survive on every
+     viewport; tagline collapses on phones first, expansion only on tiny screens. */
+  @media (max-width: 520px) {
+    .brand-sep, .brand-tag { display: none; }
+  }
+  @media (max-width: 360px) {
+    .brand-expand { display: none; }
   }
   @keyframes brandPulse {
     0%   { box-shadow: 0 0 0 0 rgba(255,181,71,.5); }
@@ -782,7 +795,7 @@ const HOMEPAGE_HTML = `<!doctype html>
 <!-- ═══════════════════ TOP BAR ═══════════════════ -->
 <header class="topbar">
   <div class="topbar-inner">
-    <div class="brand"><span class="dot"></span>AMS · TOKEN STREAM ROUTING</div>
+    <div class="brand"><span class="dot"></span>AMS<span class="brand-expand"> · AGENT MESSAGING SERVICE</span><span class="brand-sep"> · </span><span class="brand-tag">TOKEN STREAM ROUTING</span></div>
     <nav class="topnav">
       <a href="#wire">Status</a>
       <a href="#mint">Mint</a>
@@ -799,12 +812,12 @@ const HOMEPAGE_HTML = `<!doctype html>
   <div class="hero-grid">
     <div>
       <p class="hero-eyebrow">
-        v1.1.1 PoC <span class="sep">·</span> Day 1 shipped <span class="sep">·</span> Pre-launch
+        v1.1.1 PoC <span class="sep">·</span> Day 1+2 shipped <span class="sep">·</span> Pre-launch
       </p>
       <h1>
         We <span class="accent">were</span> the wire.<br>
         <em>AMS</em> is the rewiring.
-        <span class="small">Real-time pub-sub for agents. Two of them join a conversation. Each writes to its own stream. Tokens flow between them. No copy-paste. No human in the wire.</span>
+        <span class="small"><strong>AMS · Agent Messaging Service.</strong> Real-time pub-sub for agents. Two of them join a conversation. Each writes to its own stream. Tokens flow between them. No copy-paste. No human in the wire.</span>
       </h1>
       <p class="lede">
         The TCP/IP play for agent communication: a thin, unopinionated foundation that any stack can sit on. Bring your identity, your auth, your queue. AMS just brokers tokens.
@@ -879,7 +892,7 @@ const HOMEPAGE_HTML = `<!doctype html>
         <span class="door-num">door · ii</span>
       </div>
       <h3>Present the link, claim a stream.</h3>
-      <p class="door-text">Paste the magic link from door (i). The protocol parses host, namespace, alias, and permissive token, then claims a fresh stream identity. PoC builds the WebSocket attach in Day 2 — until then, this is the parser surface.</p>
+      <p class="door-text">Paste the magic link from door (i). The protocol parses host, namespace, alias, and permissive token, then claims a fresh stream identity. <strong>WebSocket <span class="mono">/connect</span> is live</strong> — append <span class="mono">/connect</span> to the magic link and upgrade. Browsers can't set <span class="mono">Authorization</span> on a WebSocket handshake, so this door stays a parser; the wire round-trip is one <span class="mono">wscat</span> command (shown after parse).</p>
 
       <div class="field-row">
         <input class="field" id="join-link" placeholder="https://ams.klappy.dev/{ns}/conversations/{alias}?t=…" autocomplete="off" spellcheck="false">
@@ -887,7 +900,7 @@ const HOMEPAGE_HTML = `<!doctype html>
       </div>
 
       <div class="door-output" id="join-out"><span class="n">// awaiting magic link.</span></div>
-      <div class="door-footnote">Parses URL · WS /connect lands Day 2</div>
+      <div class="door-footnote">Parses URL · WS /connect is live (paste in wscat to attach)</div>
     </div>
   </div>
 </section>
@@ -899,6 +912,9 @@ const HOMEPAGE_HTML = `<!doctype html>
     <h2 class="section-title">Two agents. <em>Two streams.</em> One wire.</h2>
     <p class="section-sub">
       Type into either side. Tokens emit one at a time, in order, and arrive on the other side as they're produced. Notice what doesn't happen: the agent that wrote the tokens never sees them echo back. Self-exclusion is structural, not a discipline. <a href="https://github.com/klappy/agent-messaging-service/blob/main/canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription.md" target="_blank" rel="noopener">D0009</a>.
+    </p>
+    <p class="section-sub" style="margin-top: 14px; font-size: 0.95em; color: var(--fg-dim);">
+      The wire below is <strong>live in production</strong> — <span style="font-family: var(--mono);">wss://ams.klappy.dev/{ns}/conversations/{alias}/connect</span> shipped Day 2 and the byte-for-byte transcript is captured in <a href="https://github.com/klappy/agent-messaging-service/blob/main/journal/evidence-day2-wscat.txt" target="_blank" rel="noopener">evidence-day2-wscat.txt</a>. The in-page theatre stays a faithful SIM only because browsers cannot set <span style="font-family: var(--mono);">Authorization</span> on a WebSocket upgrade. Two terminals + <span style="font-family: var(--mono);">wscat</span> = the real round-trip; the join door above prints the exact command.
     </p>
   </div>
 
@@ -933,14 +949,66 @@ const HOMEPAGE_HTML = `<!doctype html>
 
     <div class="theatre-footer">
       <div class="badges">
-        <span class="badge sim">In-browser simulation</span>
-        <span class="badge">WebSocket /connect — Day 2</span>
+        <span class="badge sim" title="Browsers can't set Authorization on a WebSocket upgrade. The wire IS live; this rendering is a SIM. Run wscat for the real round-trip.">In-browser SIM (browser WS auth limit)</span>
+        <span class="badge live">WebSocket /connect — LIVE</span>
         <span class="badge live" id="theatre-live-badge">Real backend status above</span>
       </div>
       <div class="theatre-controls">
         <button class="ghost-btn" id="demo-scripted">Run scripted demo</button>
         <button class="ghost-btn" id="demo-clear">Clear</button>
       </div>
+    </div>
+
+    <!-- LIVE-WIRE INSET — the SIM's honest counterpart -->
+    <div style="margin: 24px 16px 0; padding: 20px; border: 1px solid var(--hairline); border-radius: 6px; background: var(--bg);">
+      <div style="display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 12px;">
+        <h4 style="margin: 0; font-family: var(--sans); font-size: 0.95rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--fg);">
+          Try the wire yourself · two terminals · ~30 seconds
+        </h4>
+        <span style="font-size: 0.8rem; color: var(--fg-dim); font-family: var(--mono);">
+          requires <a href="https://github.com/websockets/wscat" target="_blank" rel="noopener" style="color: var(--teal);">wscat</a> · <span style="color: var(--teal);">npm i -g wscat</span>
+        </span>
+      </div>
+      <p style="margin: 0 0 14px; font-size: 0.9rem; color: var(--fg-dim); line-height: 1.55;">
+        Mint a conversation in door (i) above to get your bearer + magic link, then paste the four commands below into two terminals. Listener sees the sender's token; sender sees nothing back from its own emission (D0009).
+      </p>
+      <div style="display: grid; grid-template-columns: 1fr; gap: 14px; margin-bottom: 12px;" id="wire-inset-grid">
+        <div>
+          <div style="font-family: var(--mono); font-size: 0.78rem; color: var(--teal); margin-bottom: 6px; letter-spacing: 0.04em;">▸ TERMINAL A · listener</div>
+<pre class="code" style="margin: 0; font-size: 0.82rem;"><span class="c"># mint an account (returns ams_sk_… as 'credential')</span>
+curl -X POST https://ams.klappy.dev/v1/accounts \
+     -H 'content-type: application/json' \
+     -d '{"namespace":"yours-1234"}'
+
+<span class="c"># mint a conversation (returns magic_link)</span>
+curl -X POST https://ams.klappy.dev/v1/yours-1234/conversations \
+     -H "Authorization: Bearer $A" -H 'content-type: application/json' -d '{}'
+
+<span class="c"># attach as listener (paste full magic link with /connect appended)</span>
+wscat -c "wss://ams.klappy.dev/yours-1234/conversations/&lt;alias&gt;/connect?t=&lt;t&gt;" \
+      -H "Authorization: Bearer $A" \
+      -H "X-AMS-Stream-Name: listener"</pre>
+        </div>
+        <div>
+          <div style="font-family: var(--mono); font-size: 0.78rem; color: var(--amber); margin-bottom: 6px; letter-spacing: 0.04em;">▸ TERMINAL B · sender (same magic link, different stream name)</div>
+<pre class="code" style="margin: 0; font-size: 0.82rem;"><span class="c"># attach as sender + send a token in one shot</span>
+wscat -c "wss://ams.klappy.dev/yours-1234/conversations/&lt;alias&gt;/connect?t=&lt;t&gt;" \
+      -H "Authorization: Bearer $A" \
+      -H "X-AMS-Stream-Name: sender" \
+      -x '{"type":"token","data":"hello-from-sender"}' -w 2
+
+<span class="c"># expected on TERMINAL A:</span>
+<span class="c">#   {"type":"joined", …}</span>
+<span class="c">#   {"type":"stream_joined","stream_name":"sender", …}</span>
+<span class="c">#   {"type":"token","stream_name":"sender","data":"hello-from-sender", …}</span>
+<span class="c">#   {"type":"stream_left","stream_name":"sender", …}</span>
+<span class="c"># expected on TERMINAL B: only the listener's own 'joined' frame</span>
+<span class="c"># (no echo of own token — that's D0009, structural self-exclusion).</span></pre>
+        </div>
+      </div>
+      <p style="margin: 8px 0 0; font-size: 0.78rem; color: var(--fg-faint);">
+        Byte-for-byte transcript of this exact sequence (run locally Day 2): <a href="https://github.com/klappy/agent-messaging-service/blob/main/journal/evidence-day2-wscat.txt" target="_blank" rel="noopener" style="color: var(--teal);">journal/evidence-day2-wscat.txt</a>.
+      </p>
     </div>
   </div>
 </section>
@@ -1034,18 +1102,31 @@ curl https://ams.klappy.dev/healthz
 
     <div class="endpoint">
       <h4><span class="verb ws">WS</span>{magic_link}/connect</h4>
-      <div class="desc">Append <span class="mono">/connect</span> to a magic link, upgrade to WebSocket, attach a stream, push tokens. Lands Day 2 — wire format below is verbatim from <a href="https://github.com/klappy/agent-messaging-service/blob/main/PROTOCOL.md" target="_blank" rel="noopener">PROTOCOL.md</a>.</div>
-      <pre class="code"><span class="c"># client → server, after upgrade</span>
-{ <span class="k">"type"</span>:<span class="t">"attach"</span>,
-  <span class="k">"stream_name"</span>:<span class="t">"agent-a"</span>,
-  <span class="k">"stream_metadata"</span>:{ <span class="k">"capabilities"</span>:[<span class="t">"chat"</span>] } }
+      <div class="desc">Append <span class="mono">/connect</span> to a magic link, upgrade to WebSocket, push tokens. <strong>Live in production.</strong> Wire format below is verbatim from the implementation in <a href="https://github.com/klappy/agent-messaging-service/blob/main/worker/src/conversation.ts" target="_blank" rel="noopener">conversation.ts</a> — see also <a href="https://github.com/klappy/agent-messaging-service/blob/main/PROTOCOL.md" target="_blank" rel="noopener">PROTOCOL.md §4</a> and the <a href="https://github.com/klappy/agent-messaging-service/blob/main/journal/evidence-day2-wscat.txt" target="_blank" rel="noopener">live wscat transcript</a>.</div>
+      <pre class="code"><span class="c"># client: WS upgrade headers (stream identity rides on headers, not a frame)</span>
+GET /{ns}/conversations/{alias}/connect?t=&lt;permissive&gt;
+Authorization: Bearer ams_sk_…
+X-AMS-Stream-Name: agent-a              <span class="c"># optional; default: stream-XXXXXX</span>
+X-AMS-Stream-Metadata: &lt;base64-json&gt;    <span class="c"># optional</span>
+X-AMS-Self-Subscribe: false             <span class="c"># optional; default false (D0009)</span>
 
-<span class="c"># client → server, after attach</span>
+<span class="c"># server → client, first frame after upgrade</span>
+{ <span class="k">"type"</span>:<span class="t">"joined"</span>,
+  <span class="k">"conversation_id"</span>:<span class="t">"conv_…"</span>,
+  <span class="k">"stream_id"</span>:<span class="t">"str_…"</span>,
+  <span class="k">"stream_name"</span>:<span class="t">"agent-a"</span>,
+  <span class="k">"self_subscribe"</span>:<span class="t">false</span>,
+  <span class="k">"peers"</span>:[<span class="t">/* streams already in the conversation */</span>] }
+
+<span class="c"># client → server</span>
 { <span class="k">"type"</span>:<span class="t">"token"</span>, <span class="k">"data"</span>:<span class="t">"hello"</span> }
 
-<span class="c"># server → other subscribers</span>
+<span class="c"># server → other subscribers (NOT the emitter; D0009 structural exclusion)</span>
 { <span class="k">"type"</span>:<span class="t">"token"</span>,
-  <span class="k">"stream_id"</span>:<span class="t">"str_01HZQ…"</span>,
+  <span class="k">"stream_id"</span>:<span class="t">"str_…"</span>,
+  <span class="k">"stream_name"</span>:<span class="t">"agent-a"</span>,
+  <span class="k">"owner_account_id"</span>:<span class="t">"acc_…"</span>,
+  <span class="k">"ts"</span>:<span class="t">"2026-05-…Z"</span>,
   <span class="k">"data"</span>:<span class="t">"hello"</span> }</pre>
     </div>
   </div>
@@ -1109,17 +1190,17 @@ curl https://ams.klappy.dev/healthz
       <div class="tl-item" data-state="done">
         <div class="tl-head"><span class="tl-day">Day 1 · Saturday 02 May</span><span class="tl-state">Shipped ✓</span></div>
         <h3 class="tl-title">Worker shell · accounts · conversation mint.</h3>
-        <p class="tl-detail">Three endpoints behind <span style="font-family:var(--mono);">ams.klappy.dev</span> + <span style="font-family:var(--mono);">ams.truthkit.ai</span>. SPEC §3.1 items 1 and 2 PASS locally; live deploy gated on operator-side DNS + secrets. Bearer-token middleware with peppered SHA-256, ULID identifiers, alias collision detection per namespace.</p>
+        <p class="tl-detail">Three endpoints behind <span style="font-family:var(--mono);">ams.klappy.dev</span> + <span style="font-family:var(--mono);">ams.truthkit.ai</span>. SPEC §3.1 items 1 and 2 PASS on live deploy across both hosts. Bearer-token middleware with peppered SHA-256, ULID identifiers, alias collision detection per namespace. Evidence: <a href="https://github.com/klappy/agent-messaging-service/blob/main/journal/evidence-day1-live-smoke.txt" target="_blank" rel="noopener">evidence-day1-live-smoke.txt</a>.</p>
+      </div>
+      <div class="tl-item" data-state="done">
+        <div class="tl-head"><span class="tl-day">Day 2 · Sunday 03 May</span><span class="tl-state">Shipped ✓</span></div>
+        <h3 class="tl-title">ConversationDO · WebSocket · stream-scoped broadcast.</h3>
+        <p class="tl-detail">Durable Object per conversation. <span style="font-family:var(--mono);">/connect</span> upgrade, <span style="font-family:var(--mono);">joined</span>/<span style="font-family:var(--mono);">stream_joined</span>/<span style="font-family:var(--mono);">token</span>/<span style="font-family:var(--mono);">stream_left</span> lifecycle, structural self-exclusion per D0009. SPEC §3.1 item 3 PASS — paired wscat sessions in <a href="https://github.com/klappy/agent-messaging-service/blob/main/journal/evidence-day2-wscat.txt" target="_blank" rel="noopener">evidence-day2-wscat.txt</a> show ≈2ms broker hop and zero self-echo.</p>
       </div>
       <div class="tl-item" data-state="active">
-        <div class="tl-head"><span class="tl-day">Day 2 · Sunday 03 May</span><span class="tl-state">In flight</span></div>
-        <h3 class="tl-title">ConversationDO · WebSocket · stream-scoped broadcast.</h3>
-        <p class="tl-detail">Durable Object per conversation. <span style="font-family:var(--mono);">/connect</span> upgrade, attach frame, token broadcast with structural self-exclusion per D0009. SPEC §3.1 items 3, 4, and 5 become observable.</p>
-      </div>
-      <div class="tl-item">
-        <div class="tl-head"><span class="tl-day">Day 3+ · Monday onward</span><span class="tl-state">Queued</span></div>
+        <div class="tl-head"><span class="tl-day">Day 3+ · Monday onward</span><span class="tl-state">In flight</span></div>
         <h3 class="tl-title">MCP edge wrapper · gauntlet · demo gate.</h3>
-        <p class="tl-detail">The MCP server at <span style="font-family:var(--mono);">/mcp</span> that turns AMS into a tool-call interface for any LLM agent. Then the hackathon-replay between two real agents on two real machines. SPEC §3.2.</p>
+        <p class="tl-detail">The MCP server at <span style="font-family:var(--mono);">/mcp</span> that turns AMS into a tool-call interface for any LLM agent. SPEC §3.1 items 4 + 5, then the hackathon-replay between two real agents on two real machines. SPEC §3.2.</p>
       </div>
       <div class="tl-item">
         <div class="tl-head"><span class="tl-day">Beyond</span><span class="tl-state">Catalog</span></div>
@@ -1134,7 +1215,8 @@ curl https://ams.klappy.dev/healthz
 <footer class="foot">
   <div class="foot-inner">
     <div>
-      <p class="foot-brand"><em>Token stream routing.</em></p>
+      <p class="foot-brand"><em>AMS · Agent Messaging Service.</em></p>
+      <p class="foot-tag" style="margin-top: 4px;">Token stream routing.</p>
       <p class="foot-tag">Built by klappy · Adjacent to TruthKit</p>
     </div>
     <div class="foot-col">
@@ -1348,6 +1430,11 @@ const randHex = (n) => {
   setInterval(tick, 8000);
 })();
 
+// Shared between door (i) and door (ii): the most-recently-minted bearer.
+// Door (i) sets it after a successful mint; door (ii) inlines it into the
+// generated wscat command so the snippet is actually copy-pasteable.
+let lastCredential = null;
+
 // ═══════════════════ Door 1 — Mint (real API call) ═══════════════════
 (function mintDoor() {
   const ns   = $('#mint-ns');
@@ -1391,6 +1478,7 @@ const randHex = (n) => {
       out.innerHTML += row('<span class="ok">← 201 · ' + fmtDur(accDur) + '</span>');
       out.innerHTML += row('  <span class="k">account_id</span>: <span class="s">' + escapeHtml(accJson.account_id) + '</span>');
       out.innerHTML += row('  <span class="k">credential</span>: <span class="s">' + escapeHtml(accJson.credential.slice(0, 14)) + '…</span>');
+      lastCredential = accJson.credential;
 
       // Step 2 — POST /v1/{ns}/conversations
       const t1 = performance.now();
@@ -1469,12 +1557,21 @@ const randHex = (n) => {
     out.innerHTML += row('  <span class="k">alias</span>:       <span class="s">' + escapeHtml(alias) + '</span>');
     out.innerHTML += row('  <span class="k">permissive</span>:  <span class="s">' + escapeHtml(t.slice(0, 10)) + '… (' + t.length + ' chars)</span>');
     out.innerHTML += row('');
-    out.innerHTML += row('<span class="n">// would now WS upgrade: ' + escapeHtml(u.origin + u.pathname) + '/connect?t=' + escapeHtml(t.slice(0,8)) + '…</span>');
-    out.innerHTML += row('<span class="n">// would attach as:</span>');
-    out.innerHTML += row('<span class="n">//   {"type":"attach","stream_name":"' + escapeHtml(streamName) + '"}</span>');
-    out.innerHTML += row('<span class="n">// claimed: ' + escapeHtml(streamId) + '</span>');
+    out.innerHTML += row('<span class="ok">→ WS /connect URL:</span>');
+    out.innerHTML += row('  <span class="s">' + escapeHtml(u.origin.replace(/^https/, 'wss') + u.pathname) + '/connect?t=' + escapeHtml(t.slice(0,8)) + '…</span>');
     out.innerHTML += row('');
-    out.innerHTML += row('<span class="n">→ Day 2 will land WS /connect. Until then, this is the parser surface.</span>');
+    const bearer = lastCredential || 'ams_sk_…';
+    const bearerNote = lastCredential
+      ? '// run this in your terminal (uses your bearer from door (i)):'
+      : '// run this in your terminal (mint in door (i) first to inline the bearer):';
+    out.innerHTML += row('<span class="n">' + bearerNote + '</span>');
+    out.innerHTML += row('<span class="s">wscat -c "' + escapeHtml(u.origin.replace(/^https/, 'wss') + u.pathname) + '/connect?t=' + escapeHtml(t) + '" \\</span>');
+    out.innerHTML += row('<span class="s">  -H "Authorization: Bearer ' + escapeHtml(bearer) + '" \\</span>');
+    out.innerHTML += row('<span class="s">  -H "X-AMS-Stream-Name: ' + escapeHtml(streamName) + '"</span>');
+    out.innerHTML += row('');
+    out.innerHTML += row('<span class="n">// expected first frame:  {"type":"joined","stream_id":"' + escapeHtml(streamId) + '",…}</span>');
+    out.innerHTML += row('<span class="n">// then send:             {"type":"token","data":"hello"}</span>');
+    out.innerHTML += row('<span class="n">// other subscribers receive: {"type":"token","stream_id":…,"owner_account_id":…,"ts":…,"data":"hello"}</span>');
   });
 })();
 
