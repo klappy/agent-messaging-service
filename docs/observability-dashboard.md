@@ -66,7 +66,7 @@ CROSS JOIN
 ### 4. Total tokens (lifetime, wire-layer estimate)
 
 ```sql
-SELECT SUM(double5) AS tokens_estimate_total
+SELECT SUM(double5 * _sample_interval) AS tokens_estimate_total
 FROM ams_telemetry
 WHERE event_type = 'stream_token_summary'
   AND blob2 = 'tokens_estimate'
@@ -82,7 +82,7 @@ Per `ams://canon/principles/token-count-derivation-on-subscribers`, this is a `c
 
 ```sql
 SELECT blob4 AS account_id_hash,
-       SUM(double5) AS tokens_estimate
+       SUM(double5 * _sample_interval) AS tokens_estimate
 FROM ams_telemetry
 WHERE event_type = 'stream_token_summary'
   AND blob2 = 'tokens_estimate'
@@ -98,7 +98,7 @@ LIMIT 20
 
 ```sql
 SELECT blob5 AS conversation_id_hash,
-       SUM(double5) AS tokens_estimate
+       SUM(double5 * _sample_interval) AS tokens_estimate
 FROM ams_telemetry
 WHERE event_type = 'stream_token_summary'
   AND blob2 = 'tokens_estimate'
@@ -186,12 +186,18 @@ Cardinalities over time, derived from activity-stream events. Per D0014, no snap
 
 ```sql
 SELECT
-  toStartOfDay(timestamp) AS day,
-  uniqExactRunningAccumulate(blob4) OVER (ORDER BY day) AS accounts_total
-FROM ams_telemetry
-WHERE event_type = 'account_created'
-  AND timestamp > NOW() - INTERVAL '30' DAY
-GROUP BY day
+  day,
+  runningAccumulate(accounts_state) AS accounts_total
+FROM (
+  SELECT
+    toStartOfDay(timestamp) AS day,
+    uniqExactState(blob4) AS accounts_state
+  FROM ams_telemetry
+  WHERE event_type = 'account_created'
+    AND timestamp > NOW() - INTERVAL '30' DAY
+  GROUP BY day
+  ORDER BY day ASC
+)
 ORDER BY day ASC
 ```
 
@@ -203,8 +209,8 @@ A growing line is the adoption signal. The accumulating window function gives yo
 WITH per_minute AS (
   SELECT
     toStartOfMinute(timestamp) AS minute,
-    countIf(event_type = 'connect_succeeded') AS joined,
-    countIf(event_type = 'stream_left') AS left
+    sumIf(_sample_interval, event_type = 'connect_succeeded') AS joined,
+    sumIf(_sample_interval, event_type = 'stream_left') AS left
   FROM ams_telemetry
   WHERE timestamp > NOW() - INTERVAL '24' HOUR
   GROUP BY minute
@@ -253,10 +259,10 @@ SELECT
   COUNT(DISTINCT blob1) AS distinct_event_types,
   arraySort(groupUniqArray(blob1)) AS event_types_seen
 FROM ams_telemetry
-WHERE event_type LIKE 'account_%'
-   OR event_type LIKE 'conversation_%'
-   OR event_type LIKE 'connect_%'
-   AND timestamp > NOW() - INTERVAL '24' HOUR
+WHERE (event_type LIKE 'account_%'
+    OR event_type LIKE 'conversation_%'
+    OR event_type LIKE 'connect_%')
+  AND timestamp > NOW() - INTERVAL '24' HOUR
 ```
 
 A drop to zero with subscriber rows still landing means the Tail Worker stopped. A drop in both with the AMS Worker still serving means AE is the broken layer (escalate to Cloudflare).
