@@ -114,7 +114,10 @@ export class AmsConnection extends EventEmitter {
       if (this._joinedReject) this._joinedReject(new Error(`closed ${code} ${reason}`));
     });
     this.ws.on("error", (err) => {
-      this.emit("error", err);
+      // Only emit `error` if a listener is attached; otherwise EventEmitter's
+      // default behavior is to throw, which would crash the host process for
+      // consumers that don't subscribe (e.g. mcp-server.mjs, two-agents.mjs).
+      if (this.listenerCount("error") > 0) this.emit("error", err);
       if (this._joinedReject) this._joinedReject(err);
     });
   }

@@ -165,7 +165,12 @@ const HANDLERS = {
       }
       case "ams_join": {
         await ensureAccount();
-        if (connection) connection.close();
+        if (connection) {
+          connection.removeAllListeners();
+          connection.close();
+        }
+        recvBuffer.length = 0;
+        recvBuffer.truncated = false;
         connection = connect(args.magic_link, bearer, {
           stream_name: args.stream_name,
           stream_metadata: args.stream_metadata,
@@ -187,9 +192,12 @@ const HANDLERS = {
       }
       case "ams_leave": {
         if (connection) {
+          connection.removeAllListeners();
           connection.close();
           connection = null;
         }
+        recvBuffer.length = 0;
+        recvBuffer.truncated = false;
         return toolResult({ ok: true });
       }
       case "ams_recv": {
