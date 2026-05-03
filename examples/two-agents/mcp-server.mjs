@@ -257,10 +257,11 @@ server.registerTool(
   async (args) => {
     const wait = args.max_wait_ms ?? 0;
     if (recv.frames.length === 0 && wait > 0 && connection) {
+      const conn = connection;
       await new Promise((resolve) => {
         const onFrame = () => { clearTimeout(t); resolve(); };
-        const t = setTimeout(() => { connection.removeListener("frame", onFrame); resolve(); }, wait);
-        connection.once("frame", onFrame);
+        const t = setTimeout(() => { conn.removeListener("frame", onFrame); resolve(); }, wait);
+        conn.once("frame", onFrame);
       });
     }
     const drained = recv.drain();
