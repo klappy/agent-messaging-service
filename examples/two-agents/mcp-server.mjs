@@ -115,7 +115,18 @@ function wireConnection(c) {
   c.on("stream_metadata", route("notifications/ams/stream_metadata"));
   c.on("stream_joined", route("notifications/ams/stream_joined"));
   c.on("stream_left", route("notifications/ams/stream_left"));
-  c.on("close", route("notifications/ams/closed"));
+  c.on("close", (params) => {
+    // Server-initiated close must detach the module-level binding so that
+    // subsequent ams_send / ams_set_metadata fail the "not_joined" guard
+    // cleanly instead of throwing an opaque "WebSocket is not open" error
+    // from the ws library against a dead socket. Guard on identity so a
+    // stale close event from a prior connection cannot null out a fresh one.
+    if (connection === c) {
+      connection = null;
+      recv.clear();
+    }
+    pushAndNotify("notifications/ams/closed", params).catch((err) => logErr("notification failed:", err));
+  });
   c.on("error", (err) => logErr("ws error:", err.message));
 }
 
