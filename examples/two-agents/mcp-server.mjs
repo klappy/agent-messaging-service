@@ -202,7 +202,9 @@ const HANDLERS = {
           });
         }
         const frames = recvBuffer.splice(0, recvBuffer.length);
-        return toolResult({ ok: true, frames, truncated: frames.truncated ?? false });
+        const truncated = recvBuffer.truncated ?? false;
+        recvBuffer.truncated = false;
+        return toolResult({ ok: true, frames, truncated });
       }
       default:
         throw new RpcError(-32601, `unknown_tool: ${name}`);

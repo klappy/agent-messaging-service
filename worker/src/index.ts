@@ -1,6 +1,6 @@
 import { createAccount } from "./accounts";
 import { authenticate } from "./auth";
-import { ConversationDO, type JoinPayload } from "./conversation";
+import { ConversationDO, type JoinPayload, wsClose } from "./conversation";
 import { ALIAS_KEY, CONVERSATION_KEY } from "./conversations";
 import { homepageHeadResponse, homepageResponse } from "./homepage";
 import type { ConversationRecord, Env } from "./types";
@@ -117,7 +117,7 @@ async function handleConnect(
   // request isn't even a WS upgrade attempt.
   const resolution = await resolveConnect(req, env, ns, alias, url);
   if ("error" in resolution) {
-    return wsCloseResponse(resolution.error.code, resolution.error.reason);
+    return wsClose(resolution.error.code, resolution.error.reason);
   }
 
   // Hand off to the ConversationDO. The DO is named by conversation_id; that
@@ -227,13 +227,3 @@ async function resolveConnect(
   };
 }
 
-// Accept the WebSocket upgrade then immediately close with a spec'd code.
-// PROTOCOL §4.1 says connect failures return WS close, not HTTP. The 101
-// upgrade is the contract that lets the client see the close code/reason.
-function wsCloseResponse(code: number, reason: string): Response {
-  const pair = new WebSocketPair();
-  const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
-  server.accept();
-  server.close(code, reason);
-  return new Response(null, { status: 101, webSocket: client });
-}

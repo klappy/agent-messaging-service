@@ -236,7 +236,7 @@ export class ConversationDO {
 // given AMS close code. PROTOCOL §4.1: connect failures return WS close, not
 // HTTP — so even invariant breaks inside the DO surface as a wire close
 // rather than an HTTP error the upstream Worker would otherwise pass through.
-function wsClose(code: number, reason: string): Response {
+export function wsClose(code: number, reason: string): Response {
   const pair = new WebSocketPair();
   const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
   server.accept();
