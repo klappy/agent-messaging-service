@@ -1,6 +1,6 @@
 ---
-uri: ams://canon/decisions/D0013-state-totals-via-snapshot-worker
-title: "D0013 — State Totals Are Captured by a Snapshot Worker, Not Inferred from the Activity Stream"
+uri: ams://canon/decisions/D0015-state-totals-via-snapshot-worker
+title: "D0015 — State Totals Are Captured by a Snapshot Worker, Not Inferred from the Activity Stream"
 audience: canon
 exposure: nav
 tier: 2
@@ -15,12 +15,12 @@ governs: "How the AMS reference deployment computes and exposes 'how many accoun
 status: superseded
 superseded_by: "ams://canon/decisions/D0014-tail-worker-and-activity-stream-derived-totals"
 superseded_date: 2026-05-03
-superseded_reason: "Operator challenge during pre-execution review surfaced the brittleness of Cron-based polling. The activity-stream-derived approach in D0014 eliminates the snapshot worker entirely while keeping the same SQL surface and same dataset. D0013 retains documentary value for capturing the rejected per-request-hook alternative and the slot-reuse pattern (which D0014 inherits)."
+superseded_reason: "Operator challenge during pre-execution review surfaced the brittleness of Cron-based polling. The activity-stream-derived approach in D0014 eliminates the snapshot worker entirely while keeping the same SQL surface and same dataset. D0015 retains documentary value for capturing the rejected per-request-hook alternative and the slot-reuse pattern (which D0014 inherits)."
 ---
 
-# D0013 — State Totals Are Captured by a Snapshot Worker, Not Inferred from the Activity Stream
+# D0015 — State Totals Are Captured by a Snapshot Worker, Not Inferred from the Activity Stream
 
-> **SUPERSEDED 2026-05-03 by `ams://canon/decisions/D0014-tail-worker-and-activity-stream-derived-totals`.** Operator challenge during pre-execution review of the v1.2 spec surfaced the brittleness of Cron-based polling. D0014 derives state totals from the activity-stream sums in Analytics Engine, eliminating the per-minute Cron worker and the per-request inline hook calls in one move. D0013 retains documentary value for the rejected per-request-hook alternative (which D0014 also rejects, on the same grounds) and the slot-reuse pattern (which D0014 inherits). The text below stands as historical record; bindings on this decision should be migrated to D0014.
+> **SUPERSEDED 2026-05-03 by `ams://canon/decisions/D0014-tail-worker-and-activity-stream-derived-totals`.** Operator challenge during pre-execution review of the v1.2 spec surfaced the brittleness of Cron-based polling. D0014 derives state totals from the activity-stream sums in Analytics Engine, eliminating the per-minute Cron worker and the per-request inline hook calls in one move. D0015 retains documentary value for the rejected per-request-hook alternative (which D0014 also rejects, on the same grounds) and the slot-reuse pattern (which D0014 inherits). The text below stands as historical record; bindings on this decision should be migrated to D0014.
 
 > AMS observability captures activity from D0010 plus state totals from a snapshot worker. The two layers cooperate without overlapping. State totals (accounts that exist, conversations that exist, streams currently registered) are cardinalities of a current set and cannot be reconstructed from event sums without drift. The reference deployment captures state totals by a per-minute Cron worker that reads the operational stores and writes one snapshot row per metric to the same Analytics Engine dataset the hook layer writes to.
 

@@ -10,7 +10,7 @@ tags: ["ams", "canon", "principle", "observability", "tokens", "tokenizer", "app
 epoch: E0008.3
 date: 2026-05-03
 derives_from: "ams://canon/decisions/D0010-observability-via-subscriber-not-wire, ams://canon/constraints/observability-payload-boundary §'Shape, not substance' (token_count entry), klappy://canon/constraints/telemetry-governance §'Tokenizer Choice', PROTOCOL.md §7 (payload opacity)"
-complements: "ams://canon/decisions/D0013-state-totals-via-snapshot-worker, ams://canon/principles/wire-layer-latency-vocabulary, ams://canon/principles/observability-as-subscriber"
+complements: "ams://canon/decisions/D0015-state-totals-via-snapshot-worker, ams://canon/principles/wire-layer-latency-vocabulary, ams://canon/principles/observability-as-subscriber"
 governs: "How an observability subscriber computes token counts from opaque wire payloads, how the result is labeled, and what the wire layer is forbidden from claiming about provider-side billing tokens. Recommended convention; deployments may use other tokenizers if they document the substitution and the drift."
 status: active
 ---
@@ -127,7 +127,7 @@ The subscriber-layer record from `observability-payload-boundary` already names 
 
 `tokenizer` is required when `token_count_estimate` is non-null so downstream consumers can apply the right conversion factor if they need one.
 
-For the hook-layer Analytics Engine dataset, token-count aggregates land in the activity stream's existing slot pattern. A subscriber that aggregates writes one row per stream per close (or per N-minute window) with `event_type='stream_token_summary'`, the metric name in `endpoint_or_close_code` (e.g., `tokens_estimate`, `bytes_total`), and the value in `peer_count_at_event` — consistent with the snapshot-worker reuse pattern in `ams://canon/decisions/D0013-state-totals-via-snapshot-worker`. No new slot is introduced.
+For the hook-layer Analytics Engine dataset, token-count aggregates land in the activity stream's existing slot pattern. A subscriber that aggregates writes one row per stream per close (or per N-minute window) with `event_type='stream_token_summary'`, the metric name in `endpoint_or_close_code` (e.g., `tokens_estimate`, `bytes_total`), and the value in `peer_count_at_event` — consistent with the snapshot-worker reuse pattern in `ams://canon/decisions/D0015-state-totals-via-snapshot-worker`. No new slot is introduced.
 
 ## Frame-Count vs Token-Count: Different Questions
 
@@ -159,7 +159,7 @@ Three failure modes the principle prevents.
 ## See Also
 
 - `ams://canon/decisions/D0010-observability-via-subscriber-not-wire` — the architectural commit that puts derivation on subscribers
-- `ams://canon/decisions/D0013-state-totals-via-snapshot-worker` — sister gap-fill, schema-slot reuse pattern
+- `ams://canon/decisions/D0015-state-totals-via-snapshot-worker` — sister gap-fill, schema-slot reuse pattern
 - `ams://canon/principles/wire-layer-latency-vocabulary` — sister gap-fill on TTFF/TTFT honesty
 - `ams://canon/constraints/observability-payload-boundary` — the schema this principle extends and the allowlist that admits `token_count`
 - `PROTOCOL.md` §7 — payload opacity rule the principle respects
