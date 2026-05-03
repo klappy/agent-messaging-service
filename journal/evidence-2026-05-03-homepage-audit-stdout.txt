@@ -1,0 +1,22 @@
+=== homepage architectural claims audit ===
+Date:     2026-05-03T15:35Z
+Repo:     klappy/agent-messaging-service
+Branch:   main
+HEAD:     550a41b806ea621118ba06a9fd0fc3c2e1302d15
+Script:   scripts/check-homepage-architectural-claims.mjs
+Governs:  worker/src/homepage.ts
+Auth:     ams://canon/decisions/D0013-homepage-as-poc-surface, ams://docs/homepage-governance
+
+=== command ===
+$ node scripts/check-homepage-architectural-claims.mjs
+
+=== stdout ===
+pass: all architectural surfaces are N-peer compliant.
+  scanned: 5 surface(s)
+  forbidden patterns checked: 4
+
+=== exit code ===
+0
+
+=== node version ===
+v22.22.2
