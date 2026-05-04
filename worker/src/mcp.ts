@@ -151,14 +151,14 @@ async function handleMcpPost(req: Request, env: Env): Promise<Response> {
 async function handleMcpGet(req: Request, env: Env): Promise<Response> {
   const sessionId = req.headers.get("mcp-session-id");
   if (!sessionId) {
-    return errorResponse(400, "missing_session", "mcp-session-id header required for GET /mcp.");
+    return mcpErrorResponse(400, "missing_session", "mcp-session-id header required for GET /mcp.");
   }
   const account = await authenticate(req, env);
-  if (account instanceof Response) return account;
+  if (account instanceof Response) return withMcpCors(account);
 
   const route = parseSessionId(sessionId);
-  if (!route || route.account_id !== account.account_id) {
-    return errorResponse(404, "session_not_found", "mcp-session-id not bound to this account.");
+  if (!route || !routeBelongsToAccount(route, account)) {
+    return mcpErrorResponse(404, "session_not_found", "mcp-session-id not bound to this account.");
   }
 
   const stub = env.SESSION_DO.get(env.SESSION_DO.idFromName(route.do_name));
@@ -176,10 +176,10 @@ async function handleMcpDelete(req: Request, env: Env): Promise<Response> {
   const sessionId = req.headers.get("mcp-session-id");
   if (!sessionId) return new Response(null, { status: 204, headers: MCP_CORS });
   const account = await authenticate(req, env);
-  if (account instanceof Response) return account;
+  if (account instanceof Response) return withMcpCors(account);
 
   const route = parseSessionId(sessionId);
-  if (!route || route.account_id !== account.account_id) {
+  if (!route || !routeBelongsToAccount(route, account)) {
     return new Response(null, { status: 204, headers: MCP_CORS });
   }
   const stub = env.SESSION_DO.get(env.SESSION_DO.idFromName(route.do_name));
@@ -452,7 +452,7 @@ async function routeToBoundSession(
     });
   }
   const route = parseSessionId(sessionId);
-  if (!route || route.account_id !== account.account_id) {
+  if (!route || !routeBelongsToAccount(route, account)) {
     return jsonRpcMcpToolError(rpc.id ?? null, {
       error: "invalid_session",
       message: "mcp-session-id not bound to this account.",
@@ -561,6 +561,30 @@ function parseSessionId(s: string): SessionRoute | null {
   } catch {
     return null;
   }
+}
+
+// Defense in depth: the mcp-session-id is self-describing and attacker-controllable,
+// so both its account_id segment AND its do_name segment must be validated against
+// the authenticated account. do_name is always sessionDoName(account_id, conversation_id),
+// so it MUST start with `${account_id}:`. Without this check, a caller could craft a
+// session ID whose first segment matches their own account but whose do_name segment
+// routes to a different account's SessionDO, bypassing account isolation for send/recv.
+function routeBelongsToAccount(route: SessionRoute, account: AccountRecord): boolean {
+  if (route.account_id !== account.account_id) return false;
+  return route.do_name.startsWith(`${account.account_id}:`);
+}
+
+function withMcpCors(resp: Response): Response {
+  const headers = new Headers(resp.headers);
+  for (const [k, v] of Object.entries(MCP_CORS)) headers.set(k, v);
+  return new Response(resp.body, { status: resp.status, headers });
+}
+
+function mcpErrorResponse(status: number, code: string, message: string): Response {
+  return jsonResponse(
+    { error: code, message },
+    { status, headers: MCP_CORS },
+  );
 }
 
 function b64urlEncode(s: string): string {
