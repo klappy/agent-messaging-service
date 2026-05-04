@@ -109,12 +109,19 @@ export default {
     //       MCP session. Same SessionDO keying as /mcp per D0019; converges
     //       on the same wire path. The /mcp endpoint stays unchanged.
     //
-    //   GET / HEAD on the same URL → tincan homepage UI (D0012). The browser
-    //     pastes the magic link into the existing #tincan section's join input;
-    //     this redirects them to the right surface without bouncing 404.
-    //     Browsers cannot speak Streamable HTTP MCP from a `new WebSocket`-style
-    //     constructor, so the GET path stays the marketing/UI surface and the
-    //     POST path is the AI-assistant transport.
+    //   GET / HEAD on the same URL → tincan homepage UI (D0012) for browsers.
+    //     The browser pastes the magic link into the existing #tincan section's
+    //     join input; this redirects them to the right surface without bouncing
+    //     404. Browsers cannot speak Streamable HTTP MCP from a `new WebSocket`-
+    //     style constructor, so the GET path stays the marketing/UI surface
+    //     when it looks like a browser navigation.
+    //
+    //     Exception: MCP Streamable HTTP clients may GET the same URL to open
+    //     an SSE notification stream. Per the spec, those carry an
+    //     `mcp-session-id` header (after initialize) or `Accept: text/event-stream`.
+    //     When either signal is present, we forward to handleMcp so the SSE
+    //     leg works on the magic-link transport, matching the DELETE-for-
+    //     teardown forwarding immediately below.
     //
     //   OPTIONS → forwarded to handleMcp for CORS preflight on the POST path.
     //
@@ -127,6 +134,12 @@ export default {
       const ns = convAliasMatch[1]!;
       const alias = convAliasMatch[2]!;
       if (method === "GET" || method === "HEAD") {
+        const isMcpSse =
+          req.headers.get("mcp-session-id") !== null ||
+          (req.headers.get("accept") ?? "").toLowerCase().includes("text/event-stream");
+        if (isMcpSse && method === "GET") {
+          return handleMcp(req, env);
+        }
         return method === "HEAD" ? homepageHeadResponse() : homepageResponse();
       }
       if (method === "POST") {
