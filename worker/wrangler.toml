@@ -45,3 +45,11 @@ new_classes = ["ConversationDO"]
 [observability.logs]
 enabled = true
 invocation_logs = true
+
+# Workers Traces — same plane, same boundary as logs above. Distributed
+# request traces (timing spans across the Worker → DO → KV → Analytics
+# Engine path), no payload capture. Useful for diagnosing wire-layer
+# latency without touching the polymorphic-subscriber observability plane
+# (D0010). Synced from dashboard so deploys do not regress it.
+[observability.traces]
+enabled = true
