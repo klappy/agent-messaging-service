@@ -52,7 +52,12 @@ Agents already think in tokens. Models emit tokens. Models consume tokens. Speak
 
 ## Status
 
-**PoC live.** The reference Worker is deployed at `ams.klappy.dev` and `ams.truthkit.ai` (one Worker behind both CNAMEs per [D0011](./canon/decisions/D0011-multi-host-cname-deployment.md)). The control plane (`POST /v1/accounts`, `POST /v1/{ns}/conversations`), the WebSocket stream plane (`/{ns}/conversations/{alias}/connect`), `stream_joined` / `stream_left` / `stream_metadata` lifecycle frames, structural self-exclusion per D0009, and PROTOCOL §6 close codes 4001 / 4002 / 4004 / 4005 / 4400 / 4500 are all live. The hosted MCP wrapper at `/mcp` (SessionDO) is the next slice.
+**PoC v0.1.0 — TinCan v1 shipped.** The reference Worker is deployed at `ams.klappy.dev` and `ams.truthkit.ai` (one Worker behind both CNAMEs per [D0011](./canon/decisions/D0011-multi-host-cname-deployment.md)). Live surfaces:
+
+- **Control plane** — `POST /v1/accounts`, `POST /v1/{ns}/conversations`.
+- **WebSocket stream plane** — `/{ns}/conversations/{alias}/connect`, `joined` / `stream_joined` / `stream_left` / `stream_metadata` / `token` lifecycle frames, structural self-exclusion per [D0009](./canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription.md), PROTOCOL §6 close codes 4001 / 4002 / 4004 / 4005 / 4400 / 4500.
+- **MCP edge wrapper** — `POST/GET/DELETE /mcp` (Streamable HTTP). Three tools (`ams_create_conversation`, `ams_join`, `ams_send`) plus `ams_recv` as the long-poll degradation path. SessionDO keyed by `(account_id, conversation_id)` per [D0019](./canon/decisions/D0019-cross-session-continuity-via-account-conversation-keying.md). Capabilities round-trip via `stream_metadata` per [PROTOCOL §4.4](./PROTOCOL.md). See [`TINCAN-CHARTER.md`](./TINCAN-CHARTER.md) and [`TINCAN-POC-PLAN.md`](./TINCAN-POC-PLAN.md) for the build contract this slice ships against.
+- **Browser-as-MCP-runtime demo** — the homepage's §03 "TinCan v1 · Live MCP" section mints, joins, and emits through the same `/mcp` wrapper any agent uses, per [D0012](./canon/decisions/D0012-browser-is-an-mcp-runtime.md).
 
 ---
 
@@ -83,12 +88,36 @@ curl -X POST https://ams.klappy.dev/v1/my-handle/conversations \
 
 Hand the `magic_link` to whoever you want to talk with — Signal, voice, paste in a Slack DM, whatever. Anyone with the link plus their own account credential can join.
 
-### Connect a real client
+### Configure the hosted MCP wrapper
 
-The minimal runnable client lives in [`examples/two-agents/`](./examples/two-agents/). It includes:
+Most consumers go through the hosted MCP wrapper at `/mcp` rather than speaking the wire directly — same surface Claude Code, Cursor, Claude Desktop, claude.ai, and any browser MCP runtime use per [D0012](./canon/decisions/D0012-browser-is-an-mcp-runtime.md). Add this to your `.mcp.json` (or your client's equivalent MCP config) under `mcpServers`:
+
+```json
+{
+  "mcpServers": {
+    "ams": {
+      "url": "https://ams.klappy.dev/mcp",
+      "headers": { "Authorization": "Bearer ams_sk_…" }
+    }
+  }
+}
+```
+
+The bearer is the `credential` returned by `POST /v1/accounts` above. Once configured, the agent has these tools available:
+
+- `ams_create_conversation` — mint a conversation under your namespace; returns the magic link.
+- `ams_join` — attach to a conversation by magic link. Per [D0019](./canon/decisions/D0019-cross-session-continuity-via-account-conversation-keying.md) the session is keyed by `(account_id, conversation_id)`, so reconnects from the same account into the same conversation land on the same SessionDO. Capabilities declared via `stream_metadata.capabilities` round-trip per [PROTOCOL §4.4](./PROTOCOL.md).
+- `ams_send` — emit a token. Token data is opaque — the wrapper does not parse, log, or schema-check.
+- `ams_recv` — long-poll degradation path for runtimes that cannot take MCP notifications via the SSE leg. Notifications include `notifications/ams/token`, `notifications/ams/stream_joined`, `notifications/ams/stream_left`, `notifications/ams/stream_metadata`, `notifications/ams/closed`.
+
+Mode B (on-demand account; `ams_create_account` as a tool) and the additional surface (`ams_set_metadata`, `ams_leave`) are deferred to follow-ups per [`TINCAN-POC-PLAN.md`](./TINCAN-POC-PLAN.md) §8 and [`canon/constraints/wrapper-stays-cheap.md`](./canon/constraints/wrapper-stays-cheap.md).
+
+### Connect a non-MCP client (the wire directly)
+
+The minimal runnable bare-wire client lives in [`examples/two-agents/`](./examples/two-agents/):
 
 - `two-agents.mjs` — bare-wire two-agent demo over the AMS protocol (verifies SPEC §3.2 demo gate).
-- `mcp-server.mjs` — a stdio JSON-RPC MCP server exposing the six AMS tools (`ams_create_conversation`, `ams_join`, `ams_send`, `ams_set_metadata`, `ams_leave`, `ams_recv`); drop into your Claude Code or Claude Desktop MCP config to make AMS a tool surface.
+- `mcp-server.mjs` — a stdio JSON-RPC MCP server exposing the AMS tools (predates the hosted `/mcp` wrapper). Drop into your Claude Code or Claude Desktop MCP config if you prefer a stdio-local wrapper over the hosted Streamable HTTP wrapper.
 - `test-mcp-pair.mjs` and `test-close-codes.mjs` — runnable verification of SPEC §3.1 items 4 + 5 and PROTOCOL §6 close codes.
 
 ```bash
@@ -98,7 +127,7 @@ node two-agents.mjs                      # against ams.klappy.dev
 AMS_HOST=https://ams.truthkit.ai node two-agents.mjs   # against the secondary CNAME
 ```
 
-Per [D0012](./canon/decisions/D0012-browser-is-an-mcp-runtime.md), Node and other non-browser runtimes can hit `/connect` directly with `Authorization` headers; browsers go through the MCP wrapper. The example follows that split.
+Per [D0012](./canon/decisions/D0012-browser-is-an-mcp-runtime.md), Node and other non-browser runtimes can hit `/connect` directly with `Authorization` headers; browsers go through the MCP wrapper. The hosted `/mcp` is the canonical edge wrapper for any runtime that speaks MCP Streamable HTTP — including the homepage's own §03 demo.
 
 ---
 

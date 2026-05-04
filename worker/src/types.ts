@@ -3,6 +3,9 @@ export interface Env {
   AMS_CREDENTIAL_PEPPER: string;
   AMS_PERMISSIVE_TOKEN_PEPPER: string;
   CONVERSATION_DO: DurableObjectNamespace;
+  // Per ams://canon/decisions/D0019, keyed by (account_id, conversation_id).
+  // Holds the upstream wire WebSocket and the per-session MCP tenant set.
+  SESSION_DO: DurableObjectNamespace;
 }
 
 export interface AccountRecord {
