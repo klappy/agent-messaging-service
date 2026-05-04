@@ -340,7 +340,7 @@ async function tool_ams_create_conversation(
       stream_metadata: args.stream_metadata,
     }),
   });
-  const resp = await createConversation(innerReq, env, account, account.namespace);
+  const resp = await createConversation(innerReq, env, account, account.namespace, outerHost);
   const payload = (await resp.json()) as Record<string, unknown>;
   if (resp.status >= 400) {
     return jsonRpcMcpToolError(rpc.id ?? null, payload);
