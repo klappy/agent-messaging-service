@@ -3,6 +3,7 @@ import { authenticate } from "./auth";
 import { ConversationDO, type JoinPayload, wsClose } from "./conversation";
 import { ALIAS_KEY, CONVERSATION_KEY } from "./conversations";
 import { homepageHeadResponse, homepageResponse } from "./homepage";
+import { handleMcp, SessionDO } from "./mcp";
 import type { ConversationRecord, Env } from "./types";
 import {
   base64ToUtf8,
@@ -15,9 +16,9 @@ import {
   utf8ToBase64,
 } from "./util";
 
-// Re-export the DO class so wrangler's [[migrations]] / [[durable_objects.bindings]]
-// can find it on the Worker module entrypoint.
-export { ConversationDO };
+// Re-export the DO classes so wrangler's [[migrations]] / [[durable_objects.bindings]]
+// can find them on the Worker module entrypoint.
+export { ConversationDO, SessionDO };
 
 // CORS for the read-only liveness endpoint /healthz. The homepage embeds a
 // status-pill that polls both ams.klappy.dev and ams.truthkit.ai from a single
@@ -69,6 +70,15 @@ export default {
 
     if (method === "POST" && path === "/v1/accounts") {
       return createAccount(req, env);
+    }
+
+    // MCP edge wrapper — POST/GET/DELETE/OPTIONS at /mcp. Streamable HTTP
+    // transport. Three tools shipped (ams_create_conversation, ams_join,
+    // ams_send) plus ams_recv as the long-poll degradation path. Session DO
+    // keyed by (account_id, conversation_id) per ams://canon/decisions/D0019.
+    // See worker/src/mcp.ts.
+    if (path === "/mcp") {
+      return handleMcp(req, env);
     }
 
     // POST /v1/{namespace}/conversations

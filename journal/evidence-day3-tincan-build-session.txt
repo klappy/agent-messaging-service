@@ -1,0 +1,99 @@
+================================================================
+TinCan v1 — Day 3 Build · Build-Session Evidence
+  Branch:    claude/tincan-day3-build-CppRn
+  Captured:  2026-05-04T19:01:59Z
+  Captured by: build session (Claude Opus 4.7)
+================================================================
+
+Per Axiom 1 (Reality Is Sovereign) and the closeout discipline in
+TINCAN-POC-PLAN §5: this build session cannot reach ams.klappy.dev
+from its sandbox (outbound HTTP host allowlist denies the request
+with 403 'Host not in allowlist'). Live acceptance evidence (SPEC
+§3.1 items 1–5, §3.2 demo gate, charter §6 browser overlay) is
+therefore the fresh-session validator's responsibility against the
+deployed Worker, per the validator-after-build pattern in TINCAN-
+POC-PLAN §5 and the closeout obligation in the build prompt.
+
+What this build session DID verify, locally:
+
+----------------------------------------------------------------
+1. TypeScript typecheck of the Worker source (strict mode + workers-types)
+----------------------------------------------------------------
+PASS — npx tsc --noEmit (no errors, exit 0)
+
+----------------------------------------------------------------
+2. Homepage architectural-claims CI guard (D0013 enforcement)
+----------------------------------------------------------------
+pass: all architectural surfaces are N-peer compliant.
+  scanned: 5 surface(s)
+  forbidden patterns checked: 4
+
+----------------------------------------------------------------
+3. Source artifacts shipped on this branch
+----------------------------------------------------------------
+Files added:
+  worker/src/mcp.ts                 — /mcp route handler + SessionDO
+Files modified:
+  worker/src/index.ts               — route /mcp; export SessionDO
+  worker/src/types.ts               — Env.SESSION_DO binding
+  worker/wrangler.toml              — DO binding + v2 migration for SessionDO
+  worker/src/homepage.ts            — §03 TinCan live MCP demo (CSS + HTML + JS)
+  README.md                         — TinCan v1 status + MCP config snippet
+
+git stat (versus origin/main):
+
+----------------------------------------------------------------
+4. Charter §3 / §4 conformance — code-level review notes
+----------------------------------------------------------------
+  §3.1 Capabilities round-trip: ams_join + ams_create_conversation
+       both pass stream_metadata.capabilities through unchanged to
+       PROTOCOL §4.4's well-known key. The wrapper does not touch
+       the contents. The homepage §03 demo declares an
+       ams.convention.v1 manifest at mint time as the conformance
+       check (worker/src/homepage.ts "role: 'operator'" block).
+
+  §3.2 Token data opaque: SessionDO.handleSend forwards args.data
+       directly into the wire frame; SessionDO.onWireFrame strips
+       only the wire 'type' tag and broadcasts the rest unchanged.
+       No console.log of token contents anywhere in mcp.ts.
+       grep verification:
+         $ grep -nE 'console\.log|args\.data' worker/src/mcp.ts
+885:    if (typeof args.data !== "string") {
+898:      this.wireWs.send(JSON.stringify({ type: "token", data: args.data }));
+
+  §3.3 D0019 keying: SessionDO is keyed by sessionDoName(account_id,
+       conversation_id) at idFromName (mcp.ts line ~360). Session
+       DO refuses if a re-bind tries to mutate the keying tuple
+       (do_key_mismatch defense).
+
+  §3.4 Security-subscriber attachment points: documented surfaces
+       in mcp.ts module header. The wrapper does not gate
+       (security-as-subscriber-pattern "Bounded Power").
+
+  §3.5 No gatekeeping: handleSend does not branch on data; only
+       structural checks (type, joined-state).
+
+  §4.1 No wire change: PROTOCOL.md untouched on this branch.
+
+  §4.2 No buffering primitive: SessionDO.recvBuffer is the bounded
+       MCP-recv buffer for the long-poll degradation path (~1000
+       frames, drop-oldest with truncated flag). Per charter §4
+       and POC-INFRA §5 this is the recv-side buffer, not the
+       cross-session wire-replay buffer D0016 governs. D0016 is
+       not implemented; the keying convention (D0019) is in place
+       for it.
+
+  §4.3 No encryption: P0001 unresolved; ships bare per charter §4.
+
+================================================================
+Validator handoff:
+  After branch deploy via operator git-hook, run §4 acceptance:
+    1. SPEC §3.1 item 1 — POST /v1/accounts
+    2. SPEC §3.1 item 2 — POST /v1/{ns}/conversations
+    3. SPEC §3.1 item 3 — wscat /connect round-trip
+    4. SPEC §3.1 item 4 — MCP ams_create_conversation via /mcp
+    5. SPEC §3.1 item 5 — MCP ams_join + ams_send peer round-trip
+    6. SPEC §3.2       — two-machine demo gate
+    7. Charter §6      — browser overlay (§03 on the homepage)
+  Disposition per TINCAN-POC-PLAN §5: ACCEPT / ITERATE / PIVOT.
+================================================================

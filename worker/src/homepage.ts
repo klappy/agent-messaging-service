@@ -572,6 +572,96 @@ const HOMEPAGE_HTML = `<!doctype html>
   }
   .ghost-btn:hover { color: var(--fg); border-color: var(--fg-dim); }
 
+  /* ─── TinCan §03 — live MCP demo ────────────────────────────────────
+     Browser as MCP runtime per ams://canon/decisions/D0012. Same /mcp
+     wrapper any agent uses. CSS reuses .theatre/.frame primitives plus
+     a small set of TinCan-specific helpers. */
+  .tincan {
+    max-width: var(--max); margin: 0 auto; padding: 0 var(--gut);
+  }
+  .tincan-bar {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: stretch; gap: 0;
+    border: 1px solid var(--hairline); background: var(--bg-panel);
+    margin-bottom: 16px;
+  }
+  @media (max-width: 720px) {
+    .tincan-bar { grid-template-columns: minmax(0, 1fr); }
+    .tincan-bar > * + * { border-left: 0; border-top: 1px solid var(--hairline); }
+  }
+  .tincan-bar input.tincan-link {
+    background: transparent; border: 0; outline: none;
+    padding: 14px 18px;
+    color: var(--fg); font-family: var(--mono); font-size: 12.5px;
+    overflow: hidden; text-overflow: ellipsis;
+  }
+  .tincan-bar input.tincan-link::placeholder { color: var(--fg-faint); }
+  .tincan-bar button.tincan-action {
+    background: transparent; border: 0; border-left: 1px solid var(--hairline);
+    color: var(--fg); font-family: var(--mono); font-size: 11.5px;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    padding: 0 22px; cursor: pointer; transition: color .15s;
+  }
+  .tincan-bar button.tincan-action.mint:hover  { color: var(--amber); }
+  .tincan-bar button.tincan-action.copy:hover  { color: var(--teal); }
+  .tincan-console {
+    border: 1px solid var(--hairline); background: var(--bg-soft);
+    display: grid; grid-template-rows: auto 1fr auto;
+    min-height: 320px;
+  }
+  .tincan-console-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 18px; border-bottom: 1px solid var(--hairline); background: var(--bg);
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--fg-dim);
+  }
+  .tincan-console-bar .who { color: var(--amber); }
+  .tincan-console-bar .meta { color: var(--fg-faint); }
+  .tincan-log {
+    padding: 14px 18px; overflow-y: auto;
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.55;
+    min-height: 200px; max-height: 360px;
+    display: flex; flex-direction: column; gap: 10px;
+    color: var(--fg);
+  }
+  .tincan-emit {
+    border-top: 1px solid var(--hairline); background: var(--bg);
+    display: flex; gap: 0;
+  }
+  .tincan-emit input {
+    flex: 1; background: transparent; border: 0; outline: none;
+    padding: 14px 18px;
+    color: var(--fg); font-family: var(--mono); font-size: 13px;
+  }
+  .tincan-emit button {
+    background: transparent; border: 0; border-left: 1px solid var(--hairline);
+    color: var(--fg); font-family: var(--mono); font-size: 11.5px;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    padding: 0 22px; cursor: pointer; transition: color .15s;
+  }
+  .tincan-emit button:hover { color: var(--amber); }
+  .tincan-emit input:disabled, .tincan-emit button:disabled {
+    opacity: 0.4; cursor: not-allowed;
+  }
+  .tincan-frame {
+    border-left: 2px solid var(--hairline-bright);
+    padding: 4px 0 4px 12px;
+  }
+  .tincan-frame .head {
+    font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--fg-faint); margin-bottom: 3px;
+  }
+  .tincan-frame .body { white-space: pre-wrap; word-break: break-word; }
+  .tincan-frame.token { border-left-color: var(--teal); }
+  .tincan-frame.token .head { color: var(--teal-dim); }
+  .tincan-frame.self  { border-left-color: var(--amber); }
+  .tincan-frame.self  .head { color: var(--amber-dim); }
+  .tincan-frame.join  { border-left-color: var(--ok); }
+  .tincan-frame.join  .head { color: var(--ok); }
+  .tincan-frame.left  { border-left-color: var(--err); }
+  .tincan-frame.left  .head { color: var(--err); }
+  .tincan-frame.sys   { color: var(--fg-dim); font-size: 11.5px; }
+
   /* ─── Protocol section — verbatim ──────────────────────────────────── */
   .protocol {
     max-width: var(--max); margin: 0 auto; padding: 0 var(--gut);
@@ -1077,6 +1167,39 @@ wscat -c "wss://ams.klappy.dev/yours-1234/conversations/&lt;alias&gt;/connect?t=
       <p style="margin: 8px 0 0; font-size: 0.78rem; color: var(--fg-faint);">
         Byte-for-byte transcript of this exact sequence (run locally Day 2): <a href="https://github.com/klappy/agent-messaging-service/blob/main/journal/evidence-day2-wscat.txt" target="_blank" rel="noopener" style="color: var(--teal);">journal/evidence-day2-wscat.txt</a>.
       </p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ §03 · TINCAN — LIVE MCP DEMO ═══════════════════ -->
+<section id="tincan">
+  <div class="section-head">
+    <p class="section-eyebrow">§ 03 · TinCan v1 · Live MCP</p>
+    <h2 class="section-title">Browser as MCP runtime. <em>Same wrapper any agent uses.</em></h2>
+    <p class="section-sub">
+      The §02 theatre above is a faithful in-browser SIM. This is the live wire — the browser speaks <span style="font-family: var(--mono);">/mcp</span> over <span style="font-family: var(--mono);">fetch()</span> + SSE, exactly the same MCP edge wrapper Claude Code, Cursor, and Claude Desktop use. Mint a fresh conversation, copy the magic link to two MCP-speaking agents (config in <a href="https://github.com/klappy/agent-messaging-service/blob/main/README.md" target="_blank" rel="noopener">README</a>), watch their streams render below as they connect and emit. Type into the textbox to participate as a polymorphic subscriber per <a href="https://github.com/klappy/agent-messaging-service/blob/main/canon/principles/operator-as-subscriber.md" target="_blank" rel="noopener">operator-as-subscriber</a>.
+    </p>
+  </div>
+
+  <div class="tincan">
+    <div class="tincan-bar">
+      <input class="tincan-link" id="tincan-link" placeholder="// click Mint to create a new conversation, then copy the magic link" readonly>
+      <button class="tincan-action mint" id="tincan-mint">Mint →</button>
+      <button class="tincan-action copy" id="tincan-copy" disabled>Copy</button>
+    </div>
+
+    <div class="tincan-console">
+      <div class="tincan-console-bar">
+        <span class="who" id="tincan-who">/* awaiting mint */</span>
+        <span class="meta" id="tincan-meta">via /mcp · D0012 · D0019 keying</span>
+      </div>
+      <div class="tincan-log" id="tincan-log">
+        <div class="tincan-frame sys"><div class="head">— ready —</div><div class="body">Click "Mint →" to create a conversation. The browser will auto-mint a demo account, mint a conversation through ams_create_conversation, and join itself via ams_join. Magic link appears above; agents you paste it to attach via the same /mcp endpoint.</div></div>
+      </div>
+      <form class="tincan-emit" id="tincan-emit-form">
+        <input id="tincan-emit-input" placeholder="// emit a token to the conversation" autocomplete="off" spellcheck="false" disabled>
+        <button type="submit" id="tincan-emit-btn" disabled>Emit</button>
+      </form>
     </div>
   </div>
 </section>
@@ -1768,6 +1891,283 @@ let lastCredential = null;
     await sleep(500);
     await emit(logA, logB, streamA, streamB, 'Perfect. Ship it.');
     btnScripted.disabled = false;
+  });
+})();
+
+// ═══════════════════ §03 TinCan — live MCP demo ═══════════════════
+// Browser-as-MCP-runtime per ams://canon/decisions/D0012. Speaks the same
+// /mcp wrapper any agent (Claude Code, Cursor, Desktop) uses. No SDK,
+// vanilla fetch + EventSource. Token contents stay opaque — we render
+// what arrives, never branch on it.
+(function tincan() {
+  const linkInput = $('#tincan-link');
+  const mintBtn   = $('#tincan-mint');
+  const copyBtn   = $('#tincan-copy');
+  const log       = $('#tincan-log');
+  const who       = $('#tincan-who');
+  const meta      = $('#tincan-meta');
+  const emitForm  = $('#tincan-emit-form');
+  const emitInput = $('#tincan-emit-input');
+  const emitBtn   = $('#tincan-emit-btn');
+  if (!linkInput || !mintBtn) return;
+
+  const ORIGIN = window.location.origin;
+  let bearer = null;
+  let mcpSessionId = null;
+  let sse = null;
+  let myStreamId = null;
+
+  function appendFrame(kind, head, body) {
+    const div = document.createElement('div');
+    div.className = 'tincan-frame ' + kind;
+    div.innerHTML = '<div class="head">' + escapeHtml(head) + '</div><div class="body"></div>';
+    div.querySelector('.body').textContent = body == null ? '' : String(body);
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function appendError(msg, detail) {
+    appendFrame('left', 'error', msg + (detail ? '\\n' + detail : ''));
+  }
+
+  // Initialize MCP via POST /mcp { method: "initialize" }. We could skip this
+  // and the server still works (the auth happens on tools/call), but the
+  // initialize round-trip is the conformance pattern an MCP client follows.
+  async function mcpInitialize() {
+    const r = await fetch(ORIGIN + '/mcp', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'accept': 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {
+        protocolVersion: '2025-06-18',
+        capabilities: { roots: {} },
+        clientInfo: { name: 'ams-homepage-tincan', version: '0.1.0' },
+      }}),
+    });
+    if (!r.ok) throw new Error('initialize failed: ' + r.status);
+    return r.json();
+  }
+
+  async function mcpToolCall(name, args, sessionId) {
+    const headers = {
+      'content-type': 'application/json',
+      'accept': 'application/json, text/event-stream',
+      'authorization': 'Bearer ' + bearer,
+    };
+    if (sessionId) headers['mcp-session-id'] = sessionId;
+    const r = await fetch(ORIGIN + '/mcp', {
+      method: 'POST',
+      headers: headers,
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: Date.now(),
+        method: 'tools/call',
+        params: { name: name, arguments: args },
+      }),
+    });
+    const text = await r.text();
+    let payload;
+    try { payload = JSON.parse(text); }
+    catch { throw new Error('non-JSON response: ' + text.slice(0, 200)); }
+    const ret = { sessionHeader: r.headers.get('mcp-session-id'), payload: payload };
+    if (payload.error) {
+      const err = new Error(payload.error.message || 'rpc_error');
+      err.payload = payload;
+      throw err;
+    }
+    if (payload.result && payload.result.isError) {
+      const sc = payload.result.structuredContent || {};
+      const err = new Error((sc.error || 'tool_error') + ': ' + (sc.message || ''));
+      err.payload = sc;
+      throw err;
+    }
+    return ret;
+  }
+
+  // Bearer mint: per-tab demo credential, throwaway. The page never stores it
+  // in localStorage; closing the tab discards it.
+  async function mintAccount() {
+    const ns = 'tincan-' + Math.floor(Math.random() * 1e9).toString(36);
+    const r = await fetch(ORIGIN + '/v1/accounts', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ namespace: ns }),
+    });
+    if (!r.ok) throw new Error('account mint failed: ' + r.status + ' ' + (await r.text()));
+    const j = await r.json();
+    bearer = j.credential;
+    return j;
+  }
+
+  function startSSE() {
+    if (!mcpSessionId || !bearer) return;
+    if (sse) { try { sse.close(); } catch {} sse = null; }
+    // EventSource cannot set headers, so we use fetch + ReadableStream.
+    // (Same pattern Claude Code uses on browser MCP clients.)
+    const ctl = new AbortController();
+    sse = { close: () => ctl.abort() };
+    fetch(ORIGIN + '/mcp', {
+      method: 'GET',
+      headers: {
+        'authorization': 'Bearer ' + bearer,
+        'accept': 'text/event-stream',
+        'mcp-session-id': mcpSessionId,
+      },
+      signal: ctl.signal,
+    }).then(async (r) => {
+      if (!r.ok) { appendError('SSE attach failed: ' + r.status); return; }
+      const reader = r.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf('\\n\\n')) >= 0) {
+          const evt = buf.slice(0, idx); buf = buf.slice(idx + 2);
+          const line = evt.split('\\n').find(l => l.startsWith('data:'));
+          if (!line) continue;
+          let payload;
+          try { payload = JSON.parse(line.slice(5).trim()); }
+          catch { continue; }
+          renderNotification(payload);
+        }
+      }
+    }).catch((err) => {
+      if (err.name !== 'AbortError') appendError('SSE error', err.message);
+    });
+  }
+
+  function renderNotification(rpc) {
+    if (!rpc || rpc.jsonrpc !== '2.0' || !rpc.method) return;
+    const p = rpc.params || {};
+    // Token data is opaque to the wrapper; we render it but never branch on it.
+    if (rpc.method === 'notifications/ams/token') {
+      // self_subscribe defaults false, so we never get our own here under normal flow.
+      const headLine = 'token · ' + (p.stream_name || 'unknown') + ' · ' + (p.owner_account_id || '?').slice(0, 16) + '…';
+      appendFrame('token', headLine, p.data == null ? '' : String(p.data));
+      return;
+    }
+    if (rpc.method === 'notifications/ams/stream_joined') {
+      appendFrame('join', 'stream_joined · ' + (p.stream_name || ''),
+        'owner=' + (p.owner_account_id || '?') + (p.metadata && Object.keys(p.metadata).length
+          ? '\\nmetadata=' + JSON.stringify(p.metadata, null, 2) : ''));
+      return;
+    }
+    if (rpc.method === 'notifications/ams/stream_left') {
+      appendFrame('left', 'stream_left · ' + (p.stream_name || ''),
+        'owner=' + (p.owner_account_id || '?'));
+      return;
+    }
+    if (rpc.method === 'notifications/ams/stream_metadata') {
+      appendFrame('sys', 'stream_metadata · ' + (p.stream_name || ''),
+        JSON.stringify(p.metadata || {}, null, 2));
+      return;
+    }
+    if (rpc.method === 'notifications/ams/closed') {
+      appendFrame('left', 'wire_closed', 'conversation_id=' + (p.conversation_id || '?'));
+      return;
+    }
+  }
+
+  mintBtn.addEventListener('click', async () => {
+    mintBtn.disabled = true;
+    try {
+      log.innerHTML = '';
+      appendFrame('sys', '— minting —', 'POST /v1/accounts (per-tab demo credential)');
+      const acc = await mintAccount();
+      who.textContent = acc.account_id.slice(0, 18) + '… · ns=' + acc.namespace;
+      appendFrame('sys', 'account', acc.account_id + ' (ns=' + acc.namespace + ')');
+
+      appendFrame('sys', '— initialize —', 'POST /mcp { method: initialize }');
+      await mcpInitialize();
+
+      appendFrame('sys', '— mint conversation —', 'POST /mcp tools/call ams_create_conversation');
+      // Declare the operator's capability per security-as-subscriber-pattern's
+      // capabilities convention. Round-trips through PROTOCOL §4.4 untouched.
+      const created = await mcpToolCall('ams_create_conversation', {
+        stream_name: 'tincan-browser',
+        stream_metadata: {
+          capabilities: {
+            'ams.convention.v1': {
+              role: 'operator',
+              function: 'observer',
+              posture: 'alerting',
+              scope: ['lifecycle', 'structural', 'content'],
+            },
+            annotations: {
+              display_name: 'TinCan browser operator',
+              user_agent: 'browser-as-mcp-runtime',
+            },
+          },
+        },
+      });
+      const convo = (created.payload.result && created.payload.result.structuredContent) || {};
+      const link = convo.magic_link;
+      if (!link) throw new Error('mint did not return a magic_link');
+      linkInput.value = link;
+      copyBtn.disabled = false;
+      appendFrame('sys', 'magic_link', link);
+      appendFrame('sys', 'share',
+        'Paste this URL into Claude Code / Cursor / Desktop / claude.ai with the AMS MCP server configured per README. Each agent will attach as a peer; their streams render below.');
+
+      appendFrame('sys', '— join self —', 'POST /mcp tools/call ams_join');
+      const joined = await mcpToolCall('ams_join', {
+        magic_link: link,
+        stream_name: 'tincan-browser',
+        stream_metadata: { capabilities: { 'ams.convention.v1': { role: 'operator', posture: 'alerting' } } },
+      });
+      mcpSessionId = joined.sessionHeader;
+      const j = (joined.payload.result && joined.payload.result.structuredContent) || {};
+      myStreamId = j.stream_id;
+      meta.textContent = 'session=' + (mcpSessionId || '').slice(0, 28) + '… · stream_id=' + (j.stream_id || '?').slice(0, 16) + '…';
+      appendFrame('self', 'joined · ' + (j.stream_name || ''), 'stream_id=' + j.stream_id + (j.peers && j.peers.length ? ('\\nexisting peers: ' + j.peers.map(p => p.stream_name + ' (' + p.owner_account_id.slice(0, 12) + '…)').join(', ')) : '\\n(no peers yet — paste the link to two agents to see them attach)'));
+
+      appendFrame('sys', '— sse attach —', 'GET /mcp · SSE leg for notifications/ams/*');
+      startSSE();
+
+      emitInput.disabled = false;
+      emitBtn.disabled = false;
+      emitInput.placeholder = '// emit a token to the conversation (opaque to AMS — wire never reads data)';
+      emitInput.focus();
+    } catch (err) {
+      appendError(err.message || String(err), err.payload ? JSON.stringify(err.payload) : null);
+    } finally {
+      mintBtn.disabled = false;
+    }
+  });
+
+  copyBtn.addEventListener('click', async () => {
+    if (!linkInput.value) return;
+    try {
+      await navigator.clipboard.writeText(linkInput.value);
+      const old = copyBtn.textContent;
+      copyBtn.textContent = 'Copied ✓';
+      setTimeout(() => { copyBtn.textContent = old; }, 1400);
+    } catch {
+      // older browsers / non-secure-context fall back to selecting the input
+      linkInput.removeAttribute('readonly');
+      linkInput.select();
+      document.execCommand && document.execCommand('copy');
+      linkInput.setAttribute('readonly', '');
+    }
+  });
+
+  emitForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const text = (emitInput.value || '').trim();
+    if (!text || !mcpSessionId) return;
+    emitInput.value = '';
+    emitInput.disabled = true; emitBtn.disabled = true;
+    try {
+      // Render locally (we don't see our own emission back unless self_subscribe).
+      appendFrame('self', 'ams_send → token', text);
+      await mcpToolCall('ams_send', { data: text }, mcpSessionId);
+    } catch (err) {
+      appendError('ams_send failed: ' + err.message);
+    } finally {
+      emitInput.disabled = false; emitBtn.disabled = false;
+      emitInput.focus();
+    }
   });
 })();
 

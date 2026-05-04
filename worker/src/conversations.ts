@@ -35,6 +35,7 @@ export async function createConversation(
   env: Env,
   account: AccountRecord,
   pathNamespace: string,
+  hostOverride?: string,
 ): Promise<Response> {
   if (pathNamespace !== account.namespace) {
     return errorResponse(
@@ -155,7 +156,9 @@ export async function createConversation(
   // Per D0011: read the request host to construct the magic link. The host
   // in the link is whichever host the mint request hit — and is portable
   // across the dual-host pair because both route to the same Worker.
-  const host = req.headers.get("host") ?? "ams.klappy.dev";
+  // hostOverride is provided by the MCP edge wrapper because synthetic in-Worker
+  // Requests do not populate the Host header from their URL (forbidden header name).
+  const host = hostOverride ?? req.headers.get("host") ?? "ams.klappy.dev";
   const magicLink =
     `https://${host}/${account.namespace}/conversations/${alias}?t=${permissiveToken}`;
 
