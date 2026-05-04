@@ -365,7 +365,21 @@ async function resolveResourceContext(
   prebind?: ResolvedPrebind,
 ): Promise<ResolvedResourceContext | null> {
   if (prebind) {
-    return { conversation_id: prebind.conversation_id, record: prebind.record };
+    const ctx: ResolvedResourceContext = {
+      conversation_id: prebind.conversation_id,
+      record: prebind.record,
+    };
+    const sessionHeader = rpc._sessionHeader;
+    if (sessionHeader) {
+      const route = parseSessionId(sessionHeader);
+      if (route) {
+        const parts = route.do_name.split(":");
+        if (parts.length === 2 && parts[0] && parts[1] === prebind.conversation_id) {
+          ctx.account_id = route.account_id;
+        }
+      }
+    }
+    return ctx;
   }
   const sessionHeader = rpc._sessionHeader;
   if (!sessionHeader) return null;
