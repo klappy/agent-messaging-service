@@ -138,7 +138,10 @@ async function handleMcpPost(req: Request, env: Env): Promise<Response> {
     return jsonRpcOkResponse(rpc.id ?? null, { tools: TOOL_SCHEMAS });
   }
   if (rpc.method === "tools/call") {
-    return handleToolCall(rpc, account, env, isNotification);
+    // Outer host preserved here so tool_ams_create_conversation can build a magic_link
+    // that names the host the request actually hit (truthkit-on-truthkit, klappy-on-klappy).
+    const outerHost = req.headers.get("host") ?? "ams.klappy.dev";
+    return handleToolCall(rpc, account, env, isNotification, outerHost);
   }
   return jsonRpcErrorResponse(rpc.id ?? null, -32601, `Method not found: ${rpc.method}`, 404);
 }
@@ -293,6 +296,7 @@ async function handleToolCall(
   account: AccountRecord,
   env: Env,
   _isNotification: boolean,
+  outerHost: string,
 ): Promise<Response> {
   const params = (isPlainObject(rpc.params) ? rpc.params : {}) as ToolCallParams;
   if (typeof params.name !== "string") {
@@ -302,7 +306,7 @@ async function handleToolCall(
   const args = (isPlainObject(params.arguments) ? params.arguments : {}) as Record<string, unknown>;
 
   if (toolName === "ams_create_conversation") {
-    return tool_ams_create_conversation(rpc, account, env, args);
+    return tool_ams_create_conversation(rpc, account, env, args, outerHost);
   }
   if (toolName === "ams_join") {
     return tool_ams_join(rpc, account, env, args);
@@ -318,11 +322,15 @@ async function tool_ams_create_conversation(
   account: AccountRecord,
   env: Env,
   args: Record<string, unknown>,
+  outerHost: string,
 ): Promise<Response> {
   // Reuse the existing control-plane handler so the mint behavior is
   // single-sourced. Build a synthetic Request whose body matches the public
   // POST /v1/{ns}/conversations contract.
-  const innerReq = new Request(`https://internal/v1/${account.namespace}/conversations`, {
+  // Use the outer host (forwarded from handleMcpPost) so the synthetic Request carries
+  // a host header equal to whichever brand the operator hit (klappy vs truthkit).
+  // createConversation reads req.headers.get("host") to build the magic_link.
+  const innerReq = new Request(`https://${outerHost}/v1/${account.namespace}/conversations`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
