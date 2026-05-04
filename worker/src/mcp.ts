@@ -88,11 +88,32 @@ const MCP_CORS: Record<string, string> = {
 
 // --- Public route handler ------------------------------------------------
 
-export async function handleMcp(req: Request, env: Env): Promise<Response> {
+// Magic-link prebind context per ams://canon/decisions/D0023. When the request
+// arrived on the route alias POST /{ns}/conversations/{alias}, the router
+// validates ?t=<permissive> and the conversation record up-front and threads
+// the resolved context here so initialize / prompts / resources / ams_join can
+// answer with the conversation already pre-bound. /mcp callers carry no
+// prebind; everything still works through ams_join({ magic_link }).
+export interface McpPrebind {
+  ns: string;
+  alias: string;
+  permissive: string;
+}
+
+interface ResolvedPrebind extends McpPrebind {
+  conversation_id: string;
+  record: ConversationRecord;
+}
+
+export async function handleMcp(
+  req: Request,
+  env: Env,
+  prebind?: McpPrebind,
+): Promise<Response> {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: MCP_CORS });
   }
-  if (req.method === "POST") return handleMcpPost(req, env);
+  if (req.method === "POST") return handleMcpPost(req, env, prebind);
   if (req.method === "GET") return handleMcpGet(req, env);
   if (req.method === "DELETE") return handleMcpDelete(req, env);
   return errorResponse(
@@ -105,7 +126,11 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
 // POST /mcp — JSON-RPC request leg. Accepts singletons; rejects batches in
 // this slice (the four tools we ship are not chained). Notifications (no
 // id) get a 202 with no body per JSON-RPC 2.0.
-async function handleMcpPost(req: Request, env: Env): Promise<Response> {
+async function handleMcpPost(
+  req: Request,
+  env: Env,
+  prebind?: McpPrebind,
+): Promise<Response> {
   let body: unknown;
   try {
     body = await req.json();
@@ -122,12 +147,33 @@ async function handleMcpPost(req: Request, env: Env): Promise<Response> {
   rpc._sessionHeader = req.headers.get("mcp-session-id");
   const isNotification = rpc.id === undefined;
 
+  // D0023: validate the prebind permissive token once at the route boundary so
+  // every downstream surface (initialize / prompts / resources) can trust the
+  // pre-bound conversation record. Failure here is a transport-level
+  // rejection — magic link is the bootstrap; without it, no surface answers.
+  let resolved: ResolvedPrebind | undefined;
+  if (prebind) {
+    const r = await resolvePrebind(env, prebind);
+    if ("error" in r) {
+      return jsonRpcErrorResponse(rpc.id ?? null, -32001, r.error, 401);
+    }
+    resolved = r;
+  }
+
   // Stateless / unauthenticated:
-  if (rpc.method === "initialize") return handleInitialize(rpc);
+  if (rpc.method === "initialize") return handleInitialize(rpc, resolved);
   if (rpc.method === "ping") return jsonRpcOkResponse(rpc.id ?? null, {});
   if (rpc.method === "notifications/initialized") {
     return new Response(null, { status: 202, headers: MCP_CORS });
   }
+  // prompts/* and resources/* sit at the MCP-spec surface populated by D0023.
+  // The magic link is the auth here (the operator chose to share it); we do
+  // not gate behind Authorization for read-only governance reads. ams_join
+  // remains Bearer-required.
+  if (rpc.method === "prompts/list") return handlePromptsList(rpc, resolved);
+  if (rpc.method === "prompts/get") return handlePromptsGet(rpc, resolved);
+  if (rpc.method === "resources/list") return handleResourcesList(rpc, env, resolved);
+  if (rpc.method === "resources/read") return handleResourcesRead(rpc, env, resolved);
 
   // Authenticated path. Mode A only — Authorization header carries the bearer.
   const account = await authenticate(req, env);
@@ -141,7 +187,7 @@ async function handleMcpPost(req: Request, env: Env): Promise<Response> {
     // Outer host preserved here so tool_ams_create_conversation can build a magic_link
     // that names the host the request actually hit (truthkit-on-truthkit, klappy-on-klappy).
     const outerHost = req.headers.get("host") ?? "ams.klappy.dev";
-    return handleToolCall(rpc, account, env, isNotification, outerHost);
+    return handleToolCall(rpc, account, env, isNotification, outerHost, resolved);
   }
   return jsonRpcErrorResponse(rpc.id ?? null, -32601, `Method not found: ${rpc.method}`, 404);
 }
@@ -193,18 +239,278 @@ async function handleMcpDelete(req: Request, env: Env): Promise<Response> {
 
 // --- initialize ----------------------------------------------------------
 
-function handleInitialize(rpc: JsonRpcRequest): Response {
+// Static governance block per ams://canon/decisions/D0023 §"The MCP Surface
+// Additions". Build-time-derived from canon: references PROTOCOL.md, the
+// conformance constraint, the convention spec, the two-door auth, and the
+// polling pattern. No runtime branching — what changes per conversation is
+// the per-conversation block appended after this.
+const STATIC_INSTRUCTIONS = [
+  "AMS edge wrapper — Agent Messaging Service over MCP.",
+  "",
+  "Wire model (canon-derived):",
+  "  • Tokens, not messages: payloads are opaque bytes (D0001). Use ams_send to emit; peer tokens arrive via notifications/ams/token (push) or ams_recv (poll).",
+  "  • Streams own themselves: by default a stream does not see its own emissions (D0009). Pass self_subscribe: true at ams_join to opt in.",
+  "  • Two-door auth: door 1 is the magic link (capability to attach a stream). Door 2 is the Bearer in Authorization (account ownership). Both are required for ams_send. Mint an account at POST /v1/accounts if you do not have one.",
+  "  • Polling fallback: ams_recv is the long-poll degradation path for runtimes that cannot consume the SSE leg of the Streamable HTTP transport. Pass wait_ms to wait for frames.",
+  "  • Convention manifest: 'ams.convention.v1' is the application-level namespace inside stream_metadata.capabilities (role / function / posture / scope / attestation). Round-trips opaquely through the wrapper.",
+  "",
+  "References:",
+  "  • Wire protocol: PROTOCOL.md",
+  "  • Wrapper conformance: canon/constraints/mcp-wrapper-conformance-for-conversational-ai",
+  "  • Conversation conventions: canon/constraints/two-agent-conversation-conventions",
+  "  • Bootstrap rationale: canon/decisions/D0023-magic-link-as-mcp-transport-endpoint",
+  "",
+  "Call sequence: initialize → (optional) prompts/list, prompts/get, resources/list, resources/read → ams_join → ams_send / ams_recv. On the magic-link route, ams_join accepts zero arguments because the conversation is pre-bound from the URL.",
+].join("\n");
+
+function handleInitialize(rpc: JsonRpcRequest, prebind?: ResolvedPrebind): Response {
+  let instructions = STATIC_INSTRUCTIONS;
+  if (prebind) {
+    const tail: string[] = [
+      "",
+      "─── Pre-bound conversation ───",
+      `namespace: ${prebind.record.namespace}`,
+      `alias: ${prebind.record.alias}`,
+      `conversation_id: ${prebind.conversation_id}`,
+    ];
+    const opInstr = (prebind.record.metadata as Record<string, unknown>)["instructions"];
+    if (typeof opInstr === "string" && opInstr.length > 0) {
+      tail.push("", "─── Operator instructions (verbatim) ───", opInstr);
+    }
+    instructions = `${instructions}\n${tail.join("\n")}`;
+  }
+
   return jsonRpcOkResponse(rpc.id ?? null, {
     protocolVersion: MCP_PROTOCOL_VERSION,
     capabilities: {
       tools: { listChanged: false },
+      prompts: { listChanged: false },
+      resources: { listChanged: false, subscribe: false },
       logging: {},
     },
     serverInfo: SERVER_INFO,
-    instructions:
-      "AMS edge wrapper. Call tools/list to discover ams_create_conversation, ams_join, ams_send, ams_recv. " +
-      "Open GET /mcp with the mcp-session-id from your ams_join response to receive notifications/ams/* via SSE.",
+    instructions,
   });
+}
+
+// --- prompts/list, prompts/get -------------------------------------------
+//
+// Operator-defined prompts live in conversation metadata.prompts as an array
+// of { name, description, messages } objects in the MCP prompts/get shape.
+// The wrapper reads-and-forwards verbatim — no parsing, no validation, no
+// schema-checking (wrapper-stays-cheap; permanent-non-goals items 1–3).
+
+function operatorPrompts(prebind?: ResolvedPrebind): Array<Record<string, unknown>> {
+  if (!prebind) return [];
+  const raw = (prebind.record.metadata as Record<string, unknown>)["prompts"];
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(isPlainObject) as Array<Record<string, unknown>>;
+}
+
+function handlePromptsList(rpc: JsonRpcRequest, prebind?: ResolvedPrebind): Response {
+  const prompts = operatorPrompts(prebind).map((p) => {
+    const summary: Record<string, unknown> = {};
+    if (typeof p.name === "string") summary.name = p.name;
+    if (typeof p.description === "string") summary.description = p.description;
+    if (Array.isArray(p.arguments)) summary.arguments = p.arguments;
+    return summary;
+  });
+  return jsonRpcOkResponse(rpc.id ?? null, { prompts });
+}
+
+function handlePromptsGet(rpc: JsonRpcRequest, prebind?: ResolvedPrebind): Response {
+  const params = (isPlainObject(rpc.params) ? rpc.params : {}) as { name?: unknown };
+  if (typeof params.name !== "string") {
+    return jsonRpcErrorResponse(rpc.id ?? null, -32602, "prompts/get requires a 'name' parameter.", 400);
+  }
+  const found = operatorPrompts(prebind).find((p) => p.name === params.name);
+  if (!found) {
+    return jsonRpcErrorResponse(rpc.id ?? null, -32602, `prompt not found: ${params.name}`, 404);
+  }
+  // Forward verbatim: description + messages are operator-authored, opaque to
+  // the wrapper. Strip nothing, validate nothing.
+  const result: Record<string, unknown> = {};
+  if (typeof found.description === "string") result.description = found.description;
+  if (Array.isArray(found.messages)) result.messages = found.messages;
+  return jsonRpcOkResponse(rpc.id ?? null, result);
+}
+
+// --- resources/list, resources/read --------------------------------------
+//
+// D0023 §"The MCP Surface Additions" names four resources:
+//   ams://conversations/{conversation_id}        — snapshot of the conversation
+//   ams://conversations/{conversation_id}/peers  — current peer list
+//   ams://protocol                                — pointer to PROTOCOL.md
+//   ams://conventions/v1                          — pointer to conventions doc
+//
+// The protocol/conventions resources are static deployment-level pointers; the
+// other two need a bound conversation. When no conversation context is in
+// scope (no prebind, no mcp-session-id) the conversation-scoped entries are
+// omitted from the list.
+
+const PROTOCOL_POINTER_URL =
+  "https://github.com/klappy/agent-messaging-service/blob/main/PROTOCOL.md";
+const CONVENTIONS_POINTER_URL =
+  "https://github.com/klappy/agent-messaging-service/blob/main/canon/constraints/two-agent-conversation-conventions.md";
+
+interface ResolvedResourceContext {
+  account_id?: string;
+  conversation_id: string;
+  record: ConversationRecord;
+}
+
+async function resolveResourceContext(
+  rpc: JsonRpcRequest,
+  env: Env,
+  prebind?: ResolvedPrebind,
+): Promise<ResolvedResourceContext | null> {
+  if (prebind) {
+    return { conversation_id: prebind.conversation_id, record: prebind.record };
+  }
+  const sessionHeader = rpc._sessionHeader;
+  if (!sessionHeader) return null;
+  const route = parseSessionId(sessionHeader);
+  if (!route) return null;
+  const parts = route.do_name.split(":");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
+  const conversationId = parts[1];
+  const recordRaw = await env.AMS_KV.get(CONVERSATION_KEY(conversationId));
+  if (!recordRaw) return null;
+  const record = JSON.parse(recordRaw) as ConversationRecord;
+  return {
+    account_id: route.account_id,
+    conversation_id: conversationId,
+    record,
+  };
+}
+
+async function handleResourcesList(
+  rpc: JsonRpcRequest,
+  env: Env,
+  prebind?: ResolvedPrebind,
+): Promise<Response> {
+  const ctx = await resolveResourceContext(rpc, env, prebind);
+  const resources: Array<Record<string, unknown>> = [
+    {
+      uri: "ams://protocol",
+      name: "AMS wire protocol",
+      description: "Pointer to PROTOCOL.md at the deployment's canonical canon location.",
+      mimeType: "text/uri-list",
+    },
+    {
+      uri: "ams://conventions/v1",
+      name: "Conversation conventions (v1)",
+      description:
+        "Pointer to canon/constraints/two-agent-conversation-conventions and the ams.convention.v1 manifest spec.",
+      mimeType: "text/uri-list",
+    },
+  ];
+  if (ctx) {
+    resources.unshift(
+      {
+        uri: `ams://conversations/${ctx.conversation_id}`,
+        name: "Conversation snapshot",
+        description: "Current state snapshot for the bound conversation.",
+        mimeType: "application/json",
+      },
+      {
+        uri: `ams://conversations/${ctx.conversation_id}/peers`,
+        name: "Conversation peers",
+        description: "Current peer list with stream metadata for the bound conversation.",
+        mimeType: "application/json",
+      },
+    );
+  }
+  return jsonRpcOkResponse(rpc.id ?? null, { resources });
+}
+
+async function handleResourcesRead(
+  rpc: JsonRpcRequest,
+  env: Env,
+  prebind?: ResolvedPrebind,
+): Promise<Response> {
+  const params = (isPlainObject(rpc.params) ? rpc.params : {}) as { uri?: unknown };
+  if (typeof params.uri !== "string") {
+    return jsonRpcErrorResponse(rpc.id ?? null, -32602, "resources/read requires a 'uri' parameter.", 400);
+  }
+  const uri = params.uri;
+
+  if (uri === "ams://protocol") {
+    return jsonRpcOkResponse(rpc.id ?? null, {
+      contents: [{ uri, mimeType: "text/uri-list", text: `${PROTOCOL_POINTER_URL}\n` }],
+    });
+  }
+  if (uri === "ams://conventions/v1") {
+    return jsonRpcOkResponse(rpc.id ?? null, {
+      contents: [{ uri, mimeType: "text/uri-list", text: `${CONVENTIONS_POINTER_URL}\n` }],
+    });
+  }
+
+  const ctx = await resolveResourceContext(rpc, env, prebind);
+  const snapshotMatch = uri.match(/^ams:\/\/conversations\/([^/]+)$/);
+  if (snapshotMatch) {
+    if (!ctx || ctx.conversation_id !== snapshotMatch[1]) {
+      return jsonRpcErrorResponse(rpc.id ?? null, -32602, "resource not in scope", 404);
+    }
+    const snapshot = {
+      conversation_id: ctx.record.conversation_id,
+      alias: ctx.record.alias,
+      namespace: ctx.record.namespace,
+      created_at: ctx.record.created_at,
+      metadata: ctx.record.metadata,
+    };
+    return jsonRpcOkResponse(rpc.id ?? null, {
+      contents: [{ uri, mimeType: "application/json", text: JSON.stringify(snapshot) }],
+    });
+  }
+  const peersMatch = uri.match(/^ams:\/\/conversations\/([^/]+)\/peers$/);
+  if (peersMatch) {
+    if (!ctx || ctx.conversation_id !== peersMatch[1]) {
+      return jsonRpcErrorResponse(rpc.id ?? null, -32602, "resource not in scope", 404);
+    }
+    // Best-effort peer list: only knowable from a SessionDO already attached
+    // to this account+conversation. With no live attachment we return an
+    // empty list; ams_join's joined snapshot is the durable source.
+    let peers: unknown[] = [];
+    if (ctx.account_id) {
+      const doName = sessionDoName(ctx.account_id, ctx.conversation_id);
+      const stub = env.SESSION_DO.get(env.SESSION_DO.idFromName(doName));
+      const peersReq = new Request("https://do.internal/__do__/peers", { method: "GET" });
+      try {
+        const resp = await stub.fetch(peersReq);
+        if (resp.ok) {
+          const body = (await resp.json()) as { peers?: unknown[] };
+          if (Array.isArray(body.peers)) peers = body.peers;
+        }
+      } catch {
+        // Best-effort; empty list is the honest answer if the DO can't be reached.
+      }
+    }
+    return jsonRpcOkResponse(rpc.id ?? null, {
+      contents: [
+        { uri, mimeType: "application/json", text: JSON.stringify({ peers }) },
+      ],
+    });
+  }
+  return jsonRpcErrorResponse(rpc.id ?? null, -32602, `Unknown resource uri: ${uri}`, 404);
+}
+
+// --- prebind resolver ----------------------------------------------------
+
+async function resolvePrebind(
+  env: Env,
+  prebind: McpPrebind,
+): Promise<ResolvedPrebind | { error: string }> {
+  const conversationId = await env.AMS_KV.get(ALIAS_KEY(prebind.ns, prebind.alias));
+  if (!conversationId) return { error: "conversation_not_found" };
+  const recordRaw = await env.AMS_KV.get(CONVERSATION_KEY(conversationId));
+  if (!recordRaw) return { error: "conversation_not_found" };
+  const record = JSON.parse(recordRaw) as ConversationRecord;
+  const tokenHash = await pepperedHash(env.AMS_PERMISSIVE_TOKEN_PEPPER, prebind.permissive);
+  if (!timingSafeEqualHex(tokenHash, record.permissive_token_hash)) {
+    return { error: "invalid_magic_link" };
+  }
+  return { ...prebind, conversation_id: conversationId, record };
 }
 
 // --- tool surface --------------------------------------------------------
@@ -297,6 +603,7 @@ async function handleToolCall(
   env: Env,
   _isNotification: boolean,
   outerHost: string,
+  prebind?: ResolvedPrebind,
 ): Promise<Response> {
   const params = (isPlainObject(rpc.params) ? rpc.params : {}) as ToolCallParams;
   if (typeof params.name !== "string") {
@@ -309,7 +616,7 @@ async function handleToolCall(
     return tool_ams_create_conversation(rpc, account, env, args, outerHost);
   }
   if (toolName === "ams_join") {
-    return tool_ams_join(rpc, account, env, args);
+    return tool_ams_join(rpc, account, env, args, prebind);
   }
   if (toolName === "ams_send" || toolName === "ams_recv") {
     return routeToBoundSession(rpc, account, env, toolName, args);
@@ -360,48 +667,62 @@ async function tool_ams_join(
   account: AccountRecord,
   env: Env,
   args: Record<string, unknown>,
+  prebind?: ResolvedPrebind,
 ): Promise<Response> {
   const sub = args as JoinSubarguments;
-  if (typeof sub.magic_link !== "string") {
-    return jsonRpcMcpToolError(rpc.id ?? null, {
-      error: "invalid_arguments",
-      message: "ams_join requires magic_link as a string.",
-    });
-  }
 
+  // D0023: on the magic-link route the conversation is pre-bound from the URL
+  // and the resolver already validated the permissive token. ams_join can be
+  // called with zero arguments. The /mcp route still requires magic_link.
   let parsed: { ns: string; alias: string; permissive: string };
-  try {
-    parsed = parseMagicLink(sub.magic_link);
-  } catch (err) {
-    return jsonRpcMcpToolError(rpc.id ?? null, {
-      error: "invalid_magic_link",
-      message: (err as Error).message,
-    });
-  }
+  let conversationId: string;
+  let record: ConversationRecord;
 
-  // Resolve the conversation in-Worker so a bad link surfaces as a clean
-  // tool-level error rather than as a wire close.
-  const conversationId = await env.AMS_KV.get(ALIAS_KEY(parsed.ns, parsed.alias));
-  if (!conversationId) {
-    return jsonRpcMcpToolError(rpc.id ?? null, {
-      error: "conversation_not_found",
-      message: "No conversation with that namespace+alias.",
-    });
-  }
-  const recordRaw = await env.AMS_KV.get(CONVERSATION_KEY(conversationId));
-  if (!recordRaw) {
-    return jsonRpcMcpToolError(rpc.id ?? null, {
-      error: "conversation_not_found",
-      message: "Conversation record missing.",
-    });
-  }
-  const record = JSON.parse(recordRaw) as ConversationRecord;
-  const tokenHash = await pepperedHash(env.AMS_PERMISSIVE_TOKEN_PEPPER, parsed.permissive);
-  if (!timingSafeEqualHex(tokenHash, record.permissive_token_hash)) {
-    return jsonRpcMcpToolError(rpc.id ?? null, {
-      error: "invalid_magic_link",
-      message: "Permissive token did not match.",
-    });
+  if (prebind && typeof sub.magic_link !== "string") {
+    parsed = { ns: prebind.ns, alias: prebind.alias, permissive: prebind.permissive };
+    conversationId = prebind.conversation_id;
+    record = prebind.record;
+  } else {
+    if (typeof sub.magic_link !== "string") {
+      return jsonRpcMcpToolError(rpc.id ?? null, {
+        error: "invalid_arguments",
+        message: "ams_join requires magic_link as a string.",
+      });
+    }
+    try {
+      parsed = parseMagicLink(sub.magic_link);
+    } catch (err) {
+      return jsonRpcMcpToolError(rpc.id ?? null, {
+        error: "invalid_magic_link",
+        message: (err as Error).message,
+      });
+    }
+
+    // Resolve the conversation in-Worker so a bad link surfaces as a clean
+    // tool-level error rather than as a wire close.
+    const id = await env.AMS_KV.get(ALIAS_KEY(parsed.ns, parsed.alias));
+    if (!id) {
+      return jsonRpcMcpToolError(rpc.id ?? null, {
+        error: "conversation_not_found",
+        message: "No conversation with that namespace+alias.",
+      });
+    }
+    const recordRaw = await env.AMS_KV.get(CONVERSATION_KEY(id));
+    if (!recordRaw) {
+      return jsonRpcMcpToolError(rpc.id ?? null, {
+        error: "conversation_not_found",
+        message: "Conversation record missing.",
+      });
+    }
+    record = JSON.parse(recordRaw) as ConversationRecord;
+    const tokenHash = await pepperedHash(env.AMS_PERMISSIVE_TOKEN_PEPPER, parsed.permissive);
+    if (!timingSafeEqualHex(tokenHash, record.permissive_token_hash)) {
+      return jsonRpcMcpToolError(rpc.id ?? null, {
+        error: "invalid_magic_link",
+        message: "Permissive token did not match.",
+      });
+    }
+    conversationId = id;
   }
 
   // D0019 keying.
@@ -643,6 +964,8 @@ export class SessionDO {
           return await this.handleSse(req);
         case "/__do__/detach":
           return await this.handleDetach(req);
+        case "/__do__/peers":
+          return await this.handlePeers();
       }
       return jsonResponse({ error: "not_found" }, { status: 404 });
     } catch (err) {
@@ -995,6 +1318,14 @@ export class SessionDO {
       this.joined = null;
     }
     return jsonResponse({ ok: true });
+  }
+
+  // Best-effort peers snapshot for resources/read of ams://conversations/{id}/peers.
+  // Returns whatever we know from our own bound wire connection — the wire
+  // delivers the peer list at `joined` time and updates it via stream_joined /
+  // stream_left frames. With no live binding we honestly return an empty list.
+  private async handlePeers(): Promise<Response> {
+    return jsonResponse({ peers: this.joined?.peers ?? [] });
   }
 }
 

@@ -102,6 +102,52 @@ export default {
       return handleConnect(req, env, ns, alias, url);
     }
 
+    // Magic-link route alias per ams://canon/decisions/D0023.
+    //
+    //   POST {magic_link} with Content-Type: application/json + JSON-RPC body
+    //     → MCP handler with (ns, alias, permissive) pre-bound to the resulting
+    //       MCP session. Same SessionDO keying as /mcp per D0019; converges
+    //       on the same wire path. The /mcp endpoint stays unchanged.
+    //
+    //   GET / HEAD on the same URL → tincan homepage UI (D0012). The browser
+    //     pastes the magic link into the existing #tincan section's join input;
+    //     this redirects them to the right surface without bouncing 404.
+    //     Browsers cannot speak Streamable HTTP MCP from a `new WebSocket`-style
+    //     constructor, so the GET path stays the marketing/UI surface and the
+    //     POST path is the AI-assistant transport.
+    //
+    //   OPTIONS → forwarded to handleMcp for CORS preflight on the POST path.
+    const convAliasMatch = path.match(/^\/([^/]+)\/conversations\/([^/]+)\/?$/);
+    if (convAliasMatch) {
+      const ns = convAliasMatch[1]!;
+      const alias = convAliasMatch[2]!;
+      if (method === "GET" || method === "HEAD") {
+        return method === "HEAD" ? homepageHeadResponse() : homepageResponse();
+      }
+      if (method === "POST") {
+        const ct = (req.headers.get("content-type") ?? "").toLowerCase();
+        if (!ct.includes("application/json")) {
+          return errorResponse(
+            415,
+            "unsupported_media_type",
+            "Magic-link MCP transport requires Content-Type: application/json with a JSON-RPC body.",
+          );
+        }
+        const permissive = url.searchParams.get("t");
+        if (!permissive) {
+          return errorResponse(
+            400,
+            "invalid_magic_link",
+            "Magic-link route requires the permissive token at ?t=<token>.",
+          );
+        }
+        return handleMcp(req, env, { ns, alias, permissive });
+      }
+      if (method === "OPTIONS") {
+        return handleMcp(req, env);
+      }
+    }
+
     return errorResponse(404, "not_found", `No route for ${method} ${path}.`);
   },
 };
