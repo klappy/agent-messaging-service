@@ -181,7 +181,7 @@ async function handleMcpPost(
     return jsonRpcErrorResponse(rpc.id ?? null, -32001, "invalid_credential", 401);
   }
   if (rpc.method === "tools/list") {
-    return jsonRpcOkResponse(rpc.id ?? null, { tools: TOOL_SCHEMAS });
+    return jsonRpcOkResponse(rpc.id ?? null, { tools: toolSchemas(resolved) });
   }
   if (rpc.method === "tools/call") {
     // Outer host preserved here so tool_ams_create_conversation can build a magic_link
@@ -543,9 +543,18 @@ const TOOL_SCHEMAS = [
       "Attach to a conversation by magic link. Binds this MCP session's (account_id, conversation_id) pair per D0019, opens the upstream WebSocket, and returns the joined snapshot. Subsequent ams_send / ams_recv calls and SSE notifications flow through this binding.",
     inputSchema: {
       type: "object",
+      // magic_link is required on the bare /mcp route and optional on the
+      // magic-link transport route per D0023, where the conversation is
+      // pre-bound from the URL. toolSchemas() removes it from `required` when
+      // a prebind is active so clients that validate against the declared
+      // schema can call ams_join({}).
       required: ["magic_link"],
       properties: {
-        magic_link: { type: "string", description: "Magic link URL from ams_create_conversation." },
+        magic_link: {
+          type: "string",
+          description:
+            "Magic link URL from ams_create_conversation. Optional on the magic-link MCP transport route where the conversation is pre-bound from the URL (D0023); required otherwise.",
+        },
         stream_name: { type: "string", description: "Optional stream name; defaults to a stream-* token." },
         stream_metadata: {
           type: "object",
@@ -589,6 +598,24 @@ const TOOL_SCHEMAS = [
     },
   },
 ];
+
+// D0023: when the request arrives on the magic-link MCP transport route, the
+// conversation is pre-bound from the URL and ams_join accepts zero arguments.
+// tools/list must reflect that — clients (and managed-agent runtimes) that
+// validate tool calls against the declared schema will reject ams_join({})
+// otherwise. Return a fresh copy with `magic_link` stripped from `required`
+// on the prebind route; leave the bare /mcp schema untouched.
+function toolSchemas(prebind?: ResolvedPrebind): unknown[] {
+  if (!prebind) return TOOL_SCHEMAS;
+  return TOOL_SCHEMAS.map((tool) => {
+    if (tool.name !== "ams_join") return tool;
+    const { required: _required, ...schemaRest } = tool.inputSchema as {
+      required?: string[];
+      [k: string]: unknown;
+    };
+    return { ...tool, inputSchema: schemaRest };
+  });
+}
 
 // --- tools/call dispatch -------------------------------------------------
 
