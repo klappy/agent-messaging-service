@@ -117,6 +117,11 @@ export default {
     //     POST path is the AI-assistant transport.
     //
     //   OPTIONS → forwarded to handleMcp for CORS preflight on the POST path.
+    //
+    //   DELETE → forwarded to handleMcp for MCP Streamable HTTP session
+    //     termination. The CORS preflight advertises DELETE as allowed, and
+    //     MCP clients send DELETE to the same URL they POST to in order to
+    //     cleanly tear down a session.
     const convAliasMatch = path.match(/^\/([^/]+)\/conversations\/([^/]+)\/?$/);
     if (convAliasMatch) {
       const ns = convAliasMatch[1]!;
@@ -144,6 +149,9 @@ export default {
         return handleMcp(req, env, { ns, alias, permissive });
       }
       if (method === "OPTIONS") {
+        return handleMcp(req, env);
+      }
+      if (method === "DELETE") {
         return handleMcp(req, env);
       }
     }
