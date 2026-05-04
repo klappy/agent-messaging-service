@@ -118,6 +118,6 @@ If steps 1–5 work in a clean browser session against the live deployment, TinC
 
 ## 7. Next Planning Artifact
 
-[`TINCAN-POC-PLAN.md`](./TINCAN-POC-PLAN.md) — the Day 1 / Day 2 / Day 3 numbered build plan in the shape of [`canon/principles/poc-build-repeatability-pattern`](./canon/principles/poc-build-repeatability-pattern.md), with per-day scope locked at day-start, per-day evidence-of-done specified, and operator review gates between days.
+[`TINCAN-POC-PLAN.md`](./TINCAN-POC-PLAN.md) — the **Day 3 wrap-up plan** of the AMS PoC per [`POC-PLAN.md`](./POC-PLAN.md) §2. TinCan is the codename for this final push, not a fresh 3-day arc. Day 1 and Day 2 of the AMS PoC are done; the wrap-up ships the remaining MCP-tool-surface work (SPEC §3.1 items 4–5) plus this charter's browser-overlay extension, plus the Day 3 Afternoon documentation pass and `v0.1.0` tag.
 
 The build plan operates strictly inside this charter. Anything that requires changing the charter requires explicit reversion to planning, not inline expansion during build.

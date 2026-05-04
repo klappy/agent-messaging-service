@@ -1,152 +1,121 @@
-# TinCan PoC Plan
+# TinCan — AMS PoC Day 3 Wrap-Up Plan
 
-> The build plan that ships TinCan v1 per [`TINCAN-CHARTER.md`](./TINCAN-CHARTER.md). Three numbered build days with closeout gates between them, in the shape of [`canon/principles/poc-build-repeatability-pattern`](./canon/principles/poc-build-repeatability-pattern.md).
+> The wrap-up of Day 3 of the AMS PoC per [`POC-PLAN.md`](./POC-PLAN.md) §2, scoped to ship the remaining MCP-tool-surface work (SPEC §3.1 items 4–5) plus the browser-overlay extension defined in [`TINCAN-CHARTER.md`](./TINCAN-CHARTER.md) §2. Codename for this final push: **TinCan.**
 
-**Version:** 1.0 (plan locked 2026-05-04; gates the build sessions that follow).
+**Version:** 1.0 (plan locked 2026-05-04; gates the build session that follows).
 **Scope contract:** [`TINCAN-CHARTER.md`](./TINCAN-CHARTER.md) §3 (Constraints), §4 (Guardrails), §6 (Done).
-**Acceptance contract:** [`SPEC.md`](./SPEC.md) §3.1 items 4–5 (mechanical) + §3.2 (real-world) + [`TINCAN-CHARTER.md`](./TINCAN-CHARTER.md) §6 (browser-overlay extension).
+**Acceptance contract:** [`SPEC.md`](./SPEC.md) §3.1 items 4–5 (mechanical) + §3.2 (real-world) + [`TINCAN-CHARTER.md`](./TINCAN-CHARTER.md) §6 (browser overlay).
+**Parent plan:** [`POC-PLAN.md`](./POC-PLAN.md) §2 Day 3 — Monday Morning + Monday Afternoon.
+
+This is **not** a fresh 3-day arc. The AMS PoC's Day 1 and Day 2 are done; Day 2/3-boundary lifecycle frames (`joined → stream_joined → token → stream_left`) are live on the deployed Worker. What remains is the original Day 3 work plus the browser overlay scope locked in this session.
 
 ---
 
-## 1. Demo Script (the Definition of Done)
+## 1. What Day 3 Originally Said
 
-Per [`TINCAN-CHARTER.md`](./TINCAN-CHARTER.md) §6, in one paragraph:
+Per [`POC-PLAN.md`](./POC-PLAN.md) §2:
 
-From the AMS homepage in a clean browser, the operator clicks Mint, copies the URL, pastes it into two MCP-speaking agents (any combination — Claude Code instances, Claude in browser tabs, Claude + Cursor), watches both join, watches them exchange tokens in real time in the browser pane, and emits a token of their own that the agents see. No human in the wire. No copy-paste of message contents. End-to-end, on the live deployment.
+**Day 3 Morning** — stream ownership enforcement; lifecycle frames; PROTOCOL §6 close codes; **the two-agent example: a small Node script (or Claude Code tool definition) that wraps the AMS protocol and lets a Claude session join a conversation by URL.** End-to-end test: Klappy's Claude ↔ Ian's Claude.
 
-If that sequence works, TinCan v1 has shipped.
+**Day 3 Afternoon** — README, governance article, tag `v0.1.0`, oddkit gauntlet.
 
----
+## 2. What's Already Done
 
-## 2. Day-by-Day Plan
+- Stream ownership enforcement: live (per [`canon/decisions/D0009`](./canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription.md)).
+- Lifecycle frames `joined`, `stream_joined`, `token`, `stream_left`: live on `ams.klappy.dev` and `ams.truthkit.ai`.
+- PROTOCOL §6 close codes: implemented in the WebSocket `/connect` endpoint.
 
-### Day 1 — MCP Wrapper Bones
+## 3. What's Left (= TinCan v1)
 
-**Goal:** TinCan MCP server scaffolded, deployed at `/mcp` on the existing AMS Worker, exposing the canonical MCP server surface with one tool working end-to-end against the AMS HTTP control plane.
+The remaining Day 3 work, plus the browser overlay scope from this session:
 
-- Scaffold the `worker/src/mcp/` directory inside the existing AMS Worker. No new Worker, no new domain — the wrapper rides the existing deployment per the charter's default topology assumption.
-- Implement MCP server transport at `POST /mcp` (HTTP) and/or stdio shim — whichever satisfies SPEC §3.1 item 4's "configured with the AMS MCP server can call `ams_create_conversation`." Start with HTTP/SSE since the existing wire is already HTTP-shaped.
-- Implement `tools/list` returning the three-tool surface: `ams_create_conversation`, `ams_join`, `ams_send`. Each declared with full JSON schemas so MCP clients can introspect.
-- Implement `ams_create_conversation` end-to-end: MCP `tools/call` → wrapper translates to AMS `POST /v1/{ns}/conversations` → returns the magic-link URL to the MCP client.
-- Adopt [`D0019`](./canon/decisions/D0019-cross-session-continuity-via-account-conversation-keying.md) account-conversation Session DO keying pattern from day one, even though no buffering ships in v1. The keying convention must already be `account_id + conversation_id` rather than MCP-transport-session.
-- Round-trip the `capabilities` declaration per PROTOCOL §4.4 — set capabilities → readable from peer.
-- Push the branch; the git-hook deploy lands the Worker with the new `/mcp` route on both `ams.klappy.dev` and `ams.truthkit.ai`.
+**A. The MCP wrapper** — the "two-agent example" line from Day 3 Morning, materialized as the canonical MCP edge wrapper.
+- Deployed at `/mcp` on the existing AMS Worker (single Worker, internal routing — charter §5 default topology).
+- Three tools: `ams_create_conversation`, `ams_join`, `ams_send` (the names already specified in SPEC §3.1 items 4–5).
+- MCP `tools/list` returns the surface; `tools/call` translates to AMS HTTP control plane and AMS WebSocket wire as appropriate.
+- Server-initiated MCP notifications stream incoming wire frames (`stream_joined`, `token`, `stream_left`) to the connected MCP client.
+- Account-conversation Session DO keying per [`canon/decisions/D0019`](./canon/decisions/D0019-cross-session-continuity-via-account-conversation-keying.md) from day one (no buffering ships, but the keying convention is in place).
+- Capabilities round-trip per PROTOCOL §4.4.
+- Honors the five Constraints from [`TINCAN-CHARTER.md`](./TINCAN-CHARTER.md) §3 and the seven Guardrails from §4.
 
-**Done when:** A Claude Code instance configured with `https://ams.klappy.dev/mcp` (or stdio shim) as its MCP server can call `ams_create_conversation` and receive a magic-link URL. SPEC §3.1 item 4 passes.
-
-**Pain to expect (and what it would mean):**
-- MCP HTTP transport semantics don't match AMS's existing HTTP shape → may need stdio shim instead of, or alongside, HTTP. Re-entry signal for SPEC adjustment.
-- D0019 keying surfaces an unexpected lifecycle issue → Session DO design needs revision before Day 2.
-
----
-
-### Day 2 — Agent-to-Agent Token Exchange
-
-**Goal:** Two MCP clients in the same conversation exchange tokens through TinCan, with default subscription (subscribe-to-all-except-own per [`D0017`](./canon/decisions/D0017-selective-subscription.md)) honored. SPEC §3.1 item 5 + §3.2 real-world demo gate pass.
-
-- Implement `ams_join` end-to-end: MCP `tools/call ams_join` → wrapper opens a WebSocket to the AMS wire on behalf of the MCP client → joins the conversation as a stream-owning subscriber.
-- Implement `ams_send` end-to-end: MCP `tools/call ams_send` → wrapper emits a token frame on the wire.
-- Implement MCP-side server-initiated notifications: incoming wire frames (`joined`, `stream_joined`, `token`, `stream_left`) translated to MCP notifications and pushed to the connected client.
-- Verify [`D0009`](./canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription.md) holds: each MCP client receives the OTHER's tokens, not its own.
-- Run the live two-Claude-Code test from SPEC §3.1 item 5 against the deployed wrapper.
-- Run the SPEC §3.2 demo gate end-to-end (Klappy's Claude Code ↔ Ian's Claude Code, two physical machines, no copy-paste of message contents).
-
-**Done when:** SPEC §3.1 item 5 passes (two Claude Code instances exchange tokens; first receives second's tokens within 5 seconds; neither receives its own). SPEC §3.2 real-world demo gate passes.
-
-**Pain to expect (and what it would mean) — operator premortem applies here:**
-- Tokens vanish when the receiving client's MCP transport is between turns → buffering is the missing layer. [`D0016`](./canon/decisions/D0016-buffering-and-persistence-as-wrapper-primitive.md) enters scope as v1.1, OR the wrapper's Session DO grows a minimal in-memory replay window (whichever the operator gates after seeing the failure).
-- Two-MCP-client coordination is fine within a single MCP server instance but breaks across instances → may need a deployment topology revision (out of v1 scope; would be a re-entry signal documented in §6).
-
----
-
-### Day 3 — Browser Demo Glue
-
-**Goal:** The homepage demo flow per [`TINCAN-CHARTER.md`](./TINCAN-CHARTER.md) §2 works end-to-end. Mint → distribute → connect → watch → participate, all from the homepage with vanilla JavaScript.
-
-- Add a "Mint Conversation" button to the homepage at `worker/src/homepage.ts`. Hits `POST /v1/{ns}/conversations` (using a homepage-scoped account) and displays the returned magic-link URL.
-- Display the magic-link URL with a one-click copy affordance.
-- Implement the browser-side MCP runtime per [`D0012`](./canon/decisions/D0012-browser-is-an-mcp-runtime.md): the browser opens an MCP connection to `/mcp`, calls `ams_join` on the freshly-minted conversation URL, and consumes incoming notifications.
-- Render incoming `stream_joined` and `token` frames in a live pane, attributing each to its emitting stream.
-- Add an emit textbox: typed text becomes `ams_send` calls; the operator's tokens flow into the conversation alongside the agents.
-- Declare the browser's capabilities metadata so agents (by convention) can identify the human in the loop.
+**B. The browser homepage demo glue** — the operator-overlay extension defined in [`TINCAN-CHARTER.md`](./TINCAN-CHARTER.md) §2, materialized on the existing homepage.
+- "Create Conversation" button on the homepage; hits the AMS HTTP control plane; displays returned magic-link URL with one-click copy.
+- Browser-side MCP runtime per [`canon/decisions/D0012`](./canon/decisions/D0012-browser-is-an-mcp-runtime.md): browser opens an MCP connection to `/mcp`, calls `ams_join` on the freshly-minted URL, consumes notifications.
+- Live render pane: incoming `stream_joined` and `token` frames displayed in real time, attributed by stream.
+- Emit textbox: typed text becomes `ams_send` calls so the operator participates as a polymorphic subscriber alongside the agents.
+- Browser declares its capabilities metadata so agents (by convention) can identify the human in the loop.
 - Vanilla JavaScript only. No framework. No build step beyond what the existing homepage uses.
 
-**Done when:** [`TINCAN-CHARTER.md`](./TINCAN-CHARTER.md) §6 passes — the five-step demo runs in a clean browser session against the live deployment, with two real MCP-speaking agents and the operator-as-subscriber overlay.
-
-**Pain to expect (and what it would mean):**
-- Browser-side MCP transport quirks (CORS, EventSource limits, WebSocket upgrade in-browser) → may force a small homepage-specific adapter that the wrapper translates. Acceptable as long as it stays cheap.
-- Real-time render lag → not a TinCan problem; that's the wire and the browser's rendering. Surface it for observability follow-up but do not block Day 3.
-
----
-
-## 3. Explicit Non-Work for TinCan v1
-
-The non-work list is half the discipline. TinCan v1 will NOT ship any of these. Each item names the **re-entry signal** that would force pulling it into v1.
-
-- **No buffering.** Re-entry: Day 2 closeout confirms agent-to-agent fails because of MCP transport-session gaps (operator premortem). [`D0016`](./canon/decisions/D0016-buffering-and-persistence-as-wrapper-primitive.md) is already-locked canon, layers in driven by evidence not theory.
-- **No encryption.** Re-entry: the operator selects [`P0001`](./canon/proposals/P0001-stream-encryption-as-pre-syndication-wrapper.md) (a) or (b). Until then, TinCan ships bare.
-- **No multi-stream-per-account-per-conversation.** Re-entry: a use case in TinCan demands one account owning multiple streams in one conversation. v1 is one-stream-per-account; [`D0018`](./canon/decisions/D0018-multi-stream-per-account-per-conversation.md) is reachable later.
-- **No security subscribers running.** Re-entry: the operator wants the demo itself to ship with at least one security subscriber (e.g. an audit sink). v1 surfaces the *attachment shape* (capabilities declaration round-trip) but does not run any security subscriber.
-- **No identity verification beyond AMS account bearer.** Re-entry: a regulated-tier use case demands signing-as-subscriber attestation in the demo. v1 trusts AMS account credentials only.
-- **No SDK beyond minimal example clients.** Re-entry: external developers ask for a published library. v1 ships example scripts, not a packaged SDK.
-- **No deployment beyond `/mcp` on existing AMS Worker.** Re-entry: deployment-topology decision (charter §5) gets resolved against the single-Worker default. v1 stays on the simplest topology.
-- **No client-side framework.** Re-entry: the demo grows past what vanilla JS handles cleanly. Vodka-violating; defer.
-- **No persistence beyond what AMS already provides.** Re-entry: D0016 buffering enters v1.
-- **No new wire protocol changes.** Re-entry: never. Wire stability is the substrate guarantee.
-- **No alternate MCP tool names.** TinCan adopts the existing AMS-spec tool surface (`ams_create_conversation`, `ams_join`, `ams_send`). Renaming or adding tools is not in v1.
+**C. The wrap-up docs** — the original Day 3 Afternoon items.
+- `README.md` updated with "how to use the deployed instance" including the MCP server config snippet for Claude Code / Cursor / etc.
+- Tag `v0.1.0` once SPEC §3.1 items 4–5 + §3.2 + charter §6 all pass.
+- oddkit gauntlet pass: `oddkit_orient`, `oddkit_challenge`, `oddkit_encode` for any new foundational decisions surfaced during the build.
 
 ---
 
-## 4. Success Criteria
+## 4. Done
 
-- All five steps of the [`TINCAN-CHARTER.md`](./TINCAN-CHARTER.md) §6 demo flow pass in a clean browser session.
-- SPEC §3.1 items 4 and 5 pass against the deployed Worker.
-- SPEC §3.2 real-world demo gate passes (agent-to-agent, two physical machines, no human in the wire).
-- The wrapper compiles and deploys via the existing git-hook branch deploy with no manual steps.
-- All five Constraints from charter §3 are demonstrably honored in the running system.
-- All seven Guardrails from charter §4 are not violated by the shipped code.
+TinCan v1 ships when **all** of the following pass against the live deployment, in one continuous demo run:
 
----
+1. **SPEC §3.1 item 4** — A Claude Code instance configured with the AMS MCP server can call `ams_create_conversation` and receive a magic link.
+2. **SPEC §3.1 item 5** — A second Claude Code instance (different bearer) can `ams_join` that link and `ams_send` a token; the first instance receives it within 5 seconds; neither instance receives its own emissions.
+3. **SPEC §3.2 demo gate** — Klappy's agent ↔ Ian's agent (or equivalent two-machine Claude Code pair) exchange tokens through one AMS conversation, no human in the wire, no copy-paste of message contents.
+4. **[`TINCAN-CHARTER.md`](./TINCAN-CHARTER.md) §6 browser overlay** — From the homepage in a clean browser, the operator can mint a conversation, copy its URL to two MCP-speaking agents, watch their streams render in real time, and emit tokens of their own that the agents see.
+5. **Documentation** — `README.md` shows how to configure the MCP server. `v0.1.0` is tagged.
 
-## 5. Risks for the Week
-
-- **The operator premortem.** Buffering may be the load-bearing missing layer; without it, Day 2's agent-to-agent demo may fail intermittently or completely. Mitigation: ship anyway, see if the failure manifests, layer in [`D0016`](./canon/decisions/D0016-buffering-and-persistence-as-wrapper-primitive.md) driven by evidence rather than theory. If the failure is total, Day 2 closes with disposition PIVOT and v1 grows a minimal buffering primitive.
-- **MCP transport choice (HTTP vs stdio).** SPEC §3.1 doesn't pin which transport; both have real costs. Mitigation: pick HTTP/SSE first (closer to the existing AMS shape) and add stdio later only if a Claude Code or other MCP client requires it.
-- **Browser MCP runtime quirks.** D0012 says the browser is an MCP runtime; it does not say the browser MCP client is friction-free. Mitigation: scope Day 3 generously; if browser-side MCP is too painful, narrow Day 3 to "homepage shows the URL and a viewer pane" and the operator participates from a separate Claude Code window.
-- **Scope creep.** The charter explicitly defers many things (encryption, security subscribers, multi-stream, etc.). Mid-build, any of these can feel "small enough to add now." They are not. Re-entry requires explicit gate. Mitigation: the non-work list with re-entry signals is the lock.
+If steps 1–5 all pass, TinCan v1 has shipped, and the AMS PoC is done.
 
 ---
 
-## 6. Closeout Discipline
+## 5. Closeout Discipline
 
-Per [`canon/principles/poc-build-repeatability-pattern`](./canon/principles/poc-build-repeatability-pattern.md):
+Per [`canon/principles/poc-build-repeatability-pattern`](./canon/principles/poc-build-repeatability-pattern.md), and per the existing AMS PoC's Day 1/Day 2 closeout pattern in `journal/`:
 
-- Each day ends with a build journal: `journal/YYYY-MM-DD-tincan-day{N}-{topic}.tsv` containing DOLCHEO+ artifacts (Decision, Observation, Learning, Constraint, Handoff, Encode, Open).
-- Each Day N+1 starts with a **fresh-session validator** (a separate Claude session, no shared context with the build session) that reads Day N's build journal and runs Day N's acceptance criteria against the deployed Worker independently. Validator produces `journal/YYYY-MM-DD-tincan-day{N}-validation-closeout.tsv` with disposition: ACCEPT / ITERATE / PIVOT.
-- The build session and the validation session share a Worker URL, this plan, the SPEC, and the journal directory — they share nothing else.
-- If validation surfaces a regression, the loop returns to the builder with a single-issue patch PR — not a vague "redo Day N." The validator's `O` (Observation) entries are the spec of what to fix.
+- Build session ends with `journal/2026-MM-DD-tincan-day3-{topic}.tsv` containing DOLCHEO+ artifacts (Decision, Observation, Learning, Constraint, Handoff, Encode, Open).
+- A **fresh-session validator** (separate Claude session, no shared context) reads the build journal and runs the §4 acceptance criteria against the deployed Worker independently, producing `journal/2026-MM-DD-tincan-day3-validation-closeout.tsv` with disposition: ACCEPT / ITERATE / PIVOT.
+- If validation surfaces a regression, return-to-builder with a single-issue patch PR scoped by the validator's `O` (Observation) entries.
 
 ---
 
-## 7. After TinCan v1 Lands
+## 6. Pain to Expect (Operator Premortem, Recorded)
 
-Post-demo follow-ups, in priority order (none are TinCan v1 work):
+Per [`TINCAN-CHARTER.md`](./TINCAN-CHARTER.md) §5: **the absence of buffering may be the layer that prevents agent-to-agent from working in practice.** Turn-based MCP transports open a fresh transport session per turn; if agent-A emits while agent-B's MCP client is between turns, the token can vanish.
 
-- **Buffering (D0016)** if the operator premortem proves out — first follow-up if Day 2 needed it.
+If this manifests during the SPEC §3.1 item 5 / §3.2 test:
+- Build-from-pain disposition is **PIVOT**: layer in [`canon/decisions/D0016`](./canon/decisions/D0016-buffering-and-persistence-as-wrapper-primitive.md) buffering as a wrapper-layer primitive, scoped to a minimal in-memory replay window. D0016 is already-locked canon; its primitive shape (per-stream ring with TTL + size bounds) is ready to implement.
+- Charter §4 guardrail "no buffering primitive built into TinCan" is amended on the same branch with explicit reference to the build-evidence that forced re-entry.
+- This is not failure of the plan — it is the plan working as designed. Build from pain, not theory.
+
+If buffering is not the failure mode, the original guardrail holds and v1 ships bare.
+
+---
+
+## 7. Explicit Non-Work for TinCan v1
+
+Per [`TINCAN-CHARTER.md`](./TINCAN-CHARTER.md) §4. Not repeated here. The non-work list with re-entry signals lives in the charter; the build plan inherits it without restatement.
+
+---
+
+## 8. After TinCan v1 Lands (= AMS PoC Done)
+
+When `v0.1.0` is tagged, the AMS PoC is shipped. Follow-up work, in priority order, none in this scope:
+
+- **Buffering ([`D0016`](./canon/decisions/D0016-buffering-and-persistence-as-wrapper-primitive.md))** if the operator premortem proved out and the in-build pivot was minimal — the full primitive deserves its own next session.
 - **Encryption placement decision** — operator resolves [`P0001`](./canon/proposals/P0001-stream-encryption-as-pre-syndication-wrapper.md) (a) vs (b) based on what TinCan teaches.
-- **Threat model gap closure** — the open work referenced in [`canon/principles/security-as-subscriber-pattern`](./canon/principles/security-as-subscriber-pattern.md) and the [2026-05-02 per-conversation-runtime-isolation journal entry](./journal/2026-05-02-ams-per-conversation-runtime-isolation-idea.tsv).
+- **Threat model gap closure** — open work referenced in [`canon/principles/security-as-subscriber-pattern`](./canon/principles/security-as-subscriber-pattern.md).
 - **Multi-stream-per-account demo** ([`D0018`](./canon/decisions/D0018-multi-stream-per-account-per-conversation.md)) when a use case demands it.
 - **Brand-naming for the three product cuts** ([`D0022`](./canon/decisions/D0022-multi-brand-portfolio-on-shared-substrate.md)) once TinCan's build evidence justifies the specific cuts.
 - **Deployment topology revisit** if single-Worker `/mcp` routing proves limiting at scale.
+- **The next vertical** (per [`canon/principles/poc-build-repeatability-pattern`](./canon/principles/poc-build-repeatability-pattern.md)) — ClearWriter or whatever the operator picks. *That* is the next 3-day arc; TinCan is not.
 
 ---
 
-## 8. References
+## 9. References
 
 - [`TINCAN-CHARTER.md`](./TINCAN-CHARTER.md) — the charter this plan operates inside.
-- [`SPEC.md`](./SPEC.md) §3.1 items 4–5, §3.2 — the existing acceptance contract this plan satisfies.
-- [`POC-PLAN.md`](./POC-PLAN.md) — the original AMS PoC plan this plan mirrors in shape.
-- [`canon/principles/poc-build-repeatability-pattern.md`](./canon/principles/poc-build-repeatability-pattern.md) — the day-by-day pattern.
+- [`POC-PLAN.md`](./POC-PLAN.md) §2 Day 3 — the parent plan; this document executes its remaining scope.
+- [`SPEC.md`](./SPEC.md) §3.1 items 4–5, §3.2 — the existing acceptance contract.
+- [`canon/principles/poc-build-repeatability-pattern.md`](./canon/principles/poc-build-repeatability-pattern.md) — the day-by-day pattern (for *next* verticals; not for restarting AMS PoC).
 - [`canon/principles/vodka-architecture-applied.md`](./canon/principles/vodka-architecture-applied.md) — the four review questions every proposed change runs through.
 - [`canon/constraints/mcp-wrapper-conformance-for-conversational-ai.md`](./canon/constraints/mcp-wrapper-conformance-for-conversational-ai.md) — what the wrapper must surface.
 - [`canon/constraints/wrapper-stays-cheap.md`](./canon/constraints/wrapper-stays-cheap.md) — the discipline that keeps TinCan from growing into a product.
