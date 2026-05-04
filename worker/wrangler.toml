@@ -35,3 +35,13 @@ new_classes = ["ConversationDO"]
 # Secrets set via `wrangler secret put`:
 #   AMS_CREDENTIAL_PEPPER         (random 32-byte hex; mixed into bearer hash)
 #   AMS_PERMISSIVE_TOKEN_PEPPER   (same idea, for permissive tokens)
+
+# Workers Logs — dashboard-toggled, synced here so deploys do not regress the
+# setting. Captures broker-internal request shape (outcome, method, path,
+# status, duration, CPU/wall time) — metadata only, no payload contents.
+# Aligned with ams://canon/constraints/observability-payload-boundary
+# (capture shape, discard substance) and feeds the same Tail-Worker /
+# Analytics Engine plane as the rest of broker-internal observability.
+[observability.logs]
+enabled = true
+invocation_logs = true
