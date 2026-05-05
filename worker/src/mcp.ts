@@ -978,15 +978,25 @@ export async function handleMcp(
 
   let baseProps: AmsProps = { outer_host: outerHost };
 
-  // CORS preflight (OPTIONS) carries `?t=` on the same URL but must be answered
-  // by the SDK's corsOptions handler with `Access-Control-Allow-*` headers, or
-  // browsers block the subsequent real request entirely. Resolving the prebind
-  // here would short-circuit to a JSON errorResponse (no CORS headers) on a
-  // stale magic link or KV hiccup, downgrading a readable rejection on the
-  // actual request into an opaque preflight failure. Skip resolution for
-  // OPTIONS and let the SDK respond to the preflight; the actual verb's
-  // request will resolve the prebind and surface the rejection cleanly.
-  if (prebind && req.method !== "OPTIONS") {
+  // Only POST carries a JSON-RPC body that needs the resolved conversation
+  // record threaded into props; the other verbs on the magic-link route are
+  // transport-level concerns that operate on MCP session state, not the
+  // conversation. Resolving here for those verbs would couple session
+  // teardown and SSE reconnection to KV state that may have moved on:
+  //   - OPTIONS (CORS preflight) carries `?t=` on the same URL but must be
+  //     answered by the SDK's corsOptions handler with `Access-Control-Allow-*`
+  //     headers, or browsers block the subsequent real request entirely. A
+  //     JSON errorResponse (no CORS headers) on a stale link downgrades a
+  //     readable rejection on the actual request into an opaque preflight
+  //     failure.
+  //   - DELETE tears down the MCP session in the DO; a deleted conversation
+  //     or rotated token must not block the client from cleaning up.
+  //   - GET (MCP SSE notification leg) reconnects to a live MCP session;
+  //     conversation-record state is irrelevant to whether the SSE stream
+  //     should resume.
+  // POST is the only verb where the prebind record is actually consumed, so
+  // gate resolution on it rather than excluding the others one by one.
+  if (prebind && req.method === "POST") {
     const resolved = await resolvePrebindRecord(env, prebind);
     if (!resolved.ok) {
       // Magic-link route failure surfaces as transport-level rejection before
