@@ -1074,6 +1074,11 @@ function wrapWithSseHeartbeat(
   // the wire).
   const armHeartbeat = () => {
     if (closed) return;
+    // Clear any prior pending timeout before scheduling a new one. Without
+    // this, a race between the pump's post-write arm (line below) and the
+    // heartbeat-callback's `.then(armHeartbeat)` re-arm can leave two
+    // concurrent timeout chains running, doubling heartbeat frequency.
+    if (heartbeat !== undefined) clearTimeout(heartbeat);
     heartbeat = setTimeout(() => {
       if (closed) return;
       writer.write(HEARTBEAT_BYTES).then(armHeartbeat).catch(() => {
