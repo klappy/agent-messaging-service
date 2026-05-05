@@ -1376,6 +1376,7 @@ let lastCredential = null;
   let mcpSessionId = null;
   let sse = null;
   let myStreamId = null;
+  let myStreamName = 'tincan-browser';
 
   function appendFrame(kind, head, body) {
     const div = document.createElement('div');
@@ -1697,6 +1698,7 @@ let lastCredential = null;
       mcpSessionId = joined.sessionHeader;
       const j = (joined.payload.result && joined.payload.result.structuredContent) || {};
       myStreamId = j.stream_id;
+      myStreamName = j.stream_name || 'tincan-browser';
       meta.textContent = 'session=' + (mcpSessionId || '').slice(0, 28) + '… · stream_id=' + (j.stream_id || '?').slice(0, 16) + '…';
       appendFrame('self', 'joined · ' + (j.stream_name || ''), 'stream_id=' + j.stream_id + (j.peers && j.peers.length ? ('\\nexisting peers: ' + j.peers.map(p => p.stream_name + ' (' + p.owner_account_id.slice(0, 12) + '…)').join(', ')) : '\\n(no peers yet — paste the link to two agents to see them attach)'));
 
@@ -1783,6 +1785,7 @@ let lastCredential = null;
       mcpSessionId = joined.sessionHeader;
       const j = (joined.payload.result && joined.payload.result.structuredContent) || {};
       myStreamId = j.stream_id;
+      myStreamName = j.stream_name || ('tincan-peer-' + peerSuffix);
       linkInput.value = target.magic_link;
       copyBtn.disabled = false;
       meta.textContent = 'session=' + (mcpSessionId || '').slice(0, 28) + '… · stream_id=' + (j.stream_id || '?').slice(0, 16) + '…';
@@ -1843,7 +1846,7 @@ let lastCredential = null;
       appendRawFrame('token', '→ token frame (self · D0009 self-exclusion)', {
         type: 'token',
         stream_id: myStreamId,
-        stream_name: 'tincan-browser',
+        stream_name: myStreamName,
         data: text,
       });
       await mcpToolCall('ams_send', { data: text }, mcpSessionId);
@@ -1992,7 +1995,11 @@ export function homepageResponseForConversation(args: {
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
   const escJs = (s: string) =>
-    JSON.stringify(s); // safe for embedding inside <script> as a JS literal
+    // JSON.stringify alone does NOT escape `<`, so a value containing
+    // `</script>` would close the surrounding <script> element prematurely.
+    // Replace `<` with its `\u003c` escape so the literal is safe to embed
+    // inside a <script> tag for arbitrary inputs.
+    JSON.stringify(s).replace(/</g, "\\u003c");
 
   const safeLink = esc(args.magicLink);
   const safeAlias = esc(args.alias);
