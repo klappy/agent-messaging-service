@@ -1376,6 +1376,7 @@ let lastCredential = null;
   let mcpSessionId = null;
   let sse = null;
   let myStreamId = null;
+  let myStreamName = 'tincan-browser';
 
   function appendFrame(kind, head, body) {
     const div = document.createElement('div');
@@ -1697,6 +1698,7 @@ let lastCredential = null;
       mcpSessionId = joined.sessionHeader;
       const j = (joined.payload.result && joined.payload.result.structuredContent) || {};
       myStreamId = j.stream_id;
+      myStreamName = j.stream_name || 'tincan-browser';
       meta.textContent = 'session=' + (mcpSessionId || '').slice(0, 28) + '… · stream_id=' + (j.stream_id || '?').slice(0, 16) + '…';
       appendFrame('self', 'joined · ' + (j.stream_name || ''), 'stream_id=' + j.stream_id + (j.peers && j.peers.length ? ('\\nexisting peers: ' + j.peers.map(p => p.stream_name + ' (' + p.owner_account_id.slice(0, 12) + '…)').join(', ')) : '\\n(no peers yet — paste the link to two agents to see them attach)'));
 
@@ -1748,6 +1750,85 @@ let lastCredential = null;
     }
   });
 
+  // Auto-join if the page was served at a magic-link route. The server
+  // injects window.AMS_JOIN = { magic_link, namespace, alias } when the
+  // route matches /{ns}/conversations/{alias}?t=...; if present, we skip
+  // the Mint flow and join the existing conversation instead — which is
+  // the missing piece that made the magic-link UX broken until now (the
+  // bare homepage was being served at conversation routes with no signal
+  // to act on). See worker/src/homepage.ts homepageResponseForConversation.
+  async function autoJoinExisting() {
+    const target = window.AMS_JOIN;
+    if (!target || !target.magic_link) return;
+    mintBtn.disabled = true;
+    mintBtn.textContent = 'Joining…';
+    try {
+      log.innerHTML = '';
+      appendFrame('sys', '— joining conversation —', 'magic_link=' + target.magic_link);
+      appendFrame('sys', '— minting —', 'POST /v1/accounts (per-tab demo credential for the joining peer)');
+      const acc = await mintAccount();
+      who.textContent = acc.account_id.slice(0, 18) + '… · ns=' + acc.namespace;
+      appendFrame('sys', 'account', acc.account_id + ' (ns=' + acc.namespace + ')');
+
+      appendFrame('sys', '— initialize —', 'POST /mcp { method: initialize }');
+      await mcpInitialize();
+
+      appendFrame('sys', '— join existing —', 'POST /mcp tools/call ams_join (no create — link names an existing conversation)');
+      // Use a stream_name that distinguishes joining peers from the original
+      // minter. Three random hex chars is plenty to disambiguate visually.
+      const peerSuffix = Math.random().toString(16).slice(2, 5);
+      const joined = await mcpToolCall('ams_join', {
+        magic_link: target.magic_link,
+        stream_name: 'tincan-peer-' + peerSuffix,
+        stream_metadata: { capabilities: { 'ams.convention.v1': { role: 'joiner', posture: 'observing' } } },
+      });
+      mcpSessionId = joined.sessionHeader;
+      const j = (joined.payload.result && joined.payload.result.structuredContent) || {};
+      myStreamId = j.stream_id;
+      myStreamName = j.stream_name || ('tincan-peer-' + peerSuffix);
+      linkInput.value = target.magic_link;
+      copyBtn.disabled = false;
+      meta.textContent = 'session=' + (mcpSessionId || '').slice(0, 28) + '… · stream_id=' + (j.stream_id || '?').slice(0, 16) + '…';
+      const peerSummary = (j.peers && j.peers.length)
+        ? '\\nexisting peers: ' + j.peers.map(p => p.stream_name + ' (' + p.owner_account_id.slice(0, 12) + '…)').join(', ')
+        : '\\n(no other peers yet)';
+      appendFrame('self', 'joined · ' + (j.stream_name || ''), 'stream_id=' + j.stream_id + peerSummary);
+
+      // § B — wire pane sync, mirroring the mint path.
+      if (rawMeta) {
+        rawMeta.textContent = 'conversation_id=' + ((j.conversation_id || '?') + '').slice(0, 28) + '…';
+      }
+      clearRawLog();
+      appendRawFrame('sys', '— wire ready —',
+        'Joined existing conversation. Each peer attached via /connect (or via the MCP wrapper which translates) shows up as a stream_joined frame below.');
+      appendRawFrame('joined', '← joined frame (self)', {
+        type: 'joined',
+        stream_id: j.stream_id,
+        stream_name: j.stream_name,
+        owner_account_id: acc.account_id,
+        self_subscribe: j.self_subscribe === true,
+        peers: (j.peers || []).map(p => ({
+          stream_id: p.stream_id,
+          stream_name: p.stream_name,
+          owner_account_id: p.owner_account_id,
+        })),
+      });
+
+      appendFrame('sys', '— sse attach —', 'GET /mcp · SSE leg for notifications/ams/*');
+      startSSE();
+
+      emitInput.disabled = false;
+      emitBtn.disabled = false;
+      emitInput.placeholder = '// emit a token to the conversation (opaque to AMS — wire never reads data)';
+      mintBtn.textContent = 'Joined ✓';
+    } catch (err) {
+      appendError(err.message || String(err), err.payload ? JSON.stringify(err.payload) : null);
+      mintBtn.disabled = false;
+      mintBtn.textContent = 'Mint →';
+    }
+  }
+  autoJoinExisting();
+
   emitForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const text = (emitInput.value || '').trim();
@@ -1765,7 +1846,7 @@ let lastCredential = null;
       appendRawFrame('token', '→ token frame (self · D0009 self-exclusion)', {
         type: 'token',
         stream_id: myStreamId,
-        stream_name: 'tincan-browser',
+        stream_name: myStreamName,
         data: text,
       });
       await mcpToolCall('ams_send', { data: text }, mcpSessionId);
@@ -1884,6 +1965,101 @@ export function homepageResponse(): Response {
       // Brief edge cache — the page is static-ish, but we want updates to roll
       // out within a minute of a deploy.
       "cache-control": "public, max-age=60",
+      "x-frame-options": "DENY",
+      "referrer-policy": "strict-origin-when-cross-origin",
+    },
+  });
+}
+
+// Serve the homepage with conversation context embedded for a magic-link
+// route: `/{ns}/conversations/{alias}?t=...`. The base HTML is unchanged;
+// we inject (a) <meta> tags so a model receiving this URL via web_fetch
+// has actionable signal that this is a join target and (b) a `window.AMS_JOIN`
+// global the homepage JS reads on load to auto-join the existing conversation
+// instead of waiting for a Mint click. The injection is purely additive —
+// the bare homepage path keeps zero-byte differences from before this change.
+export function homepageResponseForConversation(args: {
+  magicLink: string;
+  namespace: string;
+  alias: string;
+}): Response {
+  // Escape user-derived strings that land in HTML/JS contexts. ns and alias
+  // come from URL path segments matched by ^[^/]+$ so they cannot contain
+  // slashes, but they CAN contain quotes/<>/& if a caller minted them with
+  // unusual characters. Defense in depth: escape all of them.
+  const esc = (s: string) =>
+    s
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  const escJs = (s: string) =>
+    // JSON.stringify alone does NOT escape `<` or `>`, so a value containing
+    // `</script>` would close the surrounding <script> element prematurely.
+    // We also escape U+2028 / U+2029, which are valid in JSON strings but
+    // illegal in ES literals (they are line terminators in JS).
+    JSON.stringify(s)
+      .replace(/</g, "\\u003c")
+      .replace(/>/g, "\\u003e")
+      .replace(/\u2028/g, "\\u2028")
+      .replace(/\u2029/g, "\\u2029");
+
+  const safeLink = esc(args.magicLink);
+  const safeAlias = esc(args.alias);
+  const safeNs = esc(args.namespace);
+
+  // Inject right after <head> — the marker is the literal opening <head> tag
+  // followed by a newline that the homepage HTML emits. If the marker isn't
+  // found (homepage HTML restructured), we degrade to returning the bare
+  // homepage rather than a malformed document.
+  const headMarker = "<head>\n";
+  const headIdx = HOMEPAGE_HTML.indexOf(headMarker);
+  if (headIdx === -1) {
+    return homepageResponse();
+  }
+
+  const injection = [
+    `<meta name="ams:join-target" content="${safeLink}">`,
+    `<meta name="ams:conversation-alias" content="${safeAlias}">`,
+    `<meta name="ams:namespace" content="${safeNs}">`,
+    // Title tag override: a model receiving this via web_fetch reads the
+    // title; "AMS · Join conversation azure-ember-2290" is actionable signal
+    // that this is not a generic homepage.
+    `<title>AMS · Join conversation ${safeAlias}</title>`,
+    // The window global the homepage JS reads. Using JSON.stringify for the
+    // values means no XSS risk even if a future code path mints aliases with
+    // special characters.
+    `<script>window.AMS_JOIN = { magic_link: ${escJs(args.magicLink)}, namespace: ${escJs(args.namespace)}, alias: ${escJs(args.alias)} };</script>`,
+  ].join("\n");
+
+  // Strip the existing <title>...</title> from the bare homepage so our
+  // injected one wins. The bare homepage emits a single <title> on a
+  // single line; this regex matches that single-line form.
+  let modifiedHtml = HOMEPAGE_HTML.replace(
+    /<title>[^<]*<\/title>\n?/,
+    "",
+  );
+
+  // Re-find headMarker in the title-stripped HTML (offset shifted).
+  const newHeadIdx = modifiedHtml.indexOf(headMarker);
+  if (newHeadIdx === -1) {
+    return homepageResponse();
+  }
+
+  modifiedHtml =
+    modifiedHtml.slice(0, newHeadIdx + headMarker.length) +
+    injection +
+    "\n" +
+    modifiedHtml.slice(newHeadIdx + headMarker.length);
+
+  return new Response(modifiedHtml, {
+    status: 200,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      // Conversation-context pages are NOT cacheable — each magic link is
+      // unique to a conversation and the injection differs per request.
+      "cache-control": "no-store",
       "x-frame-options": "DENY",
       "referrer-policy": "strict-origin-when-cross-origin",
     },
