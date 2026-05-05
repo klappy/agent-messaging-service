@@ -62,6 +62,8 @@ function startLocalProxyServer(html, port, amsUrl) {
   // matching how a real user on ams.truthkit.ai hits the worker — no CORS
   // games, no engine-specific bypass flags.
   const amsHost = new URL(amsUrl).host;
+  const amsIsHttps = amsUrl.startsWith('https:');
+  const amsLib = amsIsHttps ? https : http;
   return new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
       if (req.url === '/' || req.url.startsWith('/?') || req.url === '/index.html') {
@@ -74,10 +76,10 @@ function startLocalProxyServer(html, port, amsUrl) {
       const headers = { ...req.headers };
       delete headers['host'];
       headers['host'] = amsHost;
-      const upstream = https.request({
+      const upstream = amsLib.request({
         method: req.method,
         hostname: upstreamUrl.hostname,
-        port: upstreamUrl.port || 443,
+        port: upstreamUrl.port || (amsIsHttps ? 443 : 80),
         path: upstreamUrl.pathname + upstreamUrl.search,
         headers,
       }, upRes => {
