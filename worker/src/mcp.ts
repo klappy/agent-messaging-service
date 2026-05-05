@@ -1026,5 +1026,103 @@ export async function handleMcp(
   const internalReq = new Request(internalUrl.toString(), req);
 
   const handler = getMcpHandler();
-  return handler.fetch(internalReq, env, ctxWithProps(ctx, props));
+  const resp = await handler.fetch(internalReq, env, ctxWithProps(ctx, props));
+
+  // SSE keepalive: the SDK's GET /mcp response is a long-lived event-stream
+  // that emits frames only when notifications/ams/* fire. iOS Safari (and any
+  // other client with an aggressive idle-timeout) kills the connection if no
+  // bytes arrive for ~20-30 seconds, surfacing as "Load failed" in fetch and
+  // breaking the homepage's notification leg. Inject SSE comment heartbeats
+  // (`: ping\n\n`, ignored by every conforming SSE parser per WHATWG) at a
+  // fixed cadence to keep the connection live. Only applied to GET responses
+  // whose Content-Type is text/event-stream — POST responses that happen to be
+  // SSE-framed are short-lived and do not need keepalives.
+  if (
+    req.method === "GET" &&
+    resp.body &&
+    (resp.headers.get("content-type") ?? "").toLowerCase().includes("text/event-stream")
+  ) {
+    return wrapWithSseHeartbeat(resp, ctx);
+  }
+  return resp;
+}
+
+// Wrap an SSE response body with a heartbeat-injecting transform. Sends
+// `: ping\n\n` (an SSE comment line — ignored by parsers per the spec) every
+// 15 seconds so idle streams do not exceed iOS Safari's ~30s idle-kill
+// threshold. Heartbeats interleave safely with real frames because SSE comment
+// lines are valid between any two events. The upstream stream is forwarded
+// byte-for-byte; heartbeats are additive.
+function wrapWithSseHeartbeat(
+  resp: Response,
+  ctx: ExecutionContext,
+): Response {
+  const HEARTBEAT_INTERVAL_MS = 15_000;
+  const HEARTBEAT_BYTES = new TextEncoder().encode(": ping\n\n");
+  const upstream = resp.body!;
+
+  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = writable.getWriter();
+  const reader = upstream.getReader();
+
+  let closed = false;
+  let heartbeat: ReturnType<typeof setTimeout> | undefined;
+  // Re-armed timeout instead of a fixed interval: heartbeats fire only after
+  // a genuine idle gap. This prevents a heartbeat from being enqueued between
+  // two chunks of the same SSE event when the upstream splits a frame across
+  // multiple reader.read() chunks (which would corrupt the event mid-line on
+  // the wire).
+  const armHeartbeat = () => {
+    if (closed) return;
+    // Clear any prior pending timeout before scheduling a new one. Without
+    // this, a race between the pump's post-write arm (line below) and the
+    // heartbeat-callback's `.then(armHeartbeat)` re-arm can leave two
+    // concurrent timeout chains running, doubling heartbeat frequency.
+    if (heartbeat !== undefined) clearTimeout(heartbeat);
+    heartbeat = setTimeout(() => {
+      if (closed) return;
+      writer.write(HEARTBEAT_BYTES).then(armHeartbeat).catch(() => {
+        // Downstream is gone — trigger cleanup so an idle pump does not leak.
+        cleanup();
+      });
+    }, HEARTBEAT_INTERVAL_MS);
+  };
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    if (heartbeat !== undefined) clearTimeout(heartbeat);
+    // Cancelling the upstream reader unblocks a pump that is awaiting
+    // reader.read() on an idle stream, so the pump's finally can run and
+    // close the writer instead of leaking via ctx.waitUntil.
+    reader.cancel().catch(() => { /* upstream already gone */ });
+  };
+  armHeartbeat();
+
+  const pump = (async () => {
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (heartbeat !== undefined) clearTimeout(heartbeat);
+        await writer.write(value);
+        armHeartbeat();
+      }
+    } catch {
+      // upstream errored or reader was cancelled — let the writer close in finally
+    } finally {
+      closed = true;
+      if (heartbeat !== undefined) clearTimeout(heartbeat);
+      try { await writer.close(); } catch { /* already closed */ }
+    }
+  })();
+  ctx.waitUntil(pump);
+
+  // Strip Content-Length if present; the wrapped stream is now indeterminate.
+  const newHeaders = new Headers(resp.headers);
+  newHeaders.delete("content-length");
+  return new Response(readable, {
+    status: resp.status,
+    statusText: resp.statusText,
+    headers: newHeaders,
+  });
 }

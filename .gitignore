@@ -39,3 +39,5 @@ TODO.local.md
 
 # Playwright validator artifacts (regenerated on each run)
 tmp-validator-screenshot.png
+tmp-validator-chromium.png
+tmp-validator-webkit.png
