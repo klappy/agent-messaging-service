@@ -1,0 +1,69 @@
+name: SSE keepalive contract
+
+# Two-tier regression prevention for the GET /mcp SSE leg's leading-flush +
+# idle-heartbeat contract per worker/src/mcp.ts wrapWithSseHeartbeat. The
+# split mirrors the substrate-vs-outcome distinction in
+# ams://canon/constraints/outcome-verification-via-runnable-artifact:
+#
+#   - unit-proof runs on PRs touching the wrapper or its tests. Catches
+#     code-structure regressions at review time, no deploy needed.
+#   - deployed-probe runs on push to main after CF Workers Build deploys.
+#     Catches deployed-state regressions immediately after the push that
+#     introduced them, before the operator (or an iPhone user) hits them.
+#
+# Both must pass for the contract to be considered intact. A code-only
+# regression caught by unit-proof keeps the PR red. A deploy-only regression
+# caught by deployed-probe keeps a red mark on the merged commit.
+#
+# Authority: ams://canon/constraints/outcome-verification-via-runnable-artifact
+#            journal/2026-05-05-tincan-sse-keepalive-fresh-iteration.tsv
+
+on:
+  pull_request:
+    paths:
+      - "worker/src/mcp.ts"
+      - "scripts/check-sse-heartbeat.sh"
+      - "scripts/test-sse-wrapper-unit.mjs"
+      - ".github/workflows/sse-keepalive.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "worker/src/mcp.ts"
+      - "scripts/check-sse-heartbeat.sh"
+      - "scripts/test-sse-wrapper-unit.mjs"
+      - ".github/workflows/sse-keepalive.yml"
+
+jobs:
+  unit-proof:
+    name: wrapper unit proof (PR + main)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Run wrapper unit tests
+        run: node scripts/test-sse-wrapper-unit.mjs
+
+  deployed-probe:
+    name: deployed-substrate probe (main only, after CF deploy)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: unit-proof
+    steps:
+      - uses: actions/checkout@v4
+      - name: Wait for CF Workers Build to deploy
+        # CF Workers Builds typically completes within 60-90s of push.
+        # Sleep is conservative — an alternative would be polling the
+        # GitHub deployments API, but a fixed wait is simpler and the
+        # cost (one extra minute on push-to-main) is trivial.
+        run: sleep 120
+      - name: Probe ams.truthkit.ai
+        env:
+          AMS_URL: https://ams.truthkit.ai
+        run: bash scripts/check-sse-heartbeat.sh
+      - name: Probe ams.klappy.dev
+        env:
+          AMS_URL: https://ams.klappy.dev
+        run: bash scripts/check-sse-heartbeat.sh
