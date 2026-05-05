@@ -20,19 +20,21 @@
 //      setInterval, no chained setTimeout, no shared timer handle. The
 //      timer is created fresh inside the loop and explicitly cleared the
 //      moment `read()` resolves. Re-arm races are impossible by construction.
-//   3. **Heartbeat-wins cancels the orphaned read.** When the heartbeat
+//   3. **Heartbeat-wins preserves the in-flight read.** When the heartbeat
 //      timeout wins the Promise.race, the `reader.read()` promise is still
-//      pending. Without intervention it would resolve later (when upstream
-//      finally emits) and that frame would be consumed by the orphaned
-//      `.then` handler — outside the loop — and silently dropped. Worse,
-//      every idle iteration would attach a new `.then` handler to the same
-//      pending read promise, accumulating handlers indefinitely on
-//      long-lived idle connections (the EXACT failure mode this wrapper
-//      targets — an unbounded handler-list memory leak on idle SSE streams).
-//      Mitigation: when heartbeat wins, cancel the reader, then re-acquire
-//      a fresh reader. `cancel()` causes the pending `read()` to resolve
-//      with `{done:true}`, which the orphaned `.then` simply discards. The
-//      next iteration gets a clean reader with no pending read in flight.
+//      pending. We do NOT release or cancel the reader: in the Cloudflare
+//      Workers (workerd) runtime, `reader.releaseLock()` throws a TypeError
+//      when there's a pending read, and `reader.cancel()` cancels the
+//      ENTIRE upstream stream (transitioning it to closed) — not just the
+//      pending read. Re-acquiring a reader on a closed stream yields one
+//      whose next `read()` resolves with `{done:true}`, killing the wrapper
+//      after a single heartbeat — the exact failure mode this wrapper
+//      exists to prevent. Mitigation: hoist the in-flight `readPromise`
+//      across iterations. Heartbeat-wins simply enqueues the heartbeat
+//      frame and continues; the same `readPromise` is raced against a
+//      fresh timeout next iteration. A new `reader.read()` is issued only
+//      after the current one settles, so there is at most one pending
+//      read on the reader at any time and no orphan ever escapes the loop.
 //   4. **Downstream cancel propagates.** When the consumer disconnects, the
 //      ReadableStream's `cancel(reason)` runs. Calling `upstream.cancel()`
 //      directly throws once `start` has acquired the reader (locked-stream
@@ -79,8 +81,14 @@ export function wrapWithSseHeartbeat(
       controller.enqueue(SSE_LEADING_FLUSH);
       reader = upstream.getReader();
       try {
+        // The in-flight read is hoisted across iterations: heartbeat-wins
+        // does NOT issue a new read(), it simply re-races the same pending
+        // promise against a fresh timeout. A new read() is issued only
+        // after the current one settles, so the reader has at most one
+        // pending read at any time and no orphan handler is ever attached.
+        let readPromise: Promise<ReadableStreamReadResult<Uint8Array>> =
+          reader.read();
         while (true) {
-          // Each iteration owns exactly one timer.
           let timeoutId: ReturnType<typeof setTimeout> | undefined;
           const heartbeat = new Promise<{ heartbeat: true }>((resolve) => {
             timeoutId = setTimeout(
@@ -88,7 +96,6 @@ export function wrapWithSseHeartbeat(
               heartbeatIntervalMs,
             );
           });
-          const readPromise = reader.read();
           const next = await Promise.race([
             readPromise.then((r) => {
               if (timeoutId !== undefined) clearTimeout(timeoutId);
@@ -97,28 +104,12 @@ export function wrapWithSseHeartbeat(
             heartbeat,
           ]);
           if ("heartbeat" in next) {
-            // Heartbeat-wins: cancel the orphaned read so it resolves with
-            // {done:true} (discarded by the no-op .then), then re-acquire a
-            // fresh reader for the next iteration. Without this, idle
-            // iterations would accumulate .then handlers on the same pending
-            // read indefinitely (memory leak), and a frame arriving later
-            // would be consumed outside the loop and dropped.
             controller.enqueue(SSE_HEARTBEAT_FRAME);
-            try {
-              reader.releaseLock();
-            } catch {
-              // releaseLock throws if there's a pending read; cancel handles
-              // both cases (releases the lock AND resolves pending read).
-              await reader.cancel().catch(() => {});
-            }
-            // Await the orphan to fully resolve before re-acquiring, so the
-            // re-acquisition doesn't race the prior reader's settlement.
-            await readPromise.catch(() => {});
-            reader = upstream.getReader();
             continue;
           }
           if (next.done) break;
           if (next.value) controller.enqueue(next.value);
+          readPromise = reader.read();
         }
       } catch {
         // Upstream errored or was cancelled; fall through to close.
