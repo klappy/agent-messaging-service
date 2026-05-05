@@ -1042,85 +1042,114 @@ export async function handleMcp(
     resp.body &&
     (resp.headers.get("content-type") ?? "").toLowerCase().includes("text/event-stream")
   ) {
-    return wrapWithSseHeartbeat(resp, ctx);
+    return wrapWithSseHeartbeat(resp);
   }
   return resp;
 }
 
-// Wrap an SSE response body with a heartbeat-injecting transform. Sends
-// `: ping\n\n` (an SSE comment line — ignored by parsers per the spec) every
-// 15 seconds so idle streams do not exceed iOS Safari's ~30s idle-kill
-// threshold. Heartbeats interleave safely with real frames because SSE comment
-// lines are valid between any two events. The upstream stream is forwarded
-// byte-for-byte; heartbeats are additive.
-function wrapWithSseHeartbeat(
-  resp: Response,
-  ctx: ExecutionContext,
-): Response {
-  const HEARTBEAT_INTERVAL_MS = 15_000;
-  const HEARTBEAT_BYTES = new TextEncoder().encode(": ping\n\n");
+// Wrap an SSE response body with a leading flush byte and idle heartbeats.
+//
+// The previous structure (TransformStream + ctx.waitUntil-driven pump + a
+// re-armed setTimeout writing to the same writer the pump uses) carried three
+// concurrency hazards that surfaced as five Bugbot findings across PR #47's
+// review:
+//   - heartbeat timeout leaks when downstream disconnects mid-pump,
+//   - heartbeat mid-event corruption when reads split SSE frames across chunks,
+//   - re-arm races when both write paths schedule new timeouts concurrently,
+// plus their fixes layered more shared mutable state on top. All three derive
+// from a single root: two concurrent contexts (the pump and the timeout
+// callback) write to the same downstream writer.
+//
+// This version uses a single sequential loop inside `ReadableStream.start`.
+// Each iteration races one `reader.read()` against one fresh timeout.
+// Heartbeats can only enqueue between full upstream chunks (mid-event
+// corruption is impossible by construction). Exactly one writer (the
+// controller) is ever active. Downstream disconnect surfaces as `cancel()`,
+// which propagates to `upstream.cancel()` so resources release immediately —
+// no `ctx.waitUntil`, no `closed` flag, no separate cleanup function, no
+// shared mutable timer state. ~30 lines of mechanism instead of ~70.
+//
+// Leading `:ok\n\n` byte: WebKit's streaming-fetch watchdog on iOS can fire
+// well before 15s — verified from the operator's screenshot, where the red
+// "SSE error / Load failed" frame appeared moments after JOIN, not after the
+// first heartbeat would have arrived. Without an immediate flush the response
+// head sits at zero body bytes until the first heartbeat. SSE comment lines
+// are spec-mandated to be ignored by clients (WHATWG §"event stream parser"),
+// so the leading byte is harmless on the wire and decisive for WebKit fetch
+// state — the response is now visibly alive within milliseconds, before any
+// watchdog can fire.
+const SSE_LEADING_FLUSH = new TextEncoder().encode(":ok\n\n");
+const SSE_HEARTBEAT_FRAME = new TextEncoder().encode(":keepalive\n\n");
+const SSE_HEARTBEAT_INTERVAL_MS = 15_000;
+
+function wrapWithSseHeartbeat(resp: Response): Response {
   const upstream = resp.body!;
-
-  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
-  const writer = writable.getWriter();
-  const reader = upstream.getReader();
-
-  let closed = false;
-  let heartbeat: ReturnType<typeof setTimeout> | undefined;
-  // Re-armed timeout instead of a fixed interval: heartbeats fire only after
-  // a genuine idle gap. This prevents a heartbeat from being enqueued between
-  // two chunks of the same SSE event when the upstream splits a frame across
-  // multiple reader.read() chunks (which would corrupt the event mid-line on
-  // the wire).
-  const armHeartbeat = () => {
-    if (closed) return;
-    // Clear any prior pending timeout before scheduling a new one. Without
-    // this, a race between the pump's post-write arm (line below) and the
-    // heartbeat-callback's `.then(armHeartbeat)` re-arm can leave two
-    // concurrent timeout chains running, doubling heartbeat frequency.
-    if (heartbeat !== undefined) clearTimeout(heartbeat);
-    heartbeat = setTimeout(() => {
-      if (closed) return;
-      writer.write(HEARTBEAT_BYTES).then(armHeartbeat).catch(() => {
-        // Downstream is gone — trigger cleanup so an idle pump does not leak.
-        cleanup();
-      });
-    }, HEARTBEAT_INTERVAL_MS);
-  };
-  const cleanup = () => {
-    if (closed) return;
-    closed = true;
-    if (heartbeat !== undefined) clearTimeout(heartbeat);
-    // Cancelling the upstream reader unblocks a pump that is awaiting
-    // reader.read() on an idle stream, so the pump's finally can run and
-    // close the writer instead of leaking via ctx.waitUntil.
-    reader.cancel().catch(() => { /* upstream already gone */ });
-  };
-  armHeartbeat();
-
-  const pump = (async () => {
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        if (heartbeat !== undefined) clearTimeout(heartbeat);
-        await writer.write(value);
-        armHeartbeat();
+  // Hoisted so `cancel` can reach the reader after `start` has acquired it.
+  // Calling `upstream.cancel()` after `start()` ran would throw (the stream
+  // is locked to the reader) and the `.catch` would swallow it silently, so
+  // the SDK's inner WebSocket would never see the disconnect — that's a leak.
+  // `reader.cancel()` releases the lock AND propagates to the underlying
+  // source's cancel algorithm, which is what tears down the SDK's WS.
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      controller.enqueue(SSE_LEADING_FLUSH);
+      reader = upstream.getReader();
+      try {
+        while (true) {
+          // Each iteration owns exactly one timer. Cleared the moment
+          // `read()` resolves so it cannot leak past the loop body.
+          let timeoutId: ReturnType<typeof setTimeout> | undefined;
+          const heartbeat = new Promise<{ heartbeat: true }>((resolve) => {
+            timeoutId = setTimeout(
+              () => resolve({ heartbeat: true }),
+              SSE_HEARTBEAT_INTERVAL_MS,
+            );
+          });
+          const next = await Promise.race([
+            reader.read().then((r) => {
+              if (timeoutId !== undefined) clearTimeout(timeoutId);
+              return r;
+            }),
+            heartbeat,
+          ]);
+          if ("heartbeat" in next) {
+            controller.enqueue(SSE_HEARTBEAT_FRAME);
+            continue;
+          }
+          if (next.done) break;
+          if (next.value) controller.enqueue(next.value);
+        }
+      } catch {
+        // Upstream errored or was cancelled; fall through to close.
+      } finally {
+        try {
+          controller.close();
+        } catch {
+          /* already closed */
+        }
       }
-    } catch {
-      // upstream errored or reader was cancelled — let the writer close in finally
-    } finally {
-      closed = true;
-      if (heartbeat !== undefined) clearTimeout(heartbeat);
-      try { await writer.close(); } catch { /* already closed */ }
-    }
-  })();
-  ctx.waitUntil(pump);
+    },
+    cancel(reason) {
+      // Downstream disconnected — propagate so the SDK's inner WS releases.
+      // Use the reader if `start` has acquired it (the common case once any
+      // bytes have flowed); fall back to the unlocked upstream otherwise.
+      if (reader) {
+        reader.cancel(reason).catch(() => {
+          /* upstream already gone */
+        });
+      } else {
+        upstream.cancel(reason).catch(() => {
+          /* upstream already gone */
+        });
+      }
+    },
+  });
 
-  // Strip Content-Length if present; the wrapped stream is now indeterminate.
+  // Strip Content-Length — the wrapped stream is indeterminate.
   const newHeaders = new Headers(resp.headers);
   newHeaders.delete("content-length");
-  return new Response(readable, {
+  return new Response(stream, {
     status: resp.status,
     statusText: resp.statusText,
     headers: newHeaders,
