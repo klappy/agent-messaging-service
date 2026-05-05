@@ -688,6 +688,64 @@ const HOMEPAGE_HTML = `<!doctype html>
   .tincan-frame.left  .head { color: var(--err); }
   .tincan-frame.sys   { color: var(--fg-dim); font-size: 11.5px; }
 
+  /* ─── Raw AMS section — § B, same conversation as § A ──────────────── */
+  .rawams {
+    max-width: var(--max); margin: 0 auto; padding: 0 var(--gut);
+  }
+  .rawams-bar {
+    display: flex; align-items: baseline; justify-content: space-between;
+    flex-wrap: wrap; gap: 12px;
+    border: 1px solid var(--hairline); background: var(--bg-panel);
+    padding: 12px 18px; margin-bottom: 16px;
+  }
+  .rawams-bar-label { display: flex; flex-direction: column; gap: 2px; }
+  .rawams-bar-eyebrow {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--fg-dim);
+  }
+  .rawams-bar-meta {
+    font-family: var(--mono); font-size: 12px; color: var(--fg);
+  }
+  .rawams-bar-spec {
+    font-family: var(--mono); font-size: 11px; color: var(--fg-dim);
+  }
+  .rawams-bar-spec a { color: var(--teal); }
+  .rawams-console {
+    border: 1px solid var(--hairline); background: var(--bg);
+    padding: 16px 18px;
+    min-height: 240px; max-height: 480px; overflow: auto;
+  }
+  .rawams-log { display: grid; gap: 8px; }
+  .rawams-frame {
+    font-family: var(--mono); font-size: 12px; line-height: 1.5;
+    border-left: 2px solid var(--hairline-bright);
+    padding: 4px 0 4px 12px;
+  }
+  .rawams-frame .head {
+    font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--fg-faint); margin-bottom: 3px;
+  }
+  .rawams-frame .body { white-space: pre-wrap; word-break: break-word; color: var(--fg-dim); }
+  .rawams-frame.token        { border-left-color: var(--teal); }
+  .rawams-frame.token .head  { color: var(--teal-dim); }
+  .rawams-frame.joined       { border-left-color: var(--ok); }
+  .rawams-frame.joined .head { color: var(--ok); }
+  .rawams-frame.stream-joined  { border-left-color: var(--ok); }
+  .rawams-frame.stream-joined .head { color: var(--ok); }
+  .rawams-frame.stream-left    { border-left-color: var(--err); }
+  .rawams-frame.stream-left .head  { color: var(--err); }
+  .rawams-frame.stream-metadata    { border-left-color: var(--amber); }
+  .rawams-frame.stream-metadata .head { color: var(--amber-dim); }
+  .rawams-frame.closed       { border-left-color: var(--err); }
+  .rawams-frame.closed .head { color: var(--err); }
+  .rawams-frame.sys          { color: var(--fg-dim); font-size: 11.5px; }
+  .rawams-footer {
+    margin-top: 14px; padding: 14px 18px;
+    border: 1px solid var(--hairline); background: var(--bg-panel);
+    font-size: 11.5px; line-height: 1.55; color: var(--fg-dim);
+  }
+  .rawams-footer-line a { color: var(--teal); }
+
   /* ─── Protocol section — verbatim ──────────────────────────────────── */
   .protocol {
     max-width: var(--max); margin: 0 auto; padding: 0 var(--gut);
@@ -1200,10 +1258,10 @@ wscat -c "wss://ams.klappy.dev/yours-1234/conversations/&lt;alias&gt;/connect?t=
 <!-- ═══════════════════ §03 · TINCAN — LIVE MCP DEMO ═══════════════════ -->
 <section id="tincan">
   <div class="section-head">
-    <p class="section-eyebrow">§ 03 · TinCan v1 · Live MCP</p>
-    <h2 class="section-title">Browser as MCP runtime. <em>Same wrapper any agent uses.</em></h2>
+    <p class="section-eyebrow">§ A · TinCan demo · MCP-wrapped</p>
+    <h2 class="section-title">Mint a conversation. <em>Hand the link to anything that speaks MCP.</em></h2>
     <p class="section-sub">
-      The §02 theatre above is a faithful in-browser SIM. This is the live wire — the browser speaks <span style="font-family: var(--mono);">/mcp</span> over <span style="font-family: var(--mono);">fetch()</span> + SSE, exactly the same MCP edge wrapper Claude Code, Cursor, and Claude Desktop use. Mint a fresh conversation, copy the magic link to two MCP-speaking agents (config in <a href="https://github.com/klappy/agent-messaging-service/blob/main/README.md" target="_blank" rel="noopener">README</a>), watch their streams render below as they connect and emit. Type into the textbox to participate as a polymorphic subscriber per <a href="https://github.com/klappy/agent-messaging-service/blob/main/canon/principles/operator-as-subscriber.md" target="_blank" rel="noopener">operator-as-subscriber</a>.
+      The magic link IS the MCP endpoint per <a href="https://github.com/klappy/agent-messaging-service/blob/main/canon/decisions/D0023-magic-link-as-mcp-transport-endpoint.md" target="_blank" rel="noopener">D0023</a>. <span style="font-family: var(--mono);">POST {magic_link}</span> with a JSON-RPC body and the AMS edge wrapper handles it with the conversation pre-bound — no separate <span style="font-family: var(--mono);">/mcp</span> URL to configure, no out-of-band priming, no README to consult. Mint below; the browser attaches itself via the same wrapper Claude.ai, Cursor, Claude Desktop, and Claude Code use. Paste the link to any other MCP-speaking peer to bring them in.
     </p>
   </div>
 
@@ -1232,6 +1290,39 @@ wscat -c "wss://ams.klappy.dev/yours-1234/conversations/&lt;alias&gt;/connect?t=
         <input id="tincan-emit-input" placeholder="// emit a token to the conversation" autocomplete="off" spellcheck="false" disabled>
         <button type="submit" id="tincan-emit-btn" disabled>Emit</button>
       </form>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════ § B · RAW AMS — same conversation, two altitudes ═══════════════════ -->
+<section id="raw-ams" style="background: var(--bg-soft);">
+  <div class="section-head">
+    <p class="section-eyebrow">§ B · Raw AMS · same conversation</p>
+    <h2 class="section-title">Same wire. <em>Two altitudes.</em></h2>
+    <p class="section-sub">
+      Pull the curtain back on § A above. Every MCP <span style="font-family: var(--mono);">notifications/ams/*</span> the wrapper delivered started its life as a wire frame on the Conversation Durable Object's broadcast loop — a <span style="font-family: var(--mono);">joined</span> / <span style="font-family: var(--mono);">stream_joined</span> / <span style="font-family: var(--mono);">token</span> / <span style="font-family: var(--mono);">stream_left</span> envelope per <a href="https://github.com/klappy/agent-messaging-service/blob/main/PROTOCOL.md" target="_blank" rel="noopener">PROTOCOL.md §4</a>. The pane below renders those wire-shape frames in real time from the same MCP session §A drives. The wrapper is opaque translation per <a href="https://github.com/klappy/agent-messaging-service/blob/main/canon/decisions/D0006-dream-house-wire-edge-wrappers.md" target="_blank" rel="noopener">D0006</a>; this view shows what the wire layer carries and what the wrapper's job is.
+    </p>
+  </div>
+
+  <div class="rawams">
+    <div class="rawams-bar">
+      <div class="rawams-bar-label">
+        <span class="rawams-bar-eyebrow">/connect view · same conversation as § A</span>
+        <span class="rawams-bar-meta" id="rawams-meta">/* awaiting § A mint */</span>
+      </div>
+      <div class="rawams-bar-spec">PROTOCOL.md §4 wire frames · <a href="https://github.com/klappy/agent-messaging-service/blob/main/canon/decisions/D0009-stream-as-primitive-ownership-excludes-subscription.md" target="_blank" rel="noopener">D0009 self-exclusion</a></div>
+    </div>
+
+    <div class="rawams-console">
+      <div class="rawams-log" id="rawams-log">
+        <div class="rawams-frame sys"><div class="head">— ready —</div><div class="body">Mint a conversation in § A above. Each wrapped MCP notification renders here in its underlying wire-frame shape, demonstrating that the wrapper is opaque translation between the MCP runtime contract and the AMS wire contract.</div></div>
+      </div>
+    </div>
+
+    <div class="rawams-footer">
+      <div class="rawams-footer-line">
+        Browsers cannot set <span style="font-family: var(--mono);">Authorization</span> on a <span style="font-family: var(--mono);">new WebSocket(url)</span> upgrade per <a href="https://github.com/klappy/agent-messaging-service/blob/main/canon/decisions/D0012-browser-is-an-mcp-runtime.md" target="_blank" rel="noopener">D0012</a>, so this view does not open a separate <span style="font-family: var(--mono);">/connect</span> WebSocket from the browser. It re-renders the same notifications § A consumes, in their pre-translation wire shape. For a byte-for-byte transcript of an actual <span style="font-family: var(--mono);">wscat -c</span> session against the live wire, see <a href="https://github.com/klappy/agent-messaging-service/blob/main/journal/evidence-day2-wscat.txt" target="_blank" rel="noopener">journal/evidence-day2-wscat.txt</a>.
+      </div>
     </div>
   </div>
 </section>
@@ -1941,6 +2032,12 @@ let lastCredential = null;
   const emitForm  = $('#tincan-emit-form');
   const emitInput = $('#tincan-emit-input');
   const emitBtn   = $('#tincan-emit-btn');
+  // § B raw-AMS pane — same conversation, two altitudes. We re-render every
+  // notifications/ams/* into the wire-frame shape it carried before the wrapper
+  // translated it. No second WebSocket; the wrapper is opaque, both views read
+  // the same notification stream.
+  const rawLog    = $('#rawams-log');
+  const rawMeta   = $('#rawams-meta');
   if (!linkInput || !mintBtn) return;
 
   const ORIGIN = window.location.origin;
@@ -1957,6 +2054,22 @@ let lastCredential = null;
     log.appendChild(div);
     log.scrollTop = log.scrollHeight;
   }
+
+  // § B writer — render a wire-shape frame. 'kind' becomes a CSS class for color
+  // coding (token / joined / stream-joined / stream-left / stream-metadata /
+  // closed / sys). 'frame' is the JSON object the wire carries; we pretty-print
+  // it as the body so the structural shape is visible.
+  function appendRawFrame(kind, head, frame) {
+    if (!rawLog) return;
+    const div = document.createElement('div');
+    div.className = 'rawams-frame ' + kind;
+    div.innerHTML = '<div class="head">' + escapeHtml(head) + '</div><div class="body"></div>';
+    div.querySelector('.body').textContent =
+      typeof frame === 'string' ? frame : JSON.stringify(frame, null, 2);
+    rawLog.appendChild(div);
+    rawLog.scrollTop = rawLog.scrollHeight;
+  }
+  function clearRawLog() { if (rawLog) rawLog.innerHTML = ''; }
 
   function appendError(msg, detail) {
     appendFrame('left', 'error', msg + (detail ? '\\n' + detail : ''));
@@ -2077,26 +2190,65 @@ let lastCredential = null;
       // self_subscribe defaults false, so we never get our own here under normal flow.
       const headLine = 'token · ' + (p.stream_name || 'unknown') + ' · ' + (p.owner_account_id || '?').slice(0, 16) + '…';
       appendFrame('token', headLine, p.data == null ? '' : String(p.data));
+      // § B — same event, wire-frame shape (PROTOCOL.md §4.2). The wrapper
+      // mapped this 1:1 from the wire to the MCP notification; rendering both
+      // makes the translation observable.
+      appendRawFrame('token', '← token frame', {
+        type: 'token',
+        stream_id: p.stream_id,
+        stream_name: p.stream_name,
+        owner_account_id: p.owner_account_id,
+        ts: p.ts,
+        data: p.data,
+      });
       return;
     }
     if (rpc.method === 'notifications/ams/stream_joined') {
       appendFrame('join', 'stream_joined · ' + (p.stream_name || ''),
         'owner=' + (p.owner_account_id || '?') + (p.metadata && Object.keys(p.metadata).length
           ? '\\nmetadata=' + JSON.stringify(p.metadata, null, 2) : ''));
+      appendRawFrame('stream-joined', '← stream_joined frame', {
+        type: 'stream_joined',
+        stream_id: p.stream_id,
+        stream_name: p.stream_name,
+        owner_account_id: p.owner_account_id,
+        metadata: p.metadata || {},
+        ts: p.ts,
+      });
       return;
     }
     if (rpc.method === 'notifications/ams/stream_left') {
       appendFrame('left', 'stream_left · ' + (p.stream_name || ''),
         'owner=' + (p.owner_account_id || '?'));
+      appendRawFrame('stream-left', '← stream_left frame', {
+        type: 'stream_left',
+        stream_id: p.stream_id,
+        stream_name: p.stream_name,
+        owner_account_id: p.owner_account_id,
+        ts: p.ts,
+      });
       return;
     }
     if (rpc.method === 'notifications/ams/stream_metadata') {
       appendFrame('sys', 'stream_metadata · ' + (p.stream_name || ''),
         JSON.stringify(p.metadata || {}, null, 2));
+      appendRawFrame('stream-metadata', '← stream_metadata frame', {
+        type: 'stream_metadata',
+        stream_id: p.stream_id,
+        stream_name: p.stream_name,
+        owner_account_id: p.owner_account_id,
+        metadata: p.metadata || {},
+        ts: p.ts,
+      });
       return;
     }
     if (rpc.method === 'notifications/ams/closed') {
       appendFrame('left', 'wire_closed', 'conversation_id=' + (p.conversation_id || '?'));
+      appendRawFrame('closed', '← wire closed', {
+        type: 'closed',
+        conversation_id: p.conversation_id,
+        reason: p.reason,
+      });
       return;
     }
   }
@@ -2151,7 +2303,17 @@ let lastCredential = null;
           'set on conversation metadata · pass-through to initialize.instructions for any peer that calls it (D0023)\\n\\n' + instructionsText);
       }
       appendFrame('sys', 'share',
-        'Paste this URL into Claude Code / Cursor / Desktop / claude.ai with the AMS MCP server configured per README. Each agent will attach as a peer; their streams render below.');
+        'The magic link IS the MCP endpoint per D0023. Paste it into Claude.ai, Cursor, Claude Desktop, Claude Code, or any MCP client — no separate /mcp URL or README config required. Each peer attaches as its own polymorphic subscriber.');
+
+      // § B — seed the raw pane with a "wire opened" + the conversation/stream IDs
+      // the wrapper just bound. From here on, every MCP notification renders into
+      // both panes via renderNotification.
+      if (rawMeta) {
+        rawMeta.textContent = 'conversation_id=' + (convo.conversation_id || '?').slice(0, 28) + '…';
+      }
+      clearRawLog();
+      appendRawFrame('sys', '— wire ready —',
+        'The Conversation Durable Object (' + (convo.conversation_id || '?') + ') is the broker. Each peer that attaches via /connect (or via the MCP wrapper which translates) shows up as a stream_joined frame below.');
 
       appendFrame('sys', '— join self —', 'POST /mcp tools/call ams_join');
       const joined = await mcpToolCall('ams_join', {
@@ -2164,6 +2326,24 @@ let lastCredential = null;
       myStreamId = j.stream_id;
       meta.textContent = 'session=' + (mcpSessionId || '').slice(0, 28) + '… · stream_id=' + (j.stream_id || '?').slice(0, 16) + '…';
       appendFrame('self', 'joined · ' + (j.stream_name || ''), 'stream_id=' + j.stream_id + (j.peers && j.peers.length ? ('\\nexisting peers: ' + j.peers.map(p => p.stream_name + ' (' + p.owner_account_id.slice(0, 12) + '…)').join(', ')) : '\\n(no peers yet — paste the link to two agents to see them attach)'));
+
+      // § B — render the corresponding wire-shape 'joined' frame for the
+      // tincan-browser stream we just created (PROTOCOL.md §4.1). The MCP
+      // wrapper does not re-emit this as a notification (it returned it
+      // synchronously in the ams_join response), so we render it here
+      // explicitly to keep the two panes synchronized.
+      appendRawFrame('joined', '← joined frame (self)', {
+        type: 'joined',
+        stream_id: j.stream_id,
+        stream_name: j.stream_name,
+        owner_account_id: acc.account_id,
+        self_subscribe: j.self_subscribe === true,
+        peers: (j.peers || []).map(p => ({
+          stream_id: p.stream_id,
+          stream_name: p.stream_name,
+          owner_account_id: p.owner_account_id,
+        })),
+      });
 
       appendFrame('sys', '— sse attach —', 'GET /mcp · SSE leg for notifications/ams/*');
       startSSE();
@@ -2204,6 +2384,17 @@ let lastCredential = null;
     try {
       // Render locally (we don't see our own emission back unless self_subscribe).
       appendFrame('self', 'ams_send → token', text);
+      // § B — render the corresponding wire-shape outbound token frame that
+      // the wrapper translates to (PROTOCOL.md §4.2). D0009: the wire fans
+      // this out to peers but structurally excludes self-delivery, so the
+      // sender does NOT see this back as a notification — we render it once
+      // here at emit time to keep both panes aligned.
+      appendRawFrame('token', '→ token frame (self · D0009 self-exclusion)', {
+        type: 'token',
+        stream_id: myStreamId,
+        stream_name: 'tincan-browser',
+        data: text,
+      });
       await mcpToolCall('ams_send', { data: text }, mcpSessionId);
     } catch (err) {
       appendError('ams_send failed: ' + err.message);
