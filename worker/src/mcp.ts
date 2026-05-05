@@ -1063,15 +1063,27 @@ function wrapWithSseHeartbeat(
 
   const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
   const writer = writable.getWriter();
+  const reader = upstream.getReader();
 
   let closed = false;
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    clearInterval(interval);
+    // Cancelling the upstream reader unblocks a pump that is awaiting
+    // reader.read() on an idle stream, so the pump's finally can run and
+    // close the writer instead of leaking via ctx.waitUntil.
+    reader.cancel().catch(() => { /* upstream already gone */ });
+  };
   const interval = setInterval(() => {
     if (closed) return;
-    writer.write(HEARTBEAT_BYTES).catch(() => { /* downstream gone */ });
+    writer.write(HEARTBEAT_BYTES).catch(() => {
+      // Downstream is gone — trigger cleanup so an idle pump does not leak.
+      cleanup();
+    });
   }, HEARTBEAT_INTERVAL_MS);
 
   const pump = (async () => {
-    const reader = upstream.getReader();
     try {
       while (true) {
         const { value, done } = await reader.read();
@@ -1079,7 +1091,7 @@ function wrapWithSseHeartbeat(
         await writer.write(value);
       }
     } catch {
-      // upstream errored — let the writer close in finally
+      // upstream errored or reader was cancelled — let the writer close in finally
     } finally {
       closed = true;
       clearInterval(interval);

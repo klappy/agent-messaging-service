@@ -120,7 +120,9 @@ async function runEngine(engineName, html, port) {
   page.on('pageerror', err => { console.log(`[pageerror] ${err.message}`); pageErrors++; });
 
   const network = [];
-  const trackedHosts = [new URL(AMS_URL).host];
+  // Browser requests now go through the local proxy at 127.0.0.1:${port},
+  // not directly to AMS_URL, so track the proxy host to capture them.
+  const trackedHosts = [`127.0.0.1:${port}`];
   page.on('request', req => {
     const u = req.url();
     if (trackedHosts.some(h => u.includes(h))) {
