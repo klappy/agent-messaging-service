@@ -981,9 +981,12 @@ export async function handleMcp(
   if (prebind) {
     const resolved = await resolvePrebindRecord(env, prebind);
     if (!resolved.ok) {
-      // Magic-link route auth failure surfaces as transport-level rejection
-      // before MCP framing gets a chance — the magic link is the bootstrap.
-      return errorResponse(401, resolved.error, "magic-link rejected");
+      // Magic-link route failure surfaces as transport-level rejection before
+      // MCP framing gets a chance — the magic link is the bootstrap. Missing
+      // conversation alias/record is a not-found condition; a permissive-token
+      // mismatch is an auth failure.
+      const status = resolved.error === "conversation_not_found" ? 404 : 401;
+      return errorResponse(status, resolved.error, "magic-link rejected");
     }
     baseProps = {
       ...baseProps,
