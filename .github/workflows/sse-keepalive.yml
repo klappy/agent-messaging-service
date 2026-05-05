@@ -63,11 +63,30 @@ jobs:
         # GitHub deployments API, but a fixed wait is simpler and the
         # cost (one extra minute on push-to-main) is trivial.
         run: sleep 120
-      - name: Probe ams.truthkit.ai
+      # Two probes per host. The first uses the default MAX_IDLE_S=2 to
+      # validate the leading-flush half of the contract (zero bytes in 2s
+      # would fail). The second uses MAX_IDLE_S=20 to span at least one
+      # production heartbeat interval (15s in worker/src/sse-heartbeat.mjs)
+      # so the script also asserts a `:keepalive\n\n` frame appeared. Without
+      # the second probe, a regression that disables or stretches the
+      # production SSE_HEARTBEAT_INTERVAL_MS would slip through CI: the
+      # unit test passes a 200ms test-only interval, and the leading-flush
+      # probe alone never spans the production cadence.
+      - name: Probe ams.truthkit.ai (leading flush)
         env:
           AMS_URL: https://ams.truthkit.ai
         run: bash scripts/check-sse-heartbeat.sh
-      - name: Probe ams.klappy.dev
+      - name: Probe ams.truthkit.ai (idle heartbeat)
+        env:
+          AMS_URL: https://ams.truthkit.ai
+          MAX_IDLE_S: "20"
+        run: bash scripts/check-sse-heartbeat.sh
+      - name: Probe ams.klappy.dev (leading flush)
         env:
           AMS_URL: https://ams.klappy.dev
+        run: bash scripts/check-sse-heartbeat.sh
+      - name: Probe ams.klappy.dev (idle heartbeat)
+        env:
+          AMS_URL: https://ams.klappy.dev
+          MAX_IDLE_S: "20"
         run: bash scripts/check-sse-heartbeat.sh
