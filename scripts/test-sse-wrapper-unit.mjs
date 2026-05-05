@@ -282,12 +282,19 @@ async function testNoThenHandlerAccumulation() {
   // implementation attaches exactly ONE (the loop body's `await`); a regression
   // that races `readPromise.then((r) => ...)` would attach one per iteration.
   //
-  // We can't intercept the wrapper's actual readPromise (it's internal), but
-  // we CAN prove the observable property: a reader.read() promise pinned by
-  // the wrapper across N heartbeats has a bounded settlement-handler count.
-  // Approximation: instrument the upstream stream to expose its read() promise,
-  // wrap that promise's .then to count attachments, run N heartbeat iterations,
-  // assert the count stays bounded by a small constant + one.
+  // To observe the wrapper's actual readPromise we must intercept
+  // `reader.read()` itself — NOT the promise returned from a
+  // ReadableStream's `pull()` callback, which the stream machinery only
+  // consumes internally and never hands back to `read()` callers. (A
+  // previous version of this test instrumented a promise returned from
+  // `pull()`, so `thenCallCount` only counted the single internal
+  // bookkeeping `.then` from `pull()` completion — never the wrapper's
+  // per-iteration `Promise.race` attachments. The assertion `>frames+2`
+  // therefore trivially passed regardless of the wrapper's behaviour,
+  // providing false confidence.) The fix: hand the wrapper a duck-typed
+  // response whose `body.getReader().read()` returns our instrumented
+  // promise directly, so each `Promise.race([readPromise, heartbeat])`
+  // attaches a counted `.then` to it.
   let thenCallCount = 0;
   let pendingResolve;
   const pendingReadPromise = new Promise((resolve) => {
@@ -299,23 +306,25 @@ async function testNoThenHandlerAccumulation() {
     return origThen(onFulfilled, onRejected);
   };
 
-  // Build an upstream whose reader.read() returns our instrumented promise.
-  const upstream = new ReadableStream({
-    pull(controller) {
-      // Block forever — our pendingReadPromise replaces the natural read.
-      return pendingReadPromise;
-    },
-    cancel() {
+  const fakeReader = {
+    read: () => pendingReadPromise,
+    cancel: (_reason) => {
       pendingResolve?.({ done: true });
+      return Promise.resolve();
     },
-  });
-  const wrapped = wrapWithSseHeartbeat(
-    new Response(upstream, {
-      status: 200,
-      headers: { "content-type": "text/event-stream" },
-    }),
-    20,
-  );
+    releaseLock: () => {},
+    closed: new Promise(() => {}),
+  };
+  const fakeBody = {
+    getReader: () => fakeReader,
+  };
+  const fakeResp = {
+    status: 200,
+    statusText: "OK",
+    headers: new Headers({ "content-type": "text/event-stream" }),
+    body: fakeBody,
+  };
+  const wrapped = wrapWithSseHeartbeat(fakeResp, 20);
   const reader = wrapped.body.getReader();
   // Burn 50 heartbeat iterations.
   let frames = 0;
