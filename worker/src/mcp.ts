@@ -978,7 +978,15 @@ export async function handleMcp(
 
   let baseProps: AmsProps = { outer_host: outerHost };
 
-  if (prebind) {
+  // CORS preflight (OPTIONS) carries `?t=` on the same URL but must be answered
+  // by the SDK's corsOptions handler with `Access-Control-Allow-*` headers, or
+  // browsers block the subsequent real request entirely. Resolving the prebind
+  // here would short-circuit to a JSON errorResponse (no CORS headers) on a
+  // stale magic link or KV hiccup, downgrading a readable rejection on the
+  // actual request into an opaque preflight failure. Skip resolution for
+  // OPTIONS and let the SDK respond to the preflight; the actual verb's
+  // request will resolve the prebind and surface the rejection cleanly.
+  if (prebind && req.method !== "OPTIONS") {
     const resolved = await resolvePrebindRecord(env, prebind);
     if (!resolved.ok) {
       // Magic-link route failure surfaces as transport-level rejection before
