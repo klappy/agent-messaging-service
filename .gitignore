@@ -36,3 +36,6 @@ coverage/
 # Local notes (not for the public repo)
 SCRATCH/
 TODO.local.md
+
+# Playwright validator artifacts (regenerated on each run)
+tmp-validator-screenshot.png
