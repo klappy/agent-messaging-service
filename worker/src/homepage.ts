@@ -1434,10 +1434,25 @@ let lastCredential = null;
   // Initialize MCP via POST /mcp { method: "initialize" }. The SDK requires the
   // mcp-session-id from this response on every subsequent tools/call, so we
   // capture it here into mcpSessionId for downstream threading.
+  //
+  // CRITICAL: the Authorization bearer MUST be sent on initialize. The SDK's
+  // McpAgent binds the account context (props.account_id) at session creation
+  // and does NOT refresh it from subsequent tools/call requests — even when
+  // those requests carry a valid Authorization header. Verified empirically
+  // against production: initialize-without-auth followed by tools/call-with-
+  // auth fails with 'invalid_credential: Authorization bearer required'.
+  // Sending bearer here ensures the session is created with the correct
+  // account binding from first contact. mintAccount() runs before mcpInitialize
+  // in the click handler, so 'bearer' is already populated.
   async function mcpInitialize() {
+    const headers = {
+      'content-type': 'application/json',
+      'accept': 'application/json, text/event-stream',
+    };
+    if (bearer) headers['authorization'] = 'Bearer ' + bearer;
     const r = await fetch(ORIGIN + '/mcp', {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'accept': 'application/json, text/event-stream' },
+      headers: headers,
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {
         protocolVersion: '2025-06-18',
         capabilities: { roots: {} },
