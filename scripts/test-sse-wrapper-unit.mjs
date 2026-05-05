@@ -1,0 +1,489 @@
+#!/usr/bin/env node
+// scripts/test-sse-wrapper-unit.mjs
+//
+// Unit-level proof of worker/src/sse-heartbeat.ts wrapWithSseHeartbeat.
+//
+// **Imports the production module directly** — there is no re-implementation,
+// no copy. A future change to the wrapper that breaks any of these properties
+// will fail this script. (The previous version of this script reimplemented
+// the wrapper inline, which Bugbot correctly flagged: a divergence between
+// the copy and the production code would silently pass CI. Fixed by extracting
+// the wrapper to its own .ts module — see worker/src/sse-heartbeat.ts.)
+//
+// We compile the .ts module to .mjs in a temp dir using esbuild's lightweight
+// transform (already installed via wrangler's deps), then import it.
+//
+// Asserts four properties whose absence empirically produced either user-
+// visible failures (leading byte missing -> iOS Safari "Load failed") or
+// Bugbot findings on prior PRs (mid-event injection, cancel leak, idle-handler
+// accumulation):
+//
+//   1. Leading byte flush — `:ok\n\n` enqueued at +0ms before any read.
+//   2. Verbatim forwarding — every byte the upstream emits arrives unmodified.
+//   3. **No mid-event injection.** Sending 100 back-to-back data chunks at an
+//      interval shorter than the heartbeat must produce ZERO `:keepalive`
+//      frames interleaved between them. (Previous version of this test
+//      computed the count but never failed when non-empty — Bugbot caught
+//      that. Now asserts === 0.)
+//   4. **Cancel propagation + no orphaned-read leak.** Downstream cancel()
+//      reaches upstream cancel(); on heartbeat-wins the orphaned read is
+//      cancelled rather than left pending (no .then handler accumulation).
+//
+// Authority: ams://canon/constraints/outcome-verification-via-runnable-artifact
+
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync, copyFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const SRC_PATH = join(__dirname, "..", "worker", "src", "sse-heartbeat.ts");
+
+// --- Compile the production .ts to runnable .mjs in a temp dir using tsc.
+// tsc is a devDependency of worker/, so it's already available there.
+// We invoke it with --module esnext --target es2022 to get a directly-
+// importable ESM module that Node 20+ runs natively.
+const tmpDir = mkdtempSync(join(tmpdir(), "sse-heartbeat-test-"));
+const tsCopy = join(tmpDir, "sse-heartbeat.ts");
+copyFileSync(SRC_PATH, tsCopy);
+
+try {
+  execFileSync(
+    "npx",
+    [
+      "--prefix",
+      join(__dirname, "..", "worker"),
+      "tsc",
+      tsCopy,
+      "--target",
+      "es2022",
+      "--module",
+      "esnext",
+      "--moduleResolution",
+      "bundler",
+      "--lib",
+      "es2022,dom",
+      "--skipLibCheck",
+      "--outDir",
+      tmpDir,
+    ],
+    { stdio: "pipe" },
+  );
+} catch (e) {
+  console.error("FATAL: tsc compile of sse-heartbeat.ts failed");
+  console.error(e.stdout?.toString());
+  console.error(e.stderr?.toString());
+  process.exit(2);
+}
+
+// tsc emits sse-heartbeat.js — rename to .mjs so Node treats it as ESM.
+const jsPath = join(tmpDir, "sse-heartbeat.js");
+const mjsPath = join(tmpDir, "sse-heartbeat.mjs");
+const { renameSync } = await import("node:fs");
+renameSync(jsPath, mjsPath);
+
+let wrapWithSseHeartbeat;
+try {
+  ({ wrapWithSseHeartbeat } = await import(mjsPath));
+} catch (e) {
+  console.error("FATAL: failed to import compiled wrapper:", e);
+  process.exit(2);
+}
+
+if (typeof wrapWithSseHeartbeat !== "function") {
+  console.error(
+    "FATAL: wrapWithSseHeartbeat is not exported from worker/src/sse-heartbeat.ts",
+  );
+  process.exit(2);
+}
+
+// --- Test harness --------------------------------------------------------
+async function readAll(response, durationMs) {
+  const reader = response.body.getReader();
+  const dec = new TextDecoder();
+  const t0 = Date.now();
+  const chunks = [];
+  while (true) {
+    const elapsed = Date.now() - t0;
+    if (elapsed >= durationMs) break;
+    const result = await Promise.race([
+      reader.read(),
+      new Promise((r) =>
+        setTimeout(() => r({ done: true, timedOut: true }), durationMs - elapsed),
+      ),
+    ]);
+    if (result.timedOut || result.done) break;
+    chunks.push({
+      elapsed: Date.now() - t0,
+      text: dec.decode(result.value, { stream: true }),
+    });
+  }
+  try {
+    await reader.cancel();
+  } catch {
+    /* ignore */
+  }
+  return chunks;
+}
+
+let pass = true;
+const fail = (msg) => {
+  console.log(`  ✗ FAIL: ${msg}`);
+  pass = false;
+};
+const ok = (msg) => console.log(`  ✓ ${msg}`);
+
+// Production heartbeat is 15_000ms; tests pass a shorter override so they
+// run quickly. The override exists ONLY for testing — `wrapWithSseHeartbeat`
+// in production is called with no override and uses the 15s constant.
+const TEST_HB_MS = 200;
+
+async function testLeadingFlushAndHeartbeats() {
+  console.log("\n--- Test 1: leading flush at +0ms + idle heartbeats ---");
+  const upstream = new ReadableStream({ cancel() {} });
+  const wrapped = wrapWithSseHeartbeat(
+    new Response(upstream, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    }),
+    TEST_HB_MS,
+  );
+  const chunks = await readAll(wrapped, 700);
+  for (const c of chunks)
+    console.log(`    +${String(c.elapsed).padStart(4)}ms  ${JSON.stringify(c.text)}`);
+
+  if (!chunks.length || chunks[0].text !== ":ok\n\n") {
+    fail(`first chunk should be ":ok\\n\\n", got ${JSON.stringify(chunks[0]?.text)}`);
+  } else {
+    ok(`leading :ok\\n\\n at +${chunks[0].elapsed}ms`);
+  }
+  if ((chunks[0]?.elapsed ?? Infinity) >= 50) {
+    fail(`leading byte should arrive < 50ms, got ${chunks[0]?.elapsed}ms`);
+  } else {
+    ok("leading byte flushes immediately");
+  }
+  const heartbeats = chunks.filter((c) => c.text === ":keepalive\n\n").length;
+  if (heartbeats < 2) {
+    fail(`expected >= 2 heartbeats in 700ms (interval ${TEST_HB_MS}ms), got ${heartbeats}`);
+  } else {
+    ok(`${heartbeats} heartbeats fired on schedule`);
+  }
+}
+
+async function testFrameForwardingVerbatim() {
+  console.log("\n--- Test 2: real frames forwarded byte-for-byte ---");
+  const enc = new TextEncoder();
+  const frame = 'event: message\ndata: {"hi":1}\n\n';
+  const upstream = new ReadableStream({
+    start(controller) {
+      setTimeout(() => controller.enqueue(enc.encode(frame)), 50);
+      setTimeout(() => controller.close(), 100);
+    },
+  });
+  const wrapped = wrapWithSseHeartbeat(
+    new Response(upstream, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    }),
+    TEST_HB_MS,
+  );
+  const chunks = await readAll(wrapped, 300);
+  const all = chunks.map((c) => c.text).join("");
+  for (const c of chunks)
+    console.log(`    +${String(c.elapsed).padStart(4)}ms  ${JSON.stringify(c.text)}`);
+  if (!all.includes(frame)) fail("upstream frame not forwarded verbatim");
+  else ok("upstream frame forwarded byte-for-byte");
+}
+
+async function testNoMidEventInjection() {
+  console.log("\n--- Test 3: NO mid-event heartbeat injection (asserts === 0) ---");
+  // Send 100 small chunks at 6ms intervals (33x faster than the 200ms heartbeat).
+  // The read loop is never idle long enough for a heartbeat to win the race.
+  // STRICT assertion: zero `:keepalive` frames must appear among the 100 data
+  // chunks. (Previous version of this test computed the count but never
+  // asserted on it — Bugbot finding "Interleavings never fail".)
+  const enc = new TextEncoder();
+  const upstream = new ReadableStream({
+    async start(controller) {
+      for (let i = 0; i < 100; i++) {
+        await new Promise((r) => setTimeout(r, 6));
+        controller.enqueue(enc.encode(`data: chunk-${i}\n`));
+      }
+      controller.close();
+    },
+  });
+  const wrapped = wrapWithSseHeartbeat(
+    new Response(upstream, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    }),
+    TEST_HB_MS,
+  );
+  const chunks = await readAll(wrapped, 1500);
+  const heartbeatCount = chunks.filter((c) => c.text === ":keepalive\n\n").length;
+  console.log(`    total chunks: ${chunks.length}, heartbeats interleaved: ${heartbeatCount}`);
+
+  // Strict assertion #1: zero heartbeats interleaved with active reads.
+  if (heartbeatCount !== 0) {
+    fail(`expected 0 heartbeats interleaved, got ${heartbeatCount} (mid-event injection)`);
+  } else {
+    ok("0 heartbeats injected during continuous reads");
+  }
+
+  // Strict assertion #2: all 100 chunks arrived in order, none lost.
+  // (If the orphaned-read fix is broken, frames can be silently dropped
+  // when a heartbeat-wins race occurs and the orphan resolves outside
+  // the loop. This catches that.)
+  const seq = chunks
+    .filter((c) => c.text.startsWith("data: chunk-"))
+    .map((c) => parseInt(c.text.match(/chunk-(\d+)/)[1], 10));
+  if (seq.length !== 100 || !seq.every((n, i) => n === i)) {
+    fail(
+      `expected 100 chunks in strict order, got ${seq.length}, first 10 = [${seq.slice(0, 10).join(", ")}]`,
+    );
+  } else {
+    ok("all 100 chunks arrived in strict order, no frames lost");
+  }
+}
+
+async function testCancelPropagation() {
+  console.log("\n--- Test 4: downstream cancel() propagates to upstream cancel() ---");
+  let upstreamCancelled = false;
+  let upstreamCancelReason;
+  const upstream = new ReadableStream({
+    cancel(reason) {
+      upstreamCancelled = true;
+      upstreamCancelReason = reason;
+    },
+  });
+  const wrapped = wrapWithSseHeartbeat(
+    new Response(upstream, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    }),
+    TEST_HB_MS,
+  );
+  const reader = wrapped.body.getReader();
+  await reader.read(); // consume :ok\n\n so start() has acquired the upstream reader
+  await reader.cancel("downstream gone");
+  await new Promise((r) => setTimeout(r, 50));
+  if (!upstreamCancelled)
+    fail("upstream.cancel was NOT called when downstream cancelled (leak)");
+  else
+    ok(`upstream.cancel propagated correctly with reason: ${JSON.stringify(upstreamCancelReason)}`);
+}
+
+async function testNoThenHandlerAccumulation() {
+  console.log("\n--- Test 6: race against readPromise does NOT attach per-iteration .then ---");
+  // Direct structural test of the "race readPromise itself, not readPromise.then(...)"
+  // contract. We instrument a Promise to count how many .then continuations get
+  // attached to it across many heartbeat-wins iterations. A correct
+  // implementation attaches exactly ONE (the loop body's `await`); a regression
+  // that races `readPromise.then((r) => ...)` would attach one per iteration.
+  //
+  // To observe the wrapper's actual readPromise we must intercept
+  // `reader.read()` itself — NOT the promise returned from a
+  // ReadableStream's `pull()` callback, which the stream machinery only
+  // consumes internally and never hands back to `read()` callers. (A
+  // previous version of this test instrumented a promise returned from
+  // `pull()`, so `thenCallCount` only counted the single internal
+  // bookkeeping `.then` from `pull()` completion — never the wrapper's
+  // per-iteration `Promise.race` attachments. The assertion `>frames+2`
+  // therefore trivially passed regardless of the wrapper's behaviour,
+  // providing false confidence.) The fix: hand the wrapper a duck-typed
+  // response whose `body.getReader().read()` returns our instrumented
+  // promise directly, so each `Promise.race([readPromise, heartbeat])`
+  // attaches a counted `.then` to it.
+  let thenCallCount = 0;
+  let pendingResolve;
+  const pendingReadPromise = new Promise((resolve) => {
+    pendingResolve = resolve;
+  });
+  const origThen = pendingReadPromise.then.bind(pendingReadPromise);
+  pendingReadPromise.then = function (onFulfilled, onRejected) {
+    thenCallCount++;
+    return origThen(onFulfilled, onRejected);
+  };
+
+  const fakeReader = {
+    read: () => pendingReadPromise,
+    cancel: (_reason) => {
+      pendingResolve?.({ done: true });
+      return Promise.resolve();
+    },
+    releaseLock: () => {},
+    closed: new Promise(() => {}),
+  };
+  const fakeBody = {
+    getReader: () => fakeReader,
+  };
+  const fakeResp = {
+    status: 200,
+    statusText: "OK",
+    headers: new Headers({ "content-type": "text/event-stream" }),
+    body: fakeBody,
+  };
+  const wrapped = wrapWithSseHeartbeat(fakeResp, 20);
+  const reader = wrapped.body.getReader();
+  // Burn 50 heartbeat iterations.
+  let frames = 0;
+  for (let i = 0; i < 50; i++) {
+    const r = await Promise.race([
+      reader.read(),
+      new Promise((resolve) => setTimeout(() => resolve({ done: true, timedOut: true }), 100)),
+    ]);
+    if (r.done || r.timedOut) break;
+    frames++;
+  }
+  await reader.cancel();
+
+  // Bound: the wrapper's `await Promise.race([readPromise, ...])` calls
+  // `Promise.race`, which under the hood attaches one `.then` to each
+  // participant. So we expect thenCallCount === 1 per *iteration that
+  // races against readPromise*. With the FIXED implementation, the wrapper
+  // races readPromise directly, so each iteration attaches ONE .then via
+  // Promise.race. With the BROKEN implementation (readPromise.then(...) as
+  // the race participant), each iteration would attach an EXTRA .then via
+  // the explicit chain, doubling the count.
+  //
+  // We assert: thenCallCount == frames (one Promise.race attachment per
+  // iteration), NOT thenCallCount == 2*frames or more.
+  console.log(`    consumed ${frames} heartbeats, .then calls on readPromise: ${thenCallCount}`);
+  if (thenCallCount > frames + 2) {
+    fail(
+      `expected ~${frames} .then attachments (one per Promise.race), got ${thenCallCount} — handler accumulation regression`,
+    );
+  } else {
+    ok(`.then count ${thenCallCount} ≈ ${frames} iterations (no per-iteration accumulation)`);
+  }
+}
+
+async function testCaseInsensitiveContentType() {
+  console.log("\n--- Test 7: content-type check is case-insensitive ---");
+  // Both the caller in mcp.ts and this wrapper gate on content-type containing
+  // "text/event-stream". RFC 9110 permits any case in media-type tokens, so
+  // upstream values like "Text/Event-Stream" must still be wrapped — otherwise
+  // the wrapper silently passes them through without the leading flush, and
+  // iOS Safari fails. (Bugbot finding: "Case-sensitive content-type check
+  // mismatches caller's gate".)
+  const enc = new TextEncoder();
+  for (const ctVariant of ["TEXT/EVENT-STREAM", "Text/Event-Stream", "text/event-stream; charset=utf-8"]) {
+    const upstream = new ReadableStream({ cancel() {} });
+    const wrapped = wrapWithSseHeartbeat(
+      new Response(upstream, { status: 200, headers: { "content-type": ctVariant } }),
+      200,
+    );
+    const reader = wrapped.body.getReader();
+    const result = await Promise.race([
+      reader.read(),
+      new Promise((resolve) => setTimeout(() => resolve({ done: true, timedOut: true }), 100)),
+    ]);
+    await reader.cancel();
+    if (result.done || result.timedOut || !result.value) {
+      fail(`content-type "${ctVariant}" returned no leading byte — wrapper bypassed`);
+    } else {
+      const text = new TextDecoder().decode(result.value);
+      if (text !== ":ok\n\n") {
+        fail(`content-type "${ctVariant}" returned ${JSON.stringify(text)}, expected ":ok\\n\\n"`);
+      } else {
+        ok(`content-type "${ctVariant}" wrapped correctly`);
+      }
+    }
+  }
+}
+async function testIdleOrphanCleanup() {
+  console.log("\n--- Test 5: idle heartbeats sustain without handler accumulation ---");
+  // Long-lived idle stream that NEVER emits. The wrapper hoists the in-flight
+  // read across iterations and re-races it against fresh timeouts on
+  // heartbeat-wins; a regression that calls reader.read() inside the loop on
+  // each heartbeat-win would accumulate .then handlers on a pending read
+  // (PR #50 finding) OR throw releaseLock TypeError on Cloudflare Workers
+  // (PR #51 finding). This test asserts:
+  //   (a) the wrapper sustains 200+ heartbeat iterations without wedging,
+  //   (b) heap growth stays bounded (no per-iteration handler accumulation),
+  //   (c) cancel() responds promptly even after sustained idle.
+  // Production heartbeat is 15s, so 200 iterations = ~50min of idle in
+  // production. We use a 20ms test interval to compress that to ~4s.
+  const upstream = new ReadableStream({ cancel() {} });
+  const wrapped = wrapWithSseHeartbeat(
+    new Response(upstream, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    }),
+    20,
+  );
+  const reader = wrapped.body.getReader();
+
+  // Force a baseline GC if available (run with --expose-gc); else just sample.
+  if (global.gc) global.gc();
+  const baselineHeap = process.memoryUsage().heapUsed;
+
+  let frames = 0;
+  const ITERATIONS = 200;
+  for (let i = 0; i < ITERATIONS; i++) {
+    const r = await Promise.race([
+      reader.read(),
+      new Promise((resolve) => setTimeout(() => resolve({ done: true, timedOut: true }), 100)),
+    ]);
+    if (r.done || r.timedOut) break;
+    frames++;
+  }
+
+  if (global.gc) global.gc();
+  const peakHeap = process.memoryUsage().heapUsed;
+  const heapDeltaMB = ((peakHeap - baselineHeap) / 1024 / 1024).toFixed(2);
+
+  const cancelStart = Date.now();
+  await reader.cancel("test done");
+  const cancelMs = Date.now() - cancelStart;
+
+  if (frames < 100) {
+    fail(`expected >= 100 heartbeat frames, got ${frames} (loop wedged or runtime-divergent)`);
+  } else {
+    ok(`${frames} heartbeat frames consumed (heap delta ${heapDeltaMB} MB)`);
+  }
+  // Heap delta bound: 200 iterations should not accumulate >5MB on top of
+  // baseline (each accumulated handler is ~hundreds of bytes; 200 of them
+  // is well under 5MB regardless of GC behavior; a real leak would be
+  // unbounded growth across runs of this test, which we approximate with
+  // this loose ceiling).
+  if (Math.abs(parseFloat(heapDeltaMB)) > 5) {
+    fail(`heap grew by ${heapDeltaMB} MB across ${frames} idle iterations — possible handler accumulation`);
+  } else {
+    ok(`heap growth bounded across ${frames} iterations`);
+  }
+  if (cancelMs > 100) {
+    fail(`cancel took ${cancelMs}ms — loop unresponsive`);
+  } else {
+    ok(`cancel completed in ${cancelMs}ms`);
+  }
+}
+
+async function main() {
+  console.log("=== wrapWithSseHeartbeat unit proof ===");
+  console.log(`Source: ${SRC_PATH}`);
+  console.log("Authority: ams://canon/constraints/outcome-verification-via-runnable-artifact");
+  await testLeadingFlushAndHeartbeats();
+  await testFrameForwardingVerbatim();
+  await testNoMidEventInjection();
+  await testCancelPropagation();
+  await testIdleOrphanCleanup();
+  await testNoThenHandlerAccumulation();
+  await testCaseInsensitiveContentType();
+  console.log(`\n=== VERDICT: ${pass ? "PASS" : "FAIL"} ===`);
+  // Cleanup temp dir on success only — leave artifacts on failure for postmortem.
+  if (pass) {
+    try {
+      rmSync(tmpDir, { recursive: true, force: true });
+    } catch {}
+  } else {
+    console.log(`(temp transpiled module preserved at ${mjsPath} for postmortem)`);
+  }
+  process.exit(pass ? 0 : 1);
+}
+
+main().catch((e) => {
+  console.error("FATAL:", e);
+  process.exit(2);
+});
