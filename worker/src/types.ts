@@ -3,9 +3,11 @@ export interface Env {
   AMS_CREDENTIAL_PEPPER: string;
   AMS_PERMISSIVE_TOKEN_PEPPER: string;
   CONVERSATION_DO: DurableObjectNamespace;
-  // Per ams://canon/decisions/D0019, keyed by (account_id, conversation_id).
-  // Holds the upstream wire WebSocket and the per-session MCP tenant set.
-  SESSION_DO: DurableObjectNamespace;
+  // Per ams://canon/decisions/D0024, the hosted MCP wrapper is an `agents/mcp`
+  // McpAgent subclass (AmsMcpAgent). Each instance is per MCP transport
+  // session; (account_id, conversation_id) is threaded as construction props
+  // per D0019, kept opaque to the SDK's session id.
+  AMS_MCP: DurableObjectNamespace;
 }
 
 export interface AccountRecord {

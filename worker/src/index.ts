@@ -3,7 +3,7 @@ import { authenticate } from "./auth";
 import { ConversationDO, type JoinPayload, wsClose } from "./conversation";
 import { ALIAS_KEY, CONVERSATION_KEY } from "./conversations";
 import { homepageHeadResponse, homepageResponse } from "./homepage";
-import { handleMcp, SessionDO } from "./mcp";
+import { AmsMcpAgent, handleMcp } from "./mcp";
 import type { ConversationRecord, Env } from "./types";
 import {
   base64ToUtf8,
@@ -18,7 +18,7 @@ import {
 
 // Re-export the DO classes so wrangler's [[migrations]] / [[durable_objects.bindings]]
 // can find them on the Worker module entrypoint.
-export { ConversationDO, SessionDO };
+export { AmsMcpAgent, ConversationDO };
 
 // CORS for the read-only liveness endpoint /healthz. The homepage embeds a
 // status-pill that polls both ams.klappy.dev and ams.truthkit.ai from a single
@@ -34,7 +34,7 @@ const HEALTHZ_CORS: Record<string, string> = {
 };
 
 export default {
-  async fetch(req: Request, env: Env): Promise<Response> {
+  async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
     const path = url.pathname;
     const method = req.method;
@@ -73,12 +73,12 @@ export default {
     }
 
     // MCP edge wrapper — POST/GET/DELETE/OPTIONS at /mcp. Streamable HTTP
-    // transport. Three tools shipped (ams_create_conversation, ams_join,
-    // ams_send) plus ams_recv as the long-poll degradation path. Session DO
-    // keyed by (account_id, conversation_id) per ams://canon/decisions/D0019.
-    // See worker/src/mcp.ts.
+    // transport built on Cloudflare's `agents/mcp` McpAgent per
+    // ams://canon/decisions/D0024. Four tools (ams_create_conversation,
+    // ams_join, ams_send, ams_recv); D0019 keying is threaded as McpAgent
+    // construction props. See worker/src/mcp.ts.
     if (path === "/mcp") {
-      return handleMcp(req, env);
+      return handleMcp(req, env, ctx);
     }
 
     // POST /v1/{namespace}/conversations
@@ -102,50 +102,29 @@ export default {
       return handleConnect(req, env, ns, alias, url);
     }
 
-    // Magic-link route alias per ams://canon/decisions/D0023.
+    // Magic-link route alias per ams://canon/decisions/D0023, executed on the
+    // SDK substrate per ams://canon/decisions/D0024. Single transport path —
+    // POST/GET/DELETE/OPTIONS all forward to handleMcp, which rewrites the URL
+    // to /mcp before dispatch. The SDK's WorkerTransport handles the four
+    // verbs uniformly; what used to be four bug-bot fix sites in the handroll
+    // is one props-population step now.
     //
-    //   POST {magic_link} with Content-Type: application/json + JSON-RPC body
-    //     → MCP handler with (ns, alias, permissive) pre-bound to the resulting
-    //       MCP session. Same SessionDO keying as /mcp per D0019; converges
-    //       on the same wire path. The /mcp endpoint stays unchanged.
-    //
-    //   GET / HEAD on the same URL → tincan homepage UI (D0012) for browsers.
-    //     The browser pastes the magic link into the existing #tincan section's
-    //     join input; this redirects them to the right surface without bouncing
-    //     404. Browsers cannot speak Streamable HTTP MCP from a `new WebSocket`-
-    //     style constructor, so the GET path stays the marketing/UI surface
-    //     when it looks like a browser navigation.
-    //
-    //     Exception: MCP Streamable HTTP clients may GET the same URL to open
-    //     an SSE notification stream. Per the spec, those carry an
-    //     `mcp-session-id` header (after initialize) or `Accept: text/event-stream`.
-    //     When either signal is present, we forward to handleMcp so the SSE
-    //     leg works on the magic-link transport, matching the DELETE-for-
-    //     teardown forwarding immediately below.
-    //
-    //   OPTIONS → forwarded to handleMcp for CORS preflight on the POST path.
-    //
-    //   DELETE → forwarded to handleMcp for MCP Streamable HTTP session
-    //     termination. The CORS preflight advertises DELETE as allowed, and
-    //     MCP clients send DELETE to the same URL they POST to in order to
-    //     cleanly tear down a session.
+    //   GET / HEAD with browser Accept → tincan homepage UI (D0012). Browsers
+    //     cannot speak Streamable HTTP MCP, so navigations land on the UI.
+    //   GET with Accept: text/event-stream OR mcp-session-id header → MCP SSE
+    //     notification leg, dispatched through the SDK.
     const convAliasMatch = path.match(/^\/([^/]+)\/conversations\/([^/]+)\/?$/);
     if (convAliasMatch) {
       const ns = convAliasMatch[1]!;
       const alias = convAliasMatch[2]!;
       const permissive = url.searchParams.get("t");
-      // Build the prebind once for any MCP-method forwarding on this route.
-      // It only carries the route context (ns / alias / permissive); handlers
-      // that don't need it (OPTIONS, GET-SSE, DELETE) accept it and ignore it.
-      // POST is the only handler that resolves the conversation record from
-      // these fields, so the lack of `?t=` only fails POST below.
       const prebind = permissive ? { ns, alias, permissive } : undefined;
       if (method === "GET" || method === "HEAD") {
         const isMcpSse =
           req.headers.get("mcp-session-id") !== null ||
           (req.headers.get("accept") ?? "").toLowerCase().includes("text/event-stream");
         if (isMcpSse && method === "GET") {
-          return handleMcp(req, env, prebind);
+          return handleMcp(req, env, ctx, prebind);
         }
         return method === "HEAD" ? homepageHeadResponse() : homepageResponse();
       }
@@ -165,13 +144,13 @@ export default {
             "Magic-link route requires the permissive token at ?t=<token>.",
           );
         }
-        return handleMcp(req, env, prebind);
+        return handleMcp(req, env, ctx, prebind);
       }
       if (method === "OPTIONS") {
-        return handleMcp(req, env, prebind);
+        return handleMcp(req, env, ctx, prebind);
       }
       if (method === "DELETE") {
-        return handleMcp(req, env, prebind);
+        return handleMcp(req, env, ctx, prebind);
       }
     }
 
