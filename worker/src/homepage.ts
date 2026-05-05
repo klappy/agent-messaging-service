@@ -1420,7 +1420,37 @@ let lastCredential = null;
       }}),
     });
     if (!r.ok) throw new Error('initialize failed: ' + r.status);
-    return r.json();
+    return parseMcpResponse(r);
+  }
+
+  // Parse a Streamable HTTP MCP response. Per MCP spec the server may return
+  // application/json OR text/event-stream when both are accepted. The legacy
+  // handrolled wrapper always returned application/json; the agents/mcp SDK
+  // (live since D0024) defaults to text/event-stream framing:
+  //   event: message\ndata: {<json-rpc envelope>}\n\n
+  // Calling r.json() directly on the SSE body throws — Safari/WebKit surfaces
+  // it as "The string did not match the expected pattern." which is opaque to
+  // anyone debugging from the homepage's error frame. Handle both shapes.
+  async function parseMcpResponse(r) {
+    const ct = (r.headers.get('content-type') || '').toLowerCase();
+    const text = await r.text();
+    if (ct.indexOf('text/event-stream') !== -1) {
+      // Extract the data: line(s) of the first SSE message. For our four
+      // tool calls + initialize, the response is always a single message.
+      const lines = text.split(/\\r?\\n/);
+      const dataLines = [];
+      for (const line of lines) {
+        if (line.indexOf('data:') === 0) dataLines.push(line.slice(5).trim());
+      }
+      if (!dataLines.length) {
+        throw new Error('SSE response had no data line: ' + text.slice(0, 200));
+      }
+      try { return JSON.parse(dataLines.join('\\n')); }
+      catch (e) { throw new Error('SSE data not JSON: ' + dataLines.join('\\n').slice(0, 200)); }
+    }
+    // Plain application/json path (legacy handroll, or any future server choice)
+    try { return JSON.parse(text); }
+    catch (e) { throw new Error('non-JSON response: ' + text.slice(0, 200)); }
   }
 
   async function mcpToolCall(name, args, sessionId) {
@@ -1439,10 +1469,7 @@ let lastCredential = null;
         params: { name: name, arguments: args },
       }),
     });
-    const text = await r.text();
-    let payload;
-    try { payload = JSON.parse(text); }
-    catch { throw new Error('non-JSON response: ' + text.slice(0, 200)); }
+    const payload = await parseMcpResponse(r);
     const ret = { sessionHeader: r.headers.get('mcp-session-id'), payload: payload };
     if (payload.error) {
       const err = new Error(payload.error.message || 'rpc_error');
