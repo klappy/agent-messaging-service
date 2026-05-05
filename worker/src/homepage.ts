@@ -1995,11 +1995,15 @@ export function homepageResponseForConversation(args: {
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
   const escJs = (s: string) =>
-    // JSON.stringify alone does NOT escape `<`, so a value containing
+    // JSON.stringify alone does NOT escape `<` or `>`, so a value containing
     // `</script>` would close the surrounding <script> element prematurely.
-    // Replace `<` with its `\u003c` escape so the literal is safe to embed
-    // inside a <script> tag for arbitrary inputs.
-    JSON.stringify(s).replace(/</g, "\\u003c");
+    // We also escape U+2028 / U+2029, which are valid in JSON strings but
+    // illegal in ES literals (they are line terminators in JS).
+    JSON.stringify(s)
+      .replace(/</g, "\\u003c")
+      .replace(/>/g, "\\u003e")
+      .replace(/\u2028/g, "\\u2028")
+      .replace(/\u2029/g, "\\u2029");
 
   const safeLink = esc(args.magicLink);
   const safeAlias = esc(args.alias);
