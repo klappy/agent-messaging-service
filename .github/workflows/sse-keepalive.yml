@@ -22,6 +22,8 @@ on:
   pull_request:
     paths:
       - "worker/src/mcp.ts"
+      - "worker/src/sse-heartbeat.mjs"
+      - "worker/src/sse-heartbeat.d.mts"
       - "scripts/check-sse-heartbeat.sh"
       - "scripts/test-sse-wrapper-unit.mjs"
       - ".github/workflows/sse-keepalive.yml"
@@ -30,6 +32,8 @@ on:
       - main
     paths:
       - "worker/src/mcp.ts"
+      - "worker/src/sse-heartbeat.mjs"
+      - "worker/src/sse-heartbeat.d.mts"
       - "scripts/check-sse-heartbeat.sh"
       - "scripts/test-sse-wrapper-unit.mjs"
       - ".github/workflows/sse-keepalive.yml"

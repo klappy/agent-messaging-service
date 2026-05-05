@@ -21,8 +21,14 @@
 #   MAX_IDLE_S=30 ./scripts/check-sse-heartbeat.sh                  # legacy 25s window for heartbeat-only checks
 #
 # Exits 0 when bytes arrive within MAX_IDLE_S AND the first byte is `:`
-# (SSE comment marker — both `:ok\n\n` and `:keepalive\n\n` start this way),
-# 1 when no bytes arrive in window OR first byte is wrong, 2 on harness error.
+# (SSE comment marker — both `:ok\n\n` and `:keepalive\n\n` start this way).
+# When MAX_IDLE_S is large enough to span at least one heartbeat interval
+# (>= 20s, comfortably above the 15s production cadence), additionally
+# requires a `:keepalive\n\n` frame in the captured stream — otherwise the
+# heartbeat half of the contract goes unvalidated and a stream that only
+# emits the leading flush would silently pass.
+# Exits 1 when no bytes arrive in window, first byte is wrong, or the
+# heartbeat assertion fails; 2 on harness error.
 
 set -e
 
@@ -123,6 +129,28 @@ if [ "$FIRST_BYTE" != ":" ]; then
   exit 1
 fi
 
+# When the capture window spans at least one production heartbeat interval
+# (15s in worker/src/sse-heartbeat.mjs; we require >= 20s for margin), also
+# assert that an idle `:keepalive\n\n` frame appeared. Without this, a stream
+# that emits only the leading `:ok\n\n` and then goes silent would pass — and
+# clients with idle-stream watchdogs would still drop the connection. This is
+# the heartbeat half of the leading-flush + idle-heartbeat contract.
+if [ "$MAX_IDLE_S" -ge 20 ]; then
+  if ! grep -q ":keepalive" "$TMP"; then
+    echo ""
+    echo "VERDICT: FAIL — no ':keepalive' heartbeat frame in ${MAX_IDLE_S}s of stream"
+    echo "  The leading flush arrived, but the wrapper never sent an idle heartbeat."
+    echo "  Clients with idle-stream watchdogs (iOS Safari, intermediaries) will drop this."
+    echo "  Fix: the wrapper in worker/src/sse-heartbeat.mjs must enqueue ':keepalive\\n\\n'"
+    echo "  on idle at SSE_HEARTBEAT_INTERVAL_MS cadence."
+    exit 1
+  fi
+  echo ""
+  echo "VERDICT: PASS — leading SSE comment AND idle ':keepalive' heartbeat observed in ${MAX_IDLE_S}s"
+  exit 0
+fi
+
 echo ""
 echo "VERDICT: PASS — SDK SSE stream emitted leading SSE comment within ${MAX_IDLE_S}s"
+echo "  (heartbeat assertion skipped: MAX_IDLE_S=${MAX_IDLE_S} < 20s production heartbeat window)"
 exit 0
