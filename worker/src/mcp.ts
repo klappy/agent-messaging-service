@@ -1066,35 +1066,47 @@ function wrapWithSseHeartbeat(
   const reader = upstream.getReader();
 
   let closed = false;
+  let heartbeat: ReturnType<typeof setTimeout> | undefined;
+  // Re-armed timeout instead of a fixed interval: heartbeats fire only after
+  // a genuine idle gap. This prevents a heartbeat from being enqueued between
+  // two chunks of the same SSE event when the upstream splits a frame across
+  // multiple reader.read() chunks (which would corrupt the event mid-line on
+  // the wire).
+  const armHeartbeat = () => {
+    if (closed) return;
+    heartbeat = setTimeout(() => {
+      if (closed) return;
+      writer.write(HEARTBEAT_BYTES).then(armHeartbeat).catch(() => {
+        // Downstream is gone — trigger cleanup so an idle pump does not leak.
+        cleanup();
+      });
+    }, HEARTBEAT_INTERVAL_MS);
+  };
   const cleanup = () => {
     if (closed) return;
     closed = true;
-    clearInterval(interval);
+    if (heartbeat !== undefined) clearTimeout(heartbeat);
     // Cancelling the upstream reader unblocks a pump that is awaiting
     // reader.read() on an idle stream, so the pump's finally can run and
     // close the writer instead of leaking via ctx.waitUntil.
     reader.cancel().catch(() => { /* upstream already gone */ });
   };
-  const interval = setInterval(() => {
-    if (closed) return;
-    writer.write(HEARTBEAT_BYTES).catch(() => {
-      // Downstream is gone — trigger cleanup so an idle pump does not leak.
-      cleanup();
-    });
-  }, HEARTBEAT_INTERVAL_MS);
+  armHeartbeat();
 
   const pump = (async () => {
     try {
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
+        if (heartbeat !== undefined) clearTimeout(heartbeat);
         await writer.write(value);
+        armHeartbeat();
       }
     } catch {
       // upstream errored or reader was cancelled — let the writer close in finally
     } finally {
       closed = true;
-      clearInterval(interval);
+      if (heartbeat !== undefined) clearTimeout(heartbeat);
       try { await writer.close(); } catch { /* already closed */ }
     }
   })();
