@@ -2,7 +2,7 @@ import { createAccount } from "./accounts";
 import { authenticate } from "./auth";
 import { ConversationDO, type JoinPayload, wsClose } from "./conversation";
 import { ALIAS_KEY, CONVERSATION_KEY } from "./conversations";
-import { homepageHeadResponse, homepageResponse } from "./homepage";
+import { homepageHeadResponse, homepageResponse, homepageResponseForConversation } from "./homepage";
 import { AmsMcpAgent, handleMcp } from "./mcp";
 import type { ConversationRecord, Env } from "./types";
 import {
@@ -126,7 +126,22 @@ export default {
         if (isMcpSse && method === "GET") {
           return handleMcp(req, env, ctx, prebind);
         }
-        return method === "HEAD" ? homepageHeadResponse() : homepageResponse();
+        if (method === "HEAD") return homepageHeadResponse();
+        // Browser/web_fetch GET on a magic-link route: serve the homepage
+        // with conversation context embedded so (a) the page JS auto-joins
+        // the existing conversation instead of waiting for a Mint click,
+        // and (b) a model receiving this URL via web_fetch sees actionable
+        // signal (title, meta tags) that this is a join target. Without the
+        // permissive token we cannot embed a usable join — fall back to the
+        // bare homepage in that case (link is structurally invalid anyway).
+        if (permissive) {
+          return homepageResponseForConversation({
+            magicLink: url.toString(),
+            namespace: ns,
+            alias,
+          });
+        }
+        return homepageResponse();
       }
       if (method === "POST") {
         const ct = (req.headers.get("content-type") ?? "").toLowerCase();
