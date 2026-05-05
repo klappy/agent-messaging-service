@@ -33,12 +33,46 @@ AMS_URL="${AMS_URL:-https://ams.truthkit.ai}"
 # (zero bytes in 2s) where it would have silently passed at 25s.
 MAX_IDLE_S="${MAX_IDLE_S:-2}"
 
-NS="bt-hb-$(openssl rand -hex 2)"
-echo "=== minting account in $NS ==="
-TOK=$(curl -fsS -X POST "$AMS_URL/v1/accounts" \
-  -H "content-type: application/json" \
-  -d "{\"namespace\":\"$NS\"}" \
-  | python3 -c "import json,sys;print(json.loads(sys.stdin.read())['credential'])")
+# Mint a probe account in a fresh namespace. AMS namespaces are global per
+# `ams://canon/decisions/D0011-multi-host-cname-deployment` (one Worker, one KV
+# bound to both hosts), so probe namespaces accumulate forever and never get
+# cleaned up. With only 16 bits of entropy the collision rate becomes
+# significant after a few thousand main-branch pushes, and a collision returns
+# 409 namespace_taken — which under `set -e` aborts the probe on a condition
+# unrelated to the SSE contract this script is supposed to validate.
+#
+# Mitigation: 64 bits of randomness (~1.8e19 values) effectively eliminates
+# birthday collisions over the lifetime of this probe, and we still retry up
+# to a few times on the off chance one happens. namespaces stay within the
+# isValidNamespace() shape (lowercase alphanumeric + hyphen, <= 63 chars).
+TOK=""
+NS=""
+for attempt in 1 2 3 4 5; do
+  NS="bt-hb-$(openssl rand -hex 8)"
+  echo "=== minting account in $NS (attempt $attempt) ==="
+  MINT_HTTP=$(curl -sS -o /tmp/sse-mint.$$.json -w "%{http_code}" \
+    -X POST "$AMS_URL/v1/accounts" \
+    -H "content-type: application/json" \
+    -d "{\"namespace\":\"$NS\"}")
+  if [ "$MINT_HTTP" = "201" ]; then
+    TOK=$(python3 -c "import json,sys;print(json.loads(open('/tmp/sse-mint.$$.json').read())['credential'])")
+    rm -f /tmp/sse-mint.$$.json
+    break
+  fi
+  if [ "$MINT_HTTP" = "409" ]; then
+    echo "  namespace_taken on $NS, retrying with fresh entropy"
+    rm -f /tmp/sse-mint.$$.json
+    continue
+  fi
+  echo "FAIL: account mint returned HTTP $MINT_HTTP" >&2
+  cat /tmp/sse-mint.$$.json >&2 2>/dev/null || true
+  rm -f /tmp/sse-mint.$$.json
+  exit 2
+done
+if [ -z "$TOK" ]; then
+  echo "FAIL: could not mint a probe account after 5 attempts (namespace collisions)" >&2
+  exit 2
+fi
 echo "  tok: ${TOK:0:24}..."
 
 echo "=== initializing MCP session ==="

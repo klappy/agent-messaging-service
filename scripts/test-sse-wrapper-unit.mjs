@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 // scripts/test-sse-wrapper-unit.mjs
 //
-// Unit-level proof of worker/src/mcp.ts wrapWithSseHeartbeat structural
-// contract. Runs against a re-implementation of the wrapper inline (Node 20+
-// has ReadableStream/TextEncoder natively) and asserts four properties whose
-// absence empirically caused either user-visible iOS Safari "Load failed"
-// failures or Cursor Bugbot findings on PR #47:
+// Unit-level proof of worker/src/mcp.ts's SSE keepalive wrapper. The wrapper
+// is now factored into worker/src/sse-heartbeat.mjs; this script imports it
+// directly so the CI gate exercises the SAME bytes of code that ship to
+// production. A regression in worker/src/sse-heartbeat.mjs flips this script
+// red without any test change required.
+//
+// Asserts five properties whose absence empirically caused either user-visible
+// iOS Safari "Load failed" failures or Cursor Bugbot findings on PR #47/#49:
 //
 //   1. Leading byte flush — `:ok\n\n` enqueued at +0ms before any read.
 //      Without this, iOS Safari's streaming-fetch watchdog can fire shorter
@@ -14,16 +17,17 @@
 //   2. Verbatim forwarding — every byte the upstream emits arrives in the
 //      output unmodified. No inspection, no buffering, no re-framing.
 //
-//   3. No mid-event heartbeat injection — heartbeats can only enqueue
-//      between full upstream chunks, not in the middle of one. Sending 100
-//      back-to-back `data:` chunks must produce zero `:keepalive` interleavings.
-//      Bugbot finding #4 on PR #47 was rooted in the prior structure failing
-//      this property.
+//   3. No mid-event heartbeat injection — heartbeats CANNOT enqueue between
+//      back-to-back upstream chunks. Sending 100 chunks faster than the
+//      heartbeat interval must produce ZERO `:keepalive` interleavings.
 //
-//   4. Cancel propagation — when downstream cancels the response stream,
+//   4. Idle-then-frame integrity — when the heartbeat wins a race, a frame
+//      that arrives later still flows through. The wrapper must NOT orphan
+//      the in-flight reader.read() and silently drop the next upstream chunk.
+//
+//   5. Cancel propagation — when downstream cancels the response stream,
 //      the wrapper must propagate to upstream.cancel() so the SDK's inner
-//      WebSocket releases. Bugbot finding #2 on PR #47 was rooted in the
-//      prior structure failing this property.
+//      WebSocket releases.
 //
 // Authority: ams://canon/constraints/outcome-verification-via-runnable-artifact
 //            journal/2026-05-05-tincan-sse-keepalive-fresh-iteration.tsv
@@ -31,77 +35,27 @@
 // This is a UNIT proof — it asserts the wrapper STRUCTURE produces the right
 // behavior. It does NOT verify the deployed worker; for that, run
 // scripts/check-sse-heartbeat.sh against a live host. The two together are
-// the substrate-vs-outcome split: this catches code regressions before merge
-// (no deploy needed); the curl probe catches deployed-state regressions
-// after merge.
+// the substrate-vs-outcome split.
 //
 // Exits 0 on PASS, 1 on regression, 2 on harness error.
 
-const SSE_LEADING_FLUSH = new TextEncoder().encode(':ok\n\n');
-const SSE_HEARTBEAT_FRAME = new TextEncoder().encode(':keepalive\n\n');
-// Shortened from the production 15_000ms to 200ms so the test runs in <1s.
-// The test still asserts the structural property (heartbeats fire on idle,
-// never mid-chunk), independent of the absolute interval.
-const SSE_HEARTBEAT_INTERVAL_MS = 200;
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
 
-// ---------------------------------------------------------------------------
-// Re-implementation of wrapWithSseHeartbeat. Must stay in sync with
-// worker/src/mcp.ts; if the production wrapper changes structure, this file
-// changes too. The CI workflow runs this script on every PR touching
-// worker/src/mcp.ts, so a structural divergence shows up at code review time.
-// ---------------------------------------------------------------------------
-function wrapWithSseHeartbeat(resp) {
-  const upstream = resp.body;
-  let reader;
-  const stream = new ReadableStream({
-    async start(controller) {
-      controller.enqueue(SSE_LEADING_FLUSH);
-      reader = upstream.getReader();
-      try {
-        while (true) {
-          let timeoutId;
-          const heartbeat = new Promise((resolve) => {
-            timeoutId = setTimeout(
-              () => resolve({ heartbeat: true }),
-              SSE_HEARTBEAT_INTERVAL_MS,
-            );
-          });
-          const next = await Promise.race([
-            reader.read().then((r) => {
-              if (timeoutId !== undefined) clearTimeout(timeoutId);
-              return r;
-            }),
-            heartbeat,
-          ]);
-          if ('heartbeat' in next) {
-            controller.enqueue(SSE_HEARTBEAT_FRAME);
-            continue;
-          }
-          if (next.done) break;
-          if (next.value) controller.enqueue(next.value);
-        }
-      } catch {
-        /* upstream errored or cancelled */
-      } finally {
-        try { controller.close(); } catch { /* already closed */ }
-      }
-    },
-    cancel(reason) {
-      if (reader) {
-        reader.cancel(reason).catch(() => { /* upstream already gone */ });
-      } else {
-        upstream.cancel(reason).catch(() => { /* upstream already gone */ });
-      }
-    },
-  });
-  const newHeaders = new Headers(resp.headers);
-  newHeaders.delete('content-length');
-  return new Response(stream, {
-    status: resp.status,
-    statusText: resp.statusText,
-    headers: newHeaders,
-  });
-}
+const __dirname = dirname(fileURLToPath(import.meta.url));
+// Import the production wrapper directly. Bug `e2b0fd1f` was that this
+// script reimplemented the wrapper inline, so a regression in
+// worker/src/sse-heartbeat.mjs would leave CI green.
+const { wrapWithSseHeartbeat } = await import(
+  resolve(__dirname, "../worker/src/sse-heartbeat.mjs")
+);
+
+// Shortened from the production 15_000ms to 200ms so the test runs in <1s.
+// The wrapper accepts an interval override for exactly this reason; the
+// structural property (heartbeats fire on idle, never mid-chunk) is
+// independent of the absolute interval.
+const SSE_HEARTBEAT_INTERVAL_MS = 200;
+const wrap = (resp) => wrapWithSseHeartbeat(resp, SSE_HEARTBEAT_INTERVAL_MS);
 
 // --- Test harness --------------------------------------------------------
 async function readAll(response, durationMs) {
@@ -130,7 +84,7 @@ const ok = (msg) => console.log(`  ✓ ${msg}`);
 async function testLeadingFlushAndHeartbeats() {
   console.log('\n--- Test 1: leading flush at +0ms + idle heartbeats ---');
   const upstream = new ReadableStream({ cancel() { /* swallow */ } });
-  const wrapped = wrapWithSseHeartbeat(new Response(upstream, {
+  const wrapped = wrap(new Response(upstream, {
     status: 200, headers: { 'content-type': 'text/event-stream' },
   }));
   const chunks = await readAll(wrapped, 700);
@@ -158,7 +112,7 @@ async function testFrameForwardingVerbatim() {
       setTimeout(() => controller.close(), 100);
     },
   });
-  const wrapped = wrapWithSseHeartbeat(new Response(upstream, {
+  const wrapped = wrap(new Response(upstream, {
     status: 200, headers: { 'content-type': 'text/event-stream' },
   }));
   const chunks = await readAll(wrapped, 300);
@@ -184,7 +138,7 @@ async function testNoMidEventInjection() {
       controller.close();
     },
   });
-  const wrapped = wrapWithSseHeartbeat(new Response(upstream, {
+  const wrapped = wrap(new Response(upstream, {
     status: 200, headers: { 'content-type': 'text/event-stream' },
   }));
   const chunks = await readAll(wrapped, 1500);
@@ -194,23 +148,67 @@ async function testNoMidEventInjection() {
   console.log(`    total chunks:        ${chunks.length}`);
   console.log(`    heartbeat positions: [${heartbeatPositions.join(', ')}]`);
 
-  // Verify the data chunks arrived in strict order with no interleavings.
+  // Heartbeats interleaving between back-to-back chunks IS the regression
+  // this test is meant to catch (Bugbot finding #4 on PR #47, and bug
+  // `fccd2c42` on PR #50). Filtering them out before checking ordering would
+  // hide exactly that case, so the assertion is on heartbeat presence
+  // directly.
+  if (heartbeatPositions.length !== 0) {
+    fail(`heartbeats should NOT interleave between back-to-back chunks, but ${heartbeatPositions.length} did at positions [${heartbeatPositions.join(', ')}]`);
+  } else { ok('no heartbeat interleaved between back-to-back chunks'); }
+
+  // And the data chunks themselves must arrive in strict order.
   const seq = chunks
     .filter((c) => c.text.startsWith('data: chunk-'))
     .map((c) => parseInt(c.text.match(/chunk-(\d+)/)[1], 10));
   const ordered = seq.length === 100 && seq.every((n, i) => n === i);
   if (!ordered) fail(`chunks arrived out of order or missing: got ${seq.length}, first 10 = [${seq.slice(0, 10).join(', ')}]`);
-  else ok(`all 100 chunks arrived in order, ${heartbeatPositions.length} heartbeats landed safely between iterations`);
+  else ok(`all 100 chunks arrived in order`);
+}
+
+async function testIdleThenFrameNotDropped() {
+  console.log('\n--- Test 4: frame after an idle heartbeat is NOT dropped ---');
+  // The wrapper races reader.read() against a heartbeat timer. If the
+  // heartbeat wins, a naive implementation starts a fresh read on the next
+  // iteration, leaving the previous read pending — and the next upstream
+  // chunk satisfies that orphaned read, never reaching the controller. This
+  // test makes the upstream emit a frame AFTER at least one heartbeat has
+  // fired, then asserts the frame still arrives downstream.
+  const enc = new TextEncoder();
+  const lateFrame = 'event: message\ndata: {"after_idle":true}\n\n';
+  const upstream = new ReadableStream({
+    start(controller) {
+      // Wait long enough that >= 2 heartbeats fire (interval is 200ms).
+      setTimeout(() => controller.enqueue(enc.encode(lateFrame)), 550);
+      setTimeout(() => controller.close(), 700);
+    },
+    cancel() { /* swallow */ },
+  });
+  const wrapped = wrap(new Response(upstream, {
+    status: 200, headers: { 'content-type': 'text/event-stream' },
+  }));
+  const chunks = await readAll(wrapped, 1100);
+  for (const c of chunks) console.log(`    +${String(c.elapsed).padStart(4)}ms  ${JSON.stringify(c.text)}`);
+
+  const heartbeats = chunks.filter((c) => c.text === ':keepalive\n\n').length;
+  if (heartbeats < 2) {
+    fail(`expected >= 2 heartbeats before the late frame, got ${heartbeats}`);
+  } else { ok(`${heartbeats} heartbeats fired before the late frame`); }
+
+  const all = chunks.map((c) => c.text).join('');
+  if (!all.includes(lateFrame)) {
+    fail('late frame was DROPPED — wrapper orphaned the in-flight read after a heartbeat win');
+  } else { ok('late frame survived the idle period'); }
 }
 
 async function testCancelPropagation() {
-  console.log('\n--- Test 4: downstream cancel() propagates to upstream cancel() ---');
+  console.log('\n--- Test 5: downstream cancel() propagates to upstream cancel() ---');
   let upstreamCancelled = false;
   let upstreamCancelReason;
   const upstream = new ReadableStream({
     cancel(reason) { upstreamCancelled = true; upstreamCancelReason = reason; },
   });
-  const wrapped = wrapWithSseHeartbeat(new Response(upstream, {
+  const wrapped = wrap(new Response(upstream, {
     status: 200, headers: { 'content-type': 'text/event-stream' },
   }));
   const reader = wrapped.body.getReader();
@@ -227,6 +225,7 @@ async function main() {
   await testLeadingFlushAndHeartbeats();
   await testFrameForwardingVerbatim();
   await testNoMidEventInjection();
+  await testIdleThenFrameNotDropped();
   await testCancelPropagation();
   console.log(`\n=== VERDICT: ${pass ? 'PASS' : 'FAIL'} ===`);
   process.exit(pass ? 0 : 1);

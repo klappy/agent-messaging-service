@@ -32,6 +32,7 @@ import { z } from "zod";
 import { authenticate } from "./auth";
 import type { JoinPayload } from "./conversation";
 import { ALIAS_KEY, CONVERSATION_KEY, createConversation } from "./conversations";
+import { wrapWithSseHeartbeat } from "./sse-heartbeat.mjs";
 import type { AccountRecord, ConversationRecord, Env } from "./types";
 import {
   errorResponse,
@@ -1047,111 +1048,7 @@ export async function handleMcp(
   return resp;
 }
 
-// Wrap an SSE response body with a leading flush byte and idle heartbeats.
-//
-// The previous structure (TransformStream + ctx.waitUntil-driven pump + a
-// re-armed setTimeout writing to the same writer the pump uses) carried three
-// concurrency hazards that surfaced as five Bugbot findings across PR #47's
-// review:
-//   - heartbeat timeout leaks when downstream disconnects mid-pump,
-//   - heartbeat mid-event corruption when reads split SSE frames across chunks,
-//   - re-arm races when both write paths schedule new timeouts concurrently,
-// plus their fixes layered more shared mutable state on top. All three derive
-// from a single root: two concurrent contexts (the pump and the timeout
-// callback) write to the same downstream writer.
-//
-// This version uses a single sequential loop inside `ReadableStream.start`.
-// Each iteration races one `reader.read()` against one fresh timeout.
-// Heartbeats can only enqueue between full upstream chunks (mid-event
-// corruption is impossible by construction). Exactly one writer (the
-// controller) is ever active. Downstream disconnect surfaces as `cancel()`,
-// which propagates to `upstream.cancel()` so resources release immediately —
-// no `ctx.waitUntil`, no `closed` flag, no separate cleanup function, no
-// shared mutable timer state. ~30 lines of mechanism instead of ~70.
-//
-// Leading `:ok\n\n` byte: WebKit's streaming-fetch watchdog on iOS can fire
-// well before 15s — verified from the operator's screenshot, where the red
-// "SSE error / Load failed" frame appeared moments after JOIN, not after the
-// first heartbeat would have arrived. Without an immediate flush the response
-// head sits at zero body bytes until the first heartbeat. SSE comment lines
-// are spec-mandated to be ignored by clients (WHATWG §"event stream parser"),
-// so the leading byte is harmless on the wire and decisive for WebKit fetch
-// state — the response is now visibly alive within milliseconds, before any
-// watchdog can fire.
-const SSE_LEADING_FLUSH = new TextEncoder().encode(":ok\n\n");
-const SSE_HEARTBEAT_FRAME = new TextEncoder().encode(":keepalive\n\n");
-const SSE_HEARTBEAT_INTERVAL_MS = 15_000;
-
-function wrapWithSseHeartbeat(resp: Response): Response {
-  const upstream = resp.body!;
-  // Hoisted so `cancel` can reach the reader after `start` has acquired it.
-  // Calling `upstream.cancel()` after `start()` ran would throw (the stream
-  // is locked to the reader) and the `.catch` would swallow it silently, so
-  // the SDK's inner WebSocket would never see the disconnect — that's a leak.
-  // `reader.cancel()` releases the lock AND propagates to the underlying
-  // source's cancel algorithm, which is what tears down the SDK's WS.
-  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      controller.enqueue(SSE_LEADING_FLUSH);
-      reader = upstream.getReader();
-      try {
-        while (true) {
-          // Each iteration owns exactly one timer. Cleared the moment
-          // `read()` resolves so it cannot leak past the loop body.
-          let timeoutId: ReturnType<typeof setTimeout> | undefined;
-          const heartbeat = new Promise<{ heartbeat: true }>((resolve) => {
-            timeoutId = setTimeout(
-              () => resolve({ heartbeat: true }),
-              SSE_HEARTBEAT_INTERVAL_MS,
-            );
-          });
-          const next = await Promise.race([
-            reader.read().then((r) => {
-              if (timeoutId !== undefined) clearTimeout(timeoutId);
-              return r;
-            }),
-            heartbeat,
-          ]);
-          if ("heartbeat" in next) {
-            controller.enqueue(SSE_HEARTBEAT_FRAME);
-            continue;
-          }
-          if (next.done) break;
-          if (next.value) controller.enqueue(next.value);
-        }
-      } catch {
-        // Upstream errored or was cancelled; fall through to close.
-      } finally {
-        try {
-          controller.close();
-        } catch {
-          /* already closed */
-        }
-      }
-    },
-    cancel(reason) {
-      // Downstream disconnected — propagate so the SDK's inner WS releases.
-      // Use the reader if `start` has acquired it (the common case once any
-      // bytes have flowed); fall back to the unlocked upstream otherwise.
-      if (reader) {
-        reader.cancel(reason).catch(() => {
-          /* upstream already gone */
-        });
-      } else {
-        upstream.cancel(reason).catch(() => {
-          /* upstream already gone */
-        });
-      }
-    },
-  });
-
-  // Strip Content-Length — the wrapped stream is indeterminate.
-  const newHeaders = new Headers(resp.headers);
-  newHeaders.delete("content-length");
-  return new Response(stream, {
-    status: resp.status,
-    statusText: resp.statusText,
-    headers: newHeaders,
-  });
-}
+// SSE keepalive wrapper lives in worker/src/sse-heartbeat.mjs as a plain
+// .mjs module so the production wrapper and the CI unit proof
+// (scripts/test-sse-wrapper-unit.mjs) import the SAME code. See that file
+// for the structural invariants and the Bugbot history that drove them.
