@@ -19,7 +19,6 @@
 const { chromium } = require('playwright');
 const http = require('http');
 const https = require('https');
-const fs = require('fs');
 const path = require('path');
 const { URL } = require('url');
 
@@ -110,7 +109,19 @@ async function main() {
     await page.waitForTimeout(SETTLE_MS);
 
     const linkValue = await page.locator('#tincan-link').inputValue();
-    const errorFrames = await page.locator('.tincan-frame.left .body').allTextContents();
+    // Only treat frames whose head reads "error" as errors; other left-kinded
+    // frames (stream_left, wire_closed) share the .tincan-frame.left class.
+    const errorFrames = await page.$$eval('.tincan-frame.left', nodes =>
+      nodes
+        .filter(n => {
+          const head = n.querySelector('.head');
+          return head && head.textContent.trim() === 'error';
+        })
+        .map(n => {
+          const body = n.querySelector('.body');
+          return body ? body.textContent : '';
+        })
+    );
 
     console.log('\n=== AMS traffic summary ===');
     for (const e of network) {
