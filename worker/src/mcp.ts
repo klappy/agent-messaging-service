@@ -964,6 +964,100 @@ async function resolvePrebindRecord(
   return { ok: true, conversation_id: conversationId, record };
 }
 
+// Wrap a text/event-stream response body with a leading SSE comment frame and
+// a periodic keepalive every WRAPPER_SSE_KEEPALIVE_MS. Why this exists:
+//
+// The McpAgent SDK's GET /mcp handler returns a 200 text/event-stream whose
+// body is a TransformStream pumped only when a notification is forwarded from
+// the inner Durable Object WebSocket. With no notifications in flight (a fresh
+// session that has joined a conversation but has no peers yet — the homepage
+// tincan demo's exact path) the body stays at zero bytes for the lifetime of
+// the connection. Three observable consequences in production:
+//
+//   1. iOS Safari / WebKit fetch with `Accept: text/event-stream` raises
+//      `TypeError: Load failed` once the underlying connection sits idle past
+//      WebKit's streaming-fetch watchdog. The homepage's startSSE catch
+//      surfaces this as the user-facing "SSE error / Load failed" frame.
+//   2. Cloudflare and intermediate proxies idle-time HTTP/2 streams with no
+//      DATA frames, dropping the connection silently before the first
+//      notification arrives.
+//   3. curl --max-time 6 against GET /mcp returns headers but zero bytes —
+//      the empirical confirmation: the wire really is empty.
+//
+// The fix is the SSE-spec-blessed mitigation every production SSE server
+// applies: emit a comment line (`:ok\n\n`) immediately to flush the response
+// start, then a heartbeat every 15s. Comment lines are valid SSE that clients
+// must ignore, so this changes nothing semantically — but it keeps the
+// underlying TCP/HTTP2 stream alive and tells WebKit the response has begun.
+//
+// The transformer copies through every byte the SDK emits without inspection,
+// so notifications/* delivery is unchanged. The only added bytes are the
+// leading comment and periodic keepalive comments.
+//
+// Vodka: this is a one-function wrapper applied by handleMcp around the SDK
+// response. The SDK still owns dispatch, framing, and session resolution; this
+// is purely a transport-robustness layer. No MCP semantics added or changed.
+const WRAPPER_SSE_LEADING_COMMENT = ":ok\n\n";
+const WRAPPER_SSE_KEEPALIVE_FRAME = ":keepalive\n\n";
+const WRAPPER_SSE_KEEPALIVE_MS = 15_000;
+
+function wrapSseWithKeepalive(response: Response): Response {
+  // Defensive guards: only touch text/event-stream 200 responses with a body.
+  if (response.status !== 200) return response;
+  const ct = response.headers.get("content-type") || "";
+  if (!ct.includes("text/event-stream")) return response;
+  if (!response.body) return response;
+
+  const encoder = new TextEncoder();
+  const upstream = response.body;
+  const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>();
+  const writer = writable.getWriter();
+
+  // Background pump: flush leading comment, then forward upstream bytes
+  // verbatim. Keepalive is driven by setInterval so it fires even while the
+  // upstream stream is idle. Both halves race to writer.close()/abort() on
+  // upstream end-of-stream or error; the first one wins, the loser no-ops.
+  let closed = false;
+  const stop = () => {
+    if (closed) return;
+    closed = true;
+    clearInterval(keepalive);
+    writer.close().catch(() => {});
+  };
+
+  const keepalive = setInterval(() => {
+    if (closed) return;
+    writer.write(encoder.encode(WRAPPER_SSE_KEEPALIVE_FRAME)).catch(() => {
+      stop();
+    });
+  }, WRAPPER_SSE_KEEPALIVE_MS);
+
+  (async () => {
+    try {
+      await writer.write(encoder.encode(WRAPPER_SSE_LEADING_COMMENT));
+      const reader = upstream.getReader();
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value) await writer.write(value);
+      }
+    } catch {
+      // Upstream errored; just close. SDK already logged whatever it cared
+      // about; we don't double-log. Translation only.
+    } finally {
+      stop();
+    }
+  })();
+
+  // Preserve the SDK's headers verbatim (Cache-Control, Connection,
+  // Content-Type, mcp-session-id, CORS) — only the body is rewrapped.
+  return new Response(readable, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
+
 // Public route handler. Both /mcp and the magic-link transport route in
 // index.ts forward here. The SDK handles GET/POST/DELETE/OPTIONS uniformly;
 // the prebind threading that the prior handroll plumbed through OPTIONS,
@@ -1026,5 +1120,17 @@ export async function handleMcp(
   const internalReq = new Request(internalUrl.toString(), req);
 
   const handler = getMcpHandler();
-  return handler.fetch(internalReq, env, ctxWithProps(ctx, props));
+  const sdkResponse = await handler.fetch(internalReq, env, ctxWithProps(ctx, props));
+
+  // GET /mcp is the standalone notification SSE leg. The SDK opens a
+  // TransformStream and only writes when a notification is forwarded from the
+  // inner DO WebSocket; idle sessions produce zero bytes, which iOS Safari
+  // surfaces as "Load failed" and intermediaries drop. wrapSseWithKeepalive
+  // injects a leading SSE comment and a periodic heartbeat so the stream is
+  // visibly alive on the wire. POST and DELETE responses pass through
+  // unchanged (the wrapper no-ops on non-SSE responses).
+  if (req.method === "GET") {
+    return wrapSseWithKeepalive(sdkResponse);
+  }
+  return sdkResponse;
 }
