@@ -579,6 +579,32 @@ const HOMEPAGE_HTML = `<!doctype html>
   .tincan {
     max-width: var(--max); margin: 0 auto; padding: 0 var(--gut);
   }
+  .tincan-instructions {
+    border: 1px solid var(--hairline); background: var(--bg-panel);
+    margin-bottom: 12px; padding: 12px 18px 14px;
+  }
+  .tincan-instructions-label {
+    display: block; font-family: var(--mono); font-size: 11.5px;
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg);
+    margin-bottom: 8px;
+  }
+  .tincan-instructions-hint {
+    text-transform: none; letter-spacing: 0; color: var(--fg-dim);
+    font-size: 11px; font-weight: normal;
+  }
+  .tincan-instructions-hint code {
+    font-family: var(--mono); font-size: 10.5px; color: var(--teal);
+  }
+  .tincan-instructions-hint a { color: var(--teal); }
+  .tincan-instructions-input {
+    width: 100%; box-sizing: border-box;
+    background: var(--bg); border: 1px solid var(--hairline); outline: none;
+    padding: 10px 12px;
+    color: var(--fg); font-family: var(--mono); font-size: 12.5px; line-height: 1.5;
+    resize: vertical;
+  }
+  .tincan-instructions-input::placeholder { color: var(--fg-faint); font-style: italic; }
+  .tincan-instructions-input:focus { border-color: var(--teal); }
   .tincan-bar {
     display: grid; grid-template-columns: minmax(0, 1fr) auto auto;
     align-items: stretch; gap: 0;
@@ -1182,6 +1208,12 @@ wscat -c "wss://ams.klappy.dev/yours-1234/conversations/&lt;alias&gt;/connect?t=
   </div>
 
   <div class="tincan">
+    <div class="tincan-instructions">
+      <label for="tincan-instructions" class="tincan-instructions-label">
+        Instructions for AI peers <span class="tincan-instructions-hint">(optional · pass-through to <code>initialize.instructions</code> per <a href="https://github.com/klappy/agent-messaging-service/blob/main/canon/decisions/D0023-magic-link-as-mcp-transport-endpoint.md" target="_blank" rel="noopener">D0023</a>)</span>
+      </label>
+      <textarea id="tincan-instructions" class="tincan-instructions-input" rows="2" placeholder="// e.g. 'You are a debugging peer. Stay concise. Match the operator's casual register.' — verbatim opaque carriage by the wrapper, exactly as set."></textarea>
+    </div>
     <div class="tincan-bar">
       <input class="tincan-link" id="tincan-link" placeholder="// click Mint to create a new conversation, then copy the magic link" readonly>
       <button class="tincan-action mint" id="tincan-mint">Mint →</button>
@@ -2082,10 +2114,17 @@ let lastCredential = null;
       await mcpInitialize();
 
       appendFrame('sys', '— mint conversation —', 'POST /mcp tools/call ams_create_conversation');
+      // Operator-set instructions per D0023: read the textarea, opaque pass-through.
+      // Wrapper does not parse, validate, or rewrite — it just carries the string
+      // verbatim into initialize.instructions for any peer that calls it.
+      const instructionsEl = $('#tincan-instructions');
+      const instructionsText = instructionsEl ? (instructionsEl.value || '').trim() : '';
+      const conversationMetadata = instructionsText ? { instructions: instructionsText } : undefined;
       // Declare the operator's capability per security-as-subscriber-pattern's
       // capabilities convention. Round-trips through PROTOCOL §4.4 untouched.
       const created = await mcpToolCall('ams_create_conversation', {
         stream_name: 'tincan-browser',
+        ...(conversationMetadata ? { metadata: conversationMetadata } : {}),
         stream_metadata: {
           capabilities: {
             'ams.convention.v1': {
@@ -2107,6 +2146,10 @@ let lastCredential = null;
       linkInput.value = link;
       copyBtn.disabled = false;
       appendFrame('sys', 'magic_link', link);
+      if (instructionsText) {
+        appendFrame('sys', 'operator instructions',
+          'set on conversation metadata · pass-through to initialize.instructions for any peer that calls it (D0023)\\n\\n' + instructionsText);
+      }
       appendFrame('sys', 'share',
         'Paste this URL into Claude Code / Cursor / Desktop / claude.ai with the AMS MCP server configured per README. Each agent will attach as a peer; their streams render below.');
 
