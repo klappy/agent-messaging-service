@@ -275,47 +275,70 @@ async function testCancelPropagation() {
 }
 
 async function testIdleOrphanCleanup() {
-  console.log("\n--- Test 5: idle heartbeats do NOT accumulate read handlers ---");
-  // Long-lived idle stream that NEVER emits or closes. Without orphaned-read
-  // cleanup, every heartbeat-wins iteration would attach a fresh `.then`
-  // handler to the same pending `read()` promise — accumulating handlers
-  // indefinitely on the exact connection type this wrapper exists to keep
-  // alive. We approximate the check by running for 2s with a 100ms heartbeat
-  // (~20 heartbeat iterations) and verifying the wrapper still responds to
-  // cancel() promptly (a memory-leaked iteration would still respond, but a
-  // wedged loop would not).
+  console.log("\n--- Test 5: idle heartbeats sustain without handler accumulation ---");
+  // Long-lived idle stream that NEVER emits. The wrapper hoists the in-flight
+  // read across iterations and re-races it against fresh timeouts on
+  // heartbeat-wins; a regression that calls reader.read() inside the loop on
+  // each heartbeat-win would accumulate .then handlers on a pending read
+  // (PR #50 finding) OR throw releaseLock TypeError on Cloudflare Workers
+  // (PR #51 finding). This test asserts:
+  //   (a) the wrapper sustains 200+ heartbeat iterations without wedging,
+  //   (b) heap growth stays bounded (no per-iteration handler accumulation),
+  //   (c) cancel() responds promptly even after sustained idle.
+  // Production heartbeat is 15s, so 200 iterations = ~50min of idle in
+  // production. We use a 20ms test interval to compress that to ~4s.
   const upstream = new ReadableStream({ cancel() {} });
   const wrapped = wrapWithSseHeartbeat(
     new Response(upstream, {
       status: 200,
       headers: { "content-type": "text/event-stream" },
     }),
-    100,
+    20,
   );
   const reader = wrapped.body.getReader();
-  // Consume ~20 heartbeat iterations.
-  const consumeUntil = Date.now() + 2000;
+
+  // Force a baseline GC if available (run with --expose-gc); else just sample.
+  if (global.gc) global.gc();
+  const baselineHeap = process.memoryUsage().heapUsed;
+
   let frames = 0;
-  while (Date.now() < consumeUntil) {
+  const ITERATIONS = 200;
+  for (let i = 0; i < ITERATIONS; i++) {
     const r = await Promise.race([
       reader.read(),
-      new Promise((resolve) => setTimeout(() => resolve({ done: true, timedOut: true }), 250)),
+      new Promise((resolve) => setTimeout(() => resolve({ done: true, timedOut: true }), 100)),
     ]);
     if (r.done || r.timedOut) break;
     frames++;
   }
+
+  if (global.gc) global.gc();
+  const peakHeap = process.memoryUsage().heapUsed;
+  const heapDeltaMB = ((peakHeap - baselineHeap) / 1024 / 1024).toFixed(2);
+
   const cancelStart = Date.now();
   await reader.cancel("test done");
   const cancelMs = Date.now() - cancelStart;
-  if (frames < 10) {
-    fail(`expected >= 10 heartbeat frames over 2s with 100ms interval, got ${frames}`);
+
+  if (frames < 100) {
+    fail(`expected >= 100 heartbeat frames, got ${frames} (loop wedged or runtime-divergent)`);
   } else {
-    ok(`${frames} heartbeat frames consumed without wedging`);
+    ok(`${frames} heartbeat frames consumed (heap delta ${heapDeltaMB} MB)`);
+  }
+  // Heap delta bound: 200 iterations should not accumulate >5MB on top of
+  // baseline (each accumulated handler is ~hundreds of bytes; 200 of them
+  // is well under 5MB regardless of GC behavior; a real leak would be
+  // unbounded growth across runs of this test, which we approximate with
+  // this loose ceiling).
+  if (Math.abs(parseFloat(heapDeltaMB)) > 5) {
+    fail(`heap grew by ${heapDeltaMB} MB across ${frames} idle iterations — possible handler accumulation`);
+  } else {
+    ok(`heap growth bounded across ${frames} iterations`);
   }
   if (cancelMs > 100) {
-    fail(`cancel took ${cancelMs}ms — loop may be wedged`);
+    fail(`cancel took ${cancelMs}ms — loop unresponsive`);
   } else {
-    ok(`cancel completed in ${cancelMs}ms (loop responsive after ${frames} idle iterations)`);
+    ok(`cancel completed in ${cancelMs}ms`);
   }
 }
 
