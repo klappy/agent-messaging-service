@@ -1406,9 +1406,34 @@ let lastCredential = null;
     appendFrame('left', 'error', msg + (detail ? '\\n' + detail : ''));
   }
 
-  // Initialize MCP via POST /mcp { method: "initialize" }. We could skip this
-  // and the server still works (the auth happens on tools/call), but the
-  // initialize round-trip is the conformance pattern an MCP client follows.
+  // SDK MCP responses can come back as either application/json (single response)
+  // or text/event-stream (SSE-framed: 'event: message\\ndata: {...}\\n\\n'). The
+  // SDK prefers SSE when the client accepts both. r.json() fails on SSE bodies
+  // in WebKit with "The string did not match the expected pattern" — parse by
+  // content-type instead. Multiple data: lines per SSE-spec join with newlines.
+  async function parseMcpResponse(r) {
+    const contentType = r.headers.get('content-type') || '';
+    const text = await r.text();
+    if (contentType.indexOf('text/event-stream') === 0) {
+      const dataLines = [];
+      const lines = text.split('\\n');
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        if (line.indexOf('data:') === 0) {
+          dataLines.push(line.slice(5).replace(/^ /, ''));
+        }
+      }
+      if (!dataLines.length) {
+        throw new Error('SSE response had no data lines: ' + text.slice(0, 200));
+      }
+      return JSON.parse(dataLines.join('\\n'));
+    }
+    return JSON.parse(text);
+  }
+
+  // Initialize MCP via POST /mcp { method: "initialize" }. The SDK requires the
+  // mcp-session-id from this response on every subsequent tools/call, so we
+  // capture it here into mcpSessionId for downstream threading.
   async function mcpInitialize() {
     const r = await fetch(ORIGIN + '/mcp', {
       method: 'POST',
@@ -1420,16 +1445,19 @@ let lastCredential = null;
       }}),
     });
     if (!r.ok) throw new Error('initialize failed: ' + r.status);
-    return r.json();
+    const sid = r.headers.get('mcp-session-id');
+    if (sid) mcpSessionId = sid;
+    return parseMcpResponse(r);
   }
 
   async function mcpToolCall(name, args, sessionId) {
+    const useSession = sessionId || mcpSessionId;
     const headers = {
       'content-type': 'application/json',
       'accept': 'application/json, text/event-stream',
       'authorization': 'Bearer ' + bearer,
     };
-    if (sessionId) headers['mcp-session-id'] = sessionId;
+    if (useSession) headers['mcp-session-id'] = useSession;
     const r = await fetch(ORIGIN + '/mcp', {
       method: 'POST',
       headers: headers,
@@ -1439,11 +1467,10 @@ let lastCredential = null;
         params: { name: name, arguments: args },
       }),
     });
-    const text = await r.text();
     let payload;
-    try { payload = JSON.parse(text); }
-    catch { throw new Error('non-JSON response: ' + text.slice(0, 200)); }
-    const ret = { sessionHeader: r.headers.get('mcp-session-id'), payload: payload };
+    try { payload = await parseMcpResponse(r); }
+    catch (e) { throw new Error('non-parseable response: ' + e.message); }
+    const ret = { sessionHeader: r.headers.get('mcp-session-id') || useSession, payload: payload };
     if (payload.error) {
       const err = new Error(payload.error.message || 'rpc_error');
       err.payload = payload;
