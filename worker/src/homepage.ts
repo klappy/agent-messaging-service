@@ -2336,7 +2336,7 @@ let lastCredential = null;
         type: 'joined',
         stream_id: j.stream_id,
         stream_name: j.stream_name,
-        owner_account_id: (typeof bearer === 'string' && bearer) ? null : null,
+        owner_account_id: acc.account_id,
         self_subscribe: j.self_subscribe === true,
         peers: (j.peers || []).map(p => ({
           stream_id: p.stream_id,
