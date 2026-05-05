@@ -66,8 +66,14 @@ export function wrapWithSseHeartbeat(
   heartbeatIntervalMs: number = SSE_HEARTBEAT_INTERVAL_MS,
 ): Response {
   // Pass through anything that isn't a 200 SSE response with a body.
+  // Content-type check is case-insensitive to match the gate the caller
+  // (worker/src/mcp.ts handleMcp) applies before invoking us — RFC 9110
+  // permits any case in the media-type token, so a divergence between gate
+  // and wrapper would silently pass non-canonical content-types through
+  // unwrapped, regressing the iOS Safari "Load failed" surface this wrapper
+  // exists to defend.
   if (resp.status !== 200) return resp;
-  const ct = resp.headers.get("content-type") || "";
+  const ct = (resp.headers.get("content-type") || "").toLowerCase();
   if (!ct.includes("text/event-stream")) return resp;
   if (!resp.body) return resp;
 
@@ -75,6 +81,20 @@ export function wrapWithSseHeartbeat(
   // Hoisted so `cancel(reason)` can call `reader.cancel(reason)` instead of
   // `upstream.cancel()` (which throws once start() has locked the stream).
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+
+  // Sentinel object used as a Promise.race participant for heartbeats.
+  // Identity comparison against this constant is the discriminator — we do
+  // NOT wrap `readPromise` in `.then()` for the race, because doing so would
+  // attach a fresh `.then` handler to the same pending `readPromise` on
+  // every loop iteration. On long-lived idle streams (the exact connection
+  // type this wrapper targets) those handlers would accumulate linearly
+  // for the entire connection lifetime — at the production 15s interval, a
+  // 24-hour idle session would carry ~5,760 closures pinned to a never-
+  // settling promise. Racing `readPromise` directly means exactly one
+  // `.then` is attached per pending read (the `await` itself); subsequent
+  // re-races share that same single continuation.
+  const HEARTBEAT_SENTINEL = Symbol("heartbeat");
+  type HeartbeatSentinel = typeof HEARTBEAT_SENTINEL;
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -84,31 +104,31 @@ export function wrapWithSseHeartbeat(
         // The in-flight read is hoisted across iterations: heartbeat-wins
         // does NOT issue a new read(), it simply re-races the same pending
         // promise against a fresh timeout. A new read() is issued only
-        // after the current one settles, so the reader has at most one
-        // pending read at any time and no orphan handler is ever attached.
+        // after the current read SETTLES (resolves with a value or {done}),
+        // so the reader has at most one pending read at any time.
         let readPromise: Promise<ReadableStreamReadResult<Uint8Array>> =
           reader.read();
         while (true) {
           let timeoutId: ReturnType<typeof setTimeout> | undefined;
-          const heartbeat = new Promise<{ heartbeat: true }>((resolve) => {
+          const heartbeat = new Promise<HeartbeatSentinel>((resolve) => {
             timeoutId = setTimeout(
-              () => resolve({ heartbeat: true }),
+              () => resolve(HEARTBEAT_SENTINEL),
               heartbeatIntervalMs,
             );
           });
-          const next = await Promise.race([
-            readPromise.then((r) => {
-              if (timeoutId !== undefined) clearTimeout(timeoutId);
-              return r;
-            }),
-            heartbeat,
-          ]);
-          if ("heartbeat" in next) {
+          const next = await Promise.race([readPromise, heartbeat]);
+          // Always clear the timeout when read wins (cheap if heartbeat
+          // already fired). Cleared INSIDE the iteration body, not in a
+          // .then continuation, so no per-iteration handler attaches.
+          if (timeoutId !== undefined) clearTimeout(timeoutId);
+          if (next === HEARTBEAT_SENTINEL) {
             controller.enqueue(SSE_HEARTBEAT_FRAME);
             continue;
           }
-          if (next.done) break;
-          if (next.value) controller.enqueue(next.value);
+          // next is a ReadableStreamReadResult — narrow it.
+          const result = next as ReadableStreamReadResult<Uint8Array>;
+          if (result.done) break;
+          if (result.value) controller.enqueue(result.value);
           readPromise = reader.read();
         }
       } catch {

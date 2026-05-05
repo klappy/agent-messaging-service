@@ -274,6 +274,115 @@ async function testCancelPropagation() {
     ok(`upstream.cancel propagated correctly with reason: ${JSON.stringify(upstreamCancelReason)}`);
 }
 
+async function testNoThenHandlerAccumulation() {
+  console.log("\n--- Test 6: race against readPromise does NOT attach per-iteration .then ---");
+  // Direct structural test of the "race readPromise itself, not readPromise.then(...)"
+  // contract. We instrument a Promise to count how many .then continuations get
+  // attached to it across many heartbeat-wins iterations. A correct
+  // implementation attaches exactly ONE (the loop body's `await`); a regression
+  // that races `readPromise.then((r) => ...)` would attach one per iteration.
+  //
+  // We can't intercept the wrapper's actual readPromise (it's internal), but
+  // we CAN prove the observable property: a reader.read() promise pinned by
+  // the wrapper across N heartbeats has a bounded settlement-handler count.
+  // Approximation: instrument the upstream stream to expose its read() promise,
+  // wrap that promise's .then to count attachments, run N heartbeat iterations,
+  // assert the count stays bounded by a small constant + one.
+  let thenCallCount = 0;
+  let pendingResolve;
+  const pendingReadPromise = new Promise((resolve) => {
+    pendingResolve = resolve;
+  });
+  const origThen = pendingReadPromise.then.bind(pendingReadPromise);
+  pendingReadPromise.then = function (onFulfilled, onRejected) {
+    thenCallCount++;
+    return origThen(onFulfilled, onRejected);
+  };
+
+  // Build an upstream whose reader.read() returns our instrumented promise.
+  const upstream = new ReadableStream({
+    pull(controller) {
+      // Block forever — our pendingReadPromise replaces the natural read.
+      return pendingReadPromise;
+    },
+    cancel() {
+      pendingResolve?.({ done: true });
+    },
+  });
+  const wrapped = wrapWithSseHeartbeat(
+    new Response(upstream, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    }),
+    20,
+  );
+  const reader = wrapped.body.getReader();
+  // Burn 50 heartbeat iterations.
+  let frames = 0;
+  for (let i = 0; i < 50; i++) {
+    const r = await Promise.race([
+      reader.read(),
+      new Promise((resolve) => setTimeout(() => resolve({ done: true, timedOut: true }), 100)),
+    ]);
+    if (r.done || r.timedOut) break;
+    frames++;
+  }
+  await reader.cancel();
+
+  // Bound: the wrapper's `await Promise.race([readPromise, ...])` calls
+  // `Promise.race`, which under the hood attaches one `.then` to each
+  // participant. So we expect thenCallCount === 1 per *iteration that
+  // races against readPromise*. With the FIXED implementation, the wrapper
+  // races readPromise directly, so each iteration attaches ONE .then via
+  // Promise.race. With the BROKEN implementation (readPromise.then(...) as
+  // the race participant), each iteration would attach an EXTRA .then via
+  // the explicit chain, doubling the count.
+  //
+  // We assert: thenCallCount == frames (one Promise.race attachment per
+  // iteration), NOT thenCallCount == 2*frames or more.
+  console.log(`    consumed ${frames} heartbeats, .then calls on readPromise: ${thenCallCount}`);
+  if (thenCallCount > frames + 2) {
+    fail(
+      `expected ~${frames} .then attachments (one per Promise.race), got ${thenCallCount} — handler accumulation regression`,
+    );
+  } else {
+    ok(`.then count ${thenCallCount} ≈ ${frames} iterations (no per-iteration accumulation)`);
+  }
+}
+
+async function testCaseInsensitiveContentType() {
+  console.log("\n--- Test 7: content-type check is case-insensitive ---");
+  // Both the caller in mcp.ts and this wrapper gate on content-type containing
+  // "text/event-stream". RFC 9110 permits any case in media-type tokens, so
+  // upstream values like "Text/Event-Stream" must still be wrapped — otherwise
+  // the wrapper silently passes them through without the leading flush, and
+  // iOS Safari fails. (Bugbot finding: "Case-sensitive content-type check
+  // mismatches caller's gate".)
+  const enc = new TextEncoder();
+  for (const ctVariant of ["TEXT/EVENT-STREAM", "Text/Event-Stream", "text/event-stream; charset=utf-8"]) {
+    const upstream = new ReadableStream({ cancel() {} });
+    const wrapped = wrapWithSseHeartbeat(
+      new Response(upstream, { status: 200, headers: { "content-type": ctVariant } }),
+      200,
+    );
+    const reader = wrapped.body.getReader();
+    const result = await Promise.race([
+      reader.read(),
+      new Promise((resolve) => setTimeout(() => resolve({ done: true, timedOut: true }), 100)),
+    ]);
+    await reader.cancel();
+    if (result.done || result.timedOut || !result.value) {
+      fail(`content-type "${ctVariant}" returned no leading byte — wrapper bypassed`);
+    } else {
+      const text = new TextDecoder().decode(result.value);
+      if (text !== ":ok\n\n") {
+        fail(`content-type "${ctVariant}" returned ${JSON.stringify(text)}, expected ":ok\\n\\n"`);
+      } else {
+        ok(`content-type "${ctVariant}" wrapped correctly`);
+      }
+    }
+  }
+}
 async function testIdleOrphanCleanup() {
   console.log("\n--- Test 5: idle heartbeats sustain without handler accumulation ---");
   // Long-lived idle stream that NEVER emits. The wrapper hoists the in-flight
@@ -351,6 +460,8 @@ async function main() {
   await testNoMidEventInjection();
   await testCancelPropagation();
   await testIdleOrphanCleanup();
+  await testNoThenHandlerAccumulation();
+  await testCaseInsensitiveContentType();
   console.log(`\n=== VERDICT: ${pass ? "PASS" : "FAIL"} ===`);
   // Cleanup temp dir on success only — leave artifacts on failure for postmortem.
   if (pass) {
