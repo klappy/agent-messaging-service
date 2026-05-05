@@ -235,6 +235,7 @@ A handful of AMS-overlay constraints govern any change to this repo. Always chec
 - **`ams://canon/decisions/D0011-multi-host-cname-deployment`** — single Worker behind multiple custom domains. The wire never reads the host; the Worker reads `request.headers.get('host')` only when constructing magic links to return.
 - **`ams://canon/constraints/permanent-non-goals`** — the layers AMS will never own. Proposals that would move AMS into one of these are rejected.
 - **`ams://canon/principles/vodka-architecture-applied`** — the four review questions for any proposed change.
+- **`ams://canon/constraints/outcome-verification-via-runnable-artifact`** — any change with a runtime-observable outcome (UI behavior, MCP wrapper behavior, wire frames, deploy behavior) is not done until a runnable artifact in `scripts/` exercises that outcome end-to-end and exits 0. Substrate verification (curl, tsc, unit tests) is necessary but not sufficient. "I tested via curl and it worked" does not rebut a request for verification when the change ships in a UI; "I ran scripts/validate-X.js and it exited 0" does rebut. Existing validators: `scripts/check-homepage-architectural-claims.mjs` (D0013, static), `scripts/validate-homepage-mint.js` (homepage Mint flow, runtime).
 
 If proposing a change to the protocol, the architecture, or the wire, run those four review questions before the proposal lands as a doc edit.
 

@@ -131,6 +131,30 @@ Per [D0012](./canon/decisions/D0012-browser-is-an-mcp-runtime.md), Node and othe
 
 ---
 
+## Local Development
+
+### Verifying changes with runnable artifacts
+
+Per [`canon/constraints/outcome-verification-via-runnable-artifact`](./canon/constraints/outcome-verification-via-runnable-artifact.md), any change that touches a runtime-observable surface must be verified by a runnable artifact in [`scripts/`](./scripts/) before completion is claimed. The verification artifact lives in the repo, exits 0 on pass and 1 on regression, and is run on demand by the contributor authoring the change.
+
+Two validators exist today:
+
+- **`scripts/check-homepage-architectural-claims.mjs`** — static check enforcing [D0013](./canon/decisions/D0013-homepage-as-poc-surface.md). Scans the homepage's architectural surfaces (title, meta description, og tags, hero subhead) for forbidden cardinality patterns. Run with:
+  ```bash
+  node scripts/check-homepage-architectural-claims.mjs
+  ```
+
+- **`scripts/validate-homepage-mint.js`** — runtime check covering the homepage Mint flow against the deployed AMS wrapper. Fetches the live HTML, drives a Playwright browser through the Mint click, asserts a magic_link populates and zero error frames appear. Run with:
+  ```bash
+  node scripts/validate-homepage-mint.js                          # validates ams.truthkit.ai
+  AMS_URL=https://ams.klappy.dev node scripts/validate-homepage-mint.js
+  ```
+
+When a regression surfaces in production that an existing validator should have caught, the validator is extended to cover the regression as part of the fix PR. When a new runtime surface ships without a validator, authoring one is part of shipping the surface.
+
+### Substrate-only verification is not sufficient
+
+Curl tests, `tsc --noEmit`, unit tests, and `wrangler deploy --dry-run` are all useful inputs to a verification claim, but none of them constitutes outcome verification when the change ships in a UI or alters runtime behavior. The seductive failure mode is "I tested it via curl and it worked" — substrate-level assertions cannot catch UI-level bugs because the UI is the substrate's first-and-only consumer for those failure modes. The discipline is: outcome assertions on the actual surface, encoded as a runnable artifact, before "done" is claimed.
 ## Documents
 
 - [`SPEC.md`](./SPEC.md) — **the contract.** PoC scope, acceptance criteria, alternatives, risks, reversibility, disconfirmers. Read first.
