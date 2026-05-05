@@ -110,12 +110,20 @@ export async function handleMcp(
   env: Env,
   prebind?: McpPrebind,
 ): Promise<Response> {
+  // The prebind only affects POST (initialize / prompts / resources /
+  // ams_join answer differently when a conversation is pre-bound from the
+  // URL). OPTIONS, GET (SSE), and DELETE are session-scoped: they look up
+  // the SessionDO via the `mcp-session-id` header, which already encodes
+  // (account_id, conversation_id) per D0019. They are still passed the
+  // prebind so the route's call shape is uniform — handlers that don't
+  // need it ignore it. Future maintainers: this is intentional, not an
+  // oversight.
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: MCP_CORS });
   }
   if (req.method === "POST") return handleMcpPost(req, env, prebind);
-  if (req.method === "GET") return handleMcpGet(req, env);
-  if (req.method === "DELETE") return handleMcpDelete(req, env);
+  if (req.method === "GET") return handleMcpGet(req, env, prebind);
+  if (req.method === "DELETE") return handleMcpDelete(req, env, prebind);
   return errorResponse(
     405,
     "method_not_allowed",
@@ -192,12 +200,23 @@ async function handleMcpPost(
   return jsonRpcErrorResponse(rpc.id ?? null, -32601, `Method not found: ${rpc.method}`, 404);
 }
 
-// GET /mcp — SSE leg. Per D0019 cooperative tenants, multiple transport
-// sessions under the same account+conversation may attach concurrently.
-async function handleMcpGet(req: Request, env: Env): Promise<Response> {
+// GET — SSE leg of the MCP Streamable HTTP transport. Per D0019 cooperative
+// tenants, multiple transport sessions under the same account+conversation
+// may attach concurrently. Reachable via /mcp and via the magic-link route
+// per D0023; the prebind is unused here because the SSE leg routes by
+// `mcp-session-id`, which already names (account_id, conversation_id).
+async function handleMcpGet(
+  req: Request,
+  env: Env,
+  _prebind?: McpPrebind,
+): Promise<Response> {
   const sessionId = req.headers.get("mcp-session-id");
   if (!sessionId) {
-    return errorResponse(400, "missing_session", "mcp-session-id header required for GET /mcp.");
+    return errorResponse(
+      400,
+      "missing_session",
+      "mcp-session-id header required to open the MCP SSE notification stream.",
+    );
   }
   const account = await authenticate(req, env);
   if (account instanceof Response) return account;
@@ -218,7 +237,14 @@ async function handleMcpGet(req: Request, env: Env): Promise<Response> {
   return new Response(resp.body, { status: resp.status, headers });
 }
 
-async function handleMcpDelete(req: Request, env: Env): Promise<Response> {
+// DELETE — MCP Streamable HTTP session teardown. Reachable via /mcp and via
+// the magic-link route per D0023; the prebind is unused here because
+// teardown routes by `mcp-session-id` (D0019 keying).
+async function handleMcpDelete(
+  req: Request,
+  env: Env,
+  _prebind?: McpPrebind,
+): Promise<Response> {
   const sessionId = req.headers.get("mcp-session-id");
   if (!sessionId) return new Response(null, { status: 204, headers: MCP_CORS });
   const account = await authenticate(req, env);

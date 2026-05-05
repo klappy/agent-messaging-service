@@ -133,12 +133,19 @@ export default {
     if (convAliasMatch) {
       const ns = convAliasMatch[1]!;
       const alias = convAliasMatch[2]!;
+      const permissive = url.searchParams.get("t");
+      // Build the prebind once for any MCP-method forwarding on this route.
+      // It only carries the route context (ns / alias / permissive); handlers
+      // that don't need it (OPTIONS, GET-SSE, DELETE) accept it and ignore it.
+      // POST is the only handler that resolves the conversation record from
+      // these fields, so the lack of `?t=` only fails POST below.
+      const prebind = permissive ? { ns, alias, permissive } : undefined;
       if (method === "GET" || method === "HEAD") {
         const isMcpSse =
           req.headers.get("mcp-session-id") !== null ||
           (req.headers.get("accept") ?? "").toLowerCase().includes("text/event-stream");
         if (isMcpSse && method === "GET") {
-          return handleMcp(req, env);
+          return handleMcp(req, env, prebind);
         }
         return method === "HEAD" ? homepageHeadResponse() : homepageResponse();
       }
@@ -151,21 +158,20 @@ export default {
             "Magic-link MCP transport requires Content-Type: application/json with a JSON-RPC body.",
           );
         }
-        const permissive = url.searchParams.get("t");
-        if (!permissive) {
+        if (!prebind) {
           return errorResponse(
             400,
             "invalid_magic_link",
             "Magic-link route requires the permissive token at ?t=<token>.",
           );
         }
-        return handleMcp(req, env, { ns, alias, permissive });
+        return handleMcp(req, env, prebind);
       }
       if (method === "OPTIONS") {
-        return handleMcp(req, env);
+        return handleMcp(req, env, prebind);
       }
       if (method === "DELETE") {
-        return handleMcp(req, env);
+        return handleMcp(req, env, prebind);
       }
     }
 
