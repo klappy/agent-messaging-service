@@ -1,0 +1,24 @@
+name = "tincan"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+# TinCan owns the human-facing surfaces on tincan.truthkit.ai per
+# ams://canon/decisions/D0026. AMS owns the protocol substrate on
+# ams.truthkit.ai / ams.klappy.dev. Two Workers, one monorepo.
+routes = [
+  { pattern = "tincan.truthkit.ai",  custom_domain = true },
+  { pattern = "tincan.klappy.dev",   custom_domain = true }
+]
+
+# Service binding to AMS Worker — used to proxy MCP POST and SSE GET
+# from the magic link portal route to AMS, per D0023 (magic link URL
+# is the MCP transport endpoint; that URL now lives on TinCan's domain).
+# Cloudflare service bindings are same-process calls — zero network hop.
+[[services]]
+binding = "AMS"
+service = "ams"
+
+[observability.logs]
+enabled = true
+invocation_logs = true
