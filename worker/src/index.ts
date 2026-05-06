@@ -2,7 +2,8 @@ import { createAccount } from "./accounts";
 import { authenticate } from "./auth";
 import { ConversationDO, type JoinPayload, wsClose } from "./conversation";
 import { ALIAS_KEY, CONVERSATION_KEY } from "./conversations";
-import { homepageHeadResponse, homepageResponse, homepageResponseForConversation } from "./homepage";
+// Homepage and portal surfaces have moved to the TinCan Worker per
+// ams://canon/decisions/D0026. AMS is substrate-only: no UI, no HTML.
 import { AmsMcpAgent, handleMcp } from "./mcp";
 import type { ConversationRecord, Env } from "./types";
 import {
@@ -39,13 +40,6 @@ export default {
     const path = url.pathname;
     const method = req.method;
 
-    // Homepage — POC marketing surface served by the same Worker so the page
-    // is genuinely same-origin with the API it demonstrates. Day 1 scope add;
-    // does not modify the SPEC §3.1 smoke surface (accounts + conversations).
-    if ((method === "GET" || method === "HEAD") && (path === "/" || path === "/index.html")) {
-      return method === "HEAD" ? homepageHeadResponse() : homepageResponse();
-    }
-
     // Health probe — POC-INFRA §13. Both ams.klappy.dev and ams.truthkit.ai
     // must answer 200 here per D0011. Pre-flight + GET both carry CORS so
     // browser-based monitors and the homepage's own pill can poll either host.
@@ -81,6 +75,18 @@ export default {
       return handleMcp(req, env, ctx);
     }
 
+    // GET /v1/{namespace}/conversations/{alias} — conversation metadata.
+    // Read-only. Returns namespace, alias, created_at, and metadata (including
+    // operator instructions). Used by TinCan portal JS to populate the UI.
+    // No auth required — permissive token in query param validates access.
+    const convGetMatch = path.match(/^\/v1\/([^/]+)\/conversations\/([^/]+)\/?$/);
+    if (method === "GET" && convGetMatch) {
+      const ns = convGetMatch[1]!;
+      const alias = convGetMatch[2]!;
+      const permissive = url.searchParams.get("t");
+      return getConversation(env, ns, alias, permissive);
+    }
+
     // POST /v1/{namespace}/conversations
     const convMintMatch = path.match(/^\/v1\/([^/]+)\/conversations\/?$/);
     if (method === "POST" && convMintMatch) {
@@ -102,69 +108,41 @@ export default {
       return handleConnect(req, env, ns, alias, url);
     }
 
-    // Magic-link route alias per ams://canon/decisions/D0023, executed on the
-    // SDK substrate per ams://canon/decisions/D0024. Single transport path —
-    // POST/GET/DELETE/OPTIONS all forward to handleMcp, which rewrites the URL
-    // to /mcp before dispatch. The SDK's WorkerTransport handles the four
-    // verbs uniformly; what used to be four bug-bot fix sites in the handroll
-    // is one props-population step now.
+    // Magic-link route — MCP transport only per ams://canon/decisions/D0023.
+    // Browser GETs are handled by the TinCan Worker (D0026) which proxies
+    // MCP POST/SSE/DELETE/OPTIONS here via service binding. AMS serves no
+    // HTML on this route — it is substrate only.
     //
-    //   GET / HEAD with browser Accept → tincan homepage UI (D0012). Browsers
-    //     cannot speak Streamable HTTP MCP, so navigations land on the UI.
-    //   GET with Accept: text/event-stream OR mcp-session-id header → MCP SSE
-    //     notification leg, dispatched through the SDK.
+    //   GET with mcp-session-id or Accept: text/event-stream → MCP SSE leg
+    //   POST with application/json → MCP initialize / tool calls
+    //   DELETE / OPTIONS → MCP transport lifecycle
+    //   Browser GET (no MCP headers) → 404 (TinCan owns the portal UI)
     const convAliasMatch = path.match(/^\/([^/]+)\/conversations\/([^/]+)\/?$/);
     if (convAliasMatch) {
       const ns = convAliasMatch[1]!;
       const alias = convAliasMatch[2]!;
       const permissive = url.searchParams.get("t");
       const prebind = permissive ? { ns, alias, permissive } : undefined;
-      if (method === "GET" || method === "HEAD") {
+
+      if (method === "GET") {
         const isMcpSse =
           req.headers.get("mcp-session-id") !== null ||
           (req.headers.get("accept") ?? "").toLowerCase().includes("text/event-stream");
-        if (isMcpSse && method === "GET") {
-          return handleMcp(req, env, ctx, prebind);
-        }
-        if (method === "HEAD") return homepageHeadResponse();
-        // Browser/web_fetch GET on a magic-link route: serve the homepage
-        // with conversation context embedded so (a) the page JS auto-joins
-        // the existing conversation instead of waiting for a Mint click,
-        // and (b) a model receiving this URL via web_fetch sees actionable
-        // signal (title, meta tags) that this is a join target. Without the
-        // permissive token we cannot embed a usable join — fall back to the
-        // bare homepage in that case (link is structurally invalid anyway).
-        if (permissive) {
-          return homepageResponseForConversation({
-            magicLink: url.toString(),
-            namespace: ns,
-            alias,
-          });
-        }
-        return homepageResponse();
+        if (isMcpSse) return handleMcp(req, env, ctx, prebind);
+        // Plain browser GET — not AMS's surface any more.
+        return errorResponse(404, "not_found", "Browser portal is served by TinCan. For MCP, include Accept: text/event-stream or mcp-session-id.");
       }
       if (method === "POST") {
         const ct = (req.headers.get("content-type") ?? "").toLowerCase();
         if (!ct.includes("application/json")) {
-          return errorResponse(
-            415,
-            "unsupported_media_type",
-            "Magic-link MCP transport requires Content-Type: application/json with a JSON-RPC body.",
-          );
+          return errorResponse(415, "unsupported_media_type", "Magic-link MCP transport requires Content-Type: application/json with a JSON-RPC body.");
         }
         if (!prebind) {
-          return errorResponse(
-            400,
-            "invalid_magic_link",
-            "Magic-link route requires the permissive token at ?t=<token>.",
-          );
+          return errorResponse(400, "invalid_magic_link", "Magic-link route requires the permissive token at ?t=<token>.");
         }
         return handleMcp(req, env, ctx, prebind);
       }
-      if (method === "OPTIONS") {
-        return handleMcp(req, env, ctx, prebind);
-      }
-      if (method === "DELETE") {
+      if (method === "OPTIONS" || method === "DELETE") {
         return handleMcp(req, env, ctx, prebind);
       }
     }
@@ -172,6 +150,28 @@ export default {
     return errorResponse(404, "not_found", `No route for ${method} ${path}.`);
   },
 };
+
+// GET /v1/{ns}/conversations/{alias} — read conversation metadata.
+// Validates permissive token (same check as /connect). Returns public fields.
+async function getConversation(env: Env, ns: string, alias: string, permissive: string | null): Promise<Response> {
+  if (!permissive) return errorResponse(400, "missing_token", "Permissive token required at ?t=<token>.");
+  const conversationId = await env.AMS_KV.get(ALIAS_KEY(ns, alias));
+  if (!conversationId) return errorResponse(404, "not_found", "Conversation not found.");
+  const recordRaw = await env.AMS_KV.get(CONVERSATION_KEY(conversationId));
+  if (!recordRaw) return errorResponse(404, "not_found", "Conversation not found.");
+  const record = JSON.parse(recordRaw) as ConversationRecord;
+  const tokenHash = await pepperedHash(env.AMS_PERMISSIVE_TOKEN_PEPPER, permissive);
+  if (!timingSafeEqualHex(tokenHash, record.permissive_token_hash)) {
+    return errorResponse(403, "invalid_token", "Invalid permissive token.");
+  }
+  return jsonResponse({
+    conversation_id: record.conversation_id,
+    namespace: record.namespace,
+    alias: record.alias,
+    metadata: record.metadata,
+    created_at: record.created_at,
+  });
+}
 
 // Lazy import to avoid a circular dep (conversations.ts pulls util.ts which is fine).
 import { createConversation } from "./conversations";
