@@ -2,8 +2,9 @@ import { createAccount } from "./accounts";
 import { authenticate } from "./auth";
 import { ConversationDO, type JoinPayload, wsClose } from "./conversation";
 import { ALIAS_KEY, CONVERSATION_KEY } from "./conversations";
-// Homepage and portal surfaces have moved to the TinCan Worker per
-// ams://canon/decisions/D0026. AMS is substrate-only: no UI, no HTML.
+import { homepageHeadResponse, homepageResponse } from "./homepage";
+// Homepage and portal surfaces will move to the TinCan Worker per
+// ams://canon/decisions/D0026 once tincan.klappy.dev is live.
 import { AmsMcpAgent, handleMcp } from "./mcp";
 import type { ConversationRecord, Env } from "./types";
 import {
@@ -39,6 +40,12 @@ export default {
     const url = new URL(req.url);
     const path = url.pathname;
     const method = req.method;
+
+    // Homepage — mint surface. TinCan will own this eventually (D0026) but
+    // until tincan.klappy.dev is live, AMS continues to serve it.
+    if ((method === "GET" || method === "HEAD") && (path === "/" || path === "/index.html")) {
+      return method === "HEAD" ? homepageHeadResponse() : homepageResponse();
+    }
 
     // Health probe — POC-INFRA §13. Both ams.klappy.dev and ams.truthkit.ai
     // must answer 200 here per D0011. Pre-flight + GET both carry CORS so
