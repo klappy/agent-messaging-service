@@ -185,7 +185,11 @@ export function mintPageResponse(): Response {
         const body = {};
         if (instructions) body.metadata = { instructions };
 
-        const res = await fetch(AMS_BASE + '/v1/' + encodeURIComponent(ns) + '/conversations', {
+        // Same-origin POST: TinCan proxies /v1/{ns}/conversations to AMS via
+        // service binding. Cross-origin POST to AMS_BASE would trigger a CORS
+        // preflight that AMS does not answer for /v1/* (control-plane is
+        // intentionally same-origin only).
+        const res = await fetch('/v1/' + encodeURIComponent(ns) + '/conversations', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

@@ -22,6 +22,15 @@ export default {
       return mintPageResponse();
     }
 
+    // Same-origin proxy for the mint control-plane call. AMS's /v1/* is
+    // intentionally same-origin only (no CORS), so the browser cannot POST
+    // cross-origin from tincan.truthkit.ai → ams.truthkit.ai. We proxy via
+    // the service binding instead — zero network hop, no preflight needed.
+    const v1MintMatch = path.match(/^\/v1\/([^/]+)\/conversations\/?$/);
+    if (method === "POST" && v1MintMatch) {
+      return proxyV1ToAms(req, env, url);
+    }
+
     // Portal route — /{ns}/conversations/{alias}?t=<permissive>
     // Per ams://canon/decisions/D0025 and D0026:
     //   Browser GET → conversation portal (history, live stream, send surface)
@@ -75,6 +84,19 @@ export default {
 // Service bindings are same-process Cloudflare calls — zero network hop, no egress.
 // Rewrites the URL from tincan.truthkit.ai to ams.truthkit.ai preserving path + query.
 async function proxyToAms(req: Request, env: Env, ns: string, alias: string, url: URL): Promise<Response> {
+  const amsUrl = new URL(AMS_BASE + url.pathname + url.search);
+  const proxied = new Request(amsUrl.toString(), {
+    method: req.method,
+    headers: req.headers,
+    body: req.body,
+  });
+  return env.AMS.fetch(proxied);
+}
+
+// Same-origin proxy for /v1/* control-plane calls (e.g. POST /v1/{ns}/conversations).
+// AMS does not allow CORS on /v1/*, so the browser cannot call it cross-origin
+// from tincan.truthkit.ai. Proxying via the service binding avoids the preflight.
+async function proxyV1ToAms(req: Request, env: Env, url: URL): Promise<Response> {
   const amsUrl = new URL(AMS_BASE + url.pathname + url.search);
   const proxied = new Request(amsUrl.toString(), {
     method: req.method,

@@ -1,5 +1,18 @@
 const AMS_BASE = "https://ams.truthkit.ai";
 
+// Escape strings that flow into HTML attribute or text contexts. The portal
+// HTML interpolates several attacker-influenceable values (namespace, alias,
+// the permissive token via amsMagicLink, etc.) — without escaping these would
+// be reflected XSS sinks on the TinCan origin.
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 export interface PortalParams {
   namespace: string;
   alias: string;
@@ -42,14 +55,16 @@ Full protocol: ${AMS_BASE}/PROTOCOL.md
 }
 
 export function portalResponse(p: PortalParams): Response {
-  const joinInstructions = buildJoinInstructions(p);
+  const joinInstructions = escapeHtml(buildJoinInstructions(p));
+  const nsHtml = escapeHtml(p.namespace);
+  const aliasHtml = escapeHtml(p.alias);
 
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TinCan — ${p.namespace}/${p.alias}</title>
+  <title>TinCan — ${nsHtml}/${aliasHtml}</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -214,7 +229,7 @@ export function portalResponse(p: PortalParams): Response {
     <div class="auth-box">
       <h2>Join Conversation</h2>
       <p>
-        <strong>${p.namespace}/${p.alias}</strong><br>
+        <strong>${nsHtml}/${aliasHtml}</strong><br>
         Enter your AMS bearer token to join as a peer.
         You'll observe and can send messages to the AI agents in this conversation.
       </p>
@@ -230,7 +245,7 @@ export function portalResponse(p: PortalParams): Response {
 
   <!-- Main portal -->
   <div class="header">
-    <span class="header-title"><strong>${p.namespace}</strong> / ${p.alias}</span>
+    <span class="header-title"><strong>${nsHtml}</strong> / ${aliasHtml}</span>
     <span class="status-dot" id="status-dot"></span>
   </div>
   <div class="stream" id="stream"></div>
@@ -413,13 +428,26 @@ export function portalResponse(p: PortalParams): Response {
     }
 
     function renderFrame(frame) {
-      if (frame.type === 'stream_joined') {
-        addEvent('joined', frame.stream_name + ' joined', null);
-      } else if (frame.type === 'stream_left') {
-        addEvent('left', frame.stream_name + ' left', null);
-      } else if (frame.type === 'token') {
-        const isOwn = frame.stream_name === streamName;
-        addEvent('token' + (isOwn ? ' own' : ''), frame.data, frame.stream_name);
+      // ams_recv buffers MCP-shaped notifications: { method, params }.
+      // Extract the wire fields from params, falling back to top-level for
+      // any future shape that delivers them directly.
+      const method = frame && frame.method;
+      const params = (frame && frame.params) || frame || {};
+      const type = method
+        ? (method === 'notifications/ams/token' ? 'token'
+          : method === 'notifications/ams/stream_joined' ? 'stream_joined'
+          : method === 'notifications/ams/stream_left' ? 'stream_left'
+          : method === 'notifications/ams/stream_metadata' ? 'stream_metadata'
+          : null)
+        : frame.type;
+
+      if (type === 'stream_joined') {
+        addEvent('joined', params.stream_name + ' joined', null);
+      } else if (type === 'stream_left') {
+        addEvent('left', params.stream_name + ' left', null);
+      } else if (type === 'token') {
+        const isOwn = params.stream_name === streamName;
+        addEvent('token' + (isOwn ? ' own' : ''), params.data, params.stream_name);
       }
     }
 
