@@ -116,7 +116,7 @@ export function homepageResponse(): Response {
 <body>
   <div class="scene">
 
-    <svg class="illustration" viewBox="0 0 460 120" xmlns="http://www.w3.org/2000/svg">
+    <svg class="illustration" viewBox="0 0 460 125" xmlns="http://www.w3.org/2000/svg">
 
       <!-- LEFT CAN -->
       <g transform="translate(48, 10)">
@@ -161,6 +161,7 @@ export function homepageResponse(): Response {
           dur="3.2s"
           repeatCount="indefinite"
           calcMode="spline"
+          keyTimes="0; 0.5; 1"
           keySplines="0.45 0 0.55 1; 0.45 0 0.55 1"
           values="
             M 90 26 Q 230 72 370 26;
