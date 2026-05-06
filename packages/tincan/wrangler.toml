@@ -17,7 +17,7 @@ routes = [
 # Cloudflare service bindings are same-process calls — zero network hop.
 [[services]]
 binding = "AMS"
-service = "ams"
+service = "agent-messaging-service"
 
 [observability]
 enabled = true
@@ -28,8 +28,3 @@ enabled = true
 head_sampling_rate = 1
 persist = true
 invocation_logs = true
-
-[observability.traces]
-enabled = true
-persist = true
-head_sampling_rate = 1
