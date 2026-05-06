@@ -393,7 +393,15 @@ export function portalResponse(p: PortalParams): Response {
             (data.frames || []).forEach(renderFrame);
           }
         }
-      } catch {}
+      } catch (e) {
+        if (e && e.message === 'auth_expired') {
+          setStatus('error', 'session expired');
+          addEvent('system', 'Session expired — please reload to reconnect.');
+          sendInput.disabled = true;
+          sendBtn.disabled = true;
+          return;
+        }
+      }
       pollTimer = setTimeout(poll, 100);
     }
 
