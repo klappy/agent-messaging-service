@@ -10,10 +10,7 @@ export function homepageResponse(): Response {
 
     :root {
       --rust:      #c0392b;
-      --tin:       #8c9aa0;
-      --tin-light: #b8c6cc;
       --tin-dark:  #4a5568;
-      --string:    #c8a96e;
       --cream:     #f5f0e8;
       --ink:       #1a1a18;
     }
@@ -31,7 +28,6 @@ export function homepageResponse(): Response {
       justify-content: center;
       padding: 2rem;
       position: relative;
-      overflow: hidden;
     }
 
     /* Paper grain */
@@ -59,11 +55,6 @@ export function homepageResponse(): Response {
       width: 100%;
       max-width: 460px;
       margin-bottom: 1.5rem;
-    }
-
-    @keyframes sway {
-      0%, 100% { d: path("M 140 34 Q 230 76 320 34"); }
-      50%       { d: path("M 140 34 Q 230 64 320 34"); }
     }
 
     /* ── Typography ── */
@@ -164,7 +155,7 @@ export function homepageResponse(): Response {
         stroke-width="1.8"
         stroke-linecap="round"
         fill="none"
-        d="M 132 26 Q 230 72 328 26">
+        d="M 90 26 Q 230 72 370 26">
         <animate
           attributeName="d"
           dur="3.2s"
@@ -172,15 +163,15 @@ export function homepageResponse(): Response {
           calcMode="spline"
           keySplines="0.45 0 0.55 1; 0.45 0 0.55 1"
           values="
-            M 132 26 Q 230 72 328 26;
-            M 132 26 Q 230 60 328 26;
-            M 132 26 Q 230 72 328 26"
+            M 90 26 Q 230 72 370 26;
+            M 90 26 Q 230 60 370 26;
+            M 90 26 Q 230 72 370 26"
         />
       </path>
 
       <!-- String anchor dots -->
-      <circle fill="#c8a96e" cx="132" cy="26" r="2.5"/>
-      <circle fill="#c8a96e" cx="328" cy="26" r="2.5"/>
+      <circle fill="#c8a96e" cx="90" cy="26" r="2.5"/>
+      <circle fill="#c8a96e" cx="370" cy="26" r="2.5"/>
 
     </svg>
 
