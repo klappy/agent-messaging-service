@@ -14,20 +14,28 @@ These were produced or refined during a debrief session on the afternoon of 2026
 - `SESSION-OVERVIEW-2026-05-06.md` — v3 session overview synthesizing all three waves of the debrief.
 - `exec-summary-tim-ian.md` — Operator's exec summary from the prior-night session (2026-05-05), provided as session input. Originally generated alongside encodes 01-08.
 
-## What's NOT in this commit (pending operator)
+## Where encodes 01–08 live
 
-Yesterday's encodes (01–08), produced during the 2026-05-05 strategy session, exist in operator's local filesystem and need to be committed separately. They are:
+Yesterday's encodes (01–08), produced during the 2026-05-05 strategy session, were committed by the operator (commit `af729c2`) in a different directory:
 
-- `encode-01-unit-economics-moat.md` — Insight (L+H, encoded). Cost math + structural self-host defense moat.
-- `encode-02-three-vertical-wedges.md` — Observation (O+L+H, encoded). Three structurally-locked B2B verticals.
-- `encode-03-open-closed-ip-cut-proposal.md` — Proposal (D, proposed). Open/closed IP cut for AMS+TinCan.
-- `encode-04-tincan-tier-structure-proposal.md` — Proposal (D, proposed). Initial tier structure. Largely superseded by encode-10.
-- `encode-05-brand-voice-posture.md` — Insight (H, observed). The "we know that" pitch posture.
-- `encode-06-enterprise-tier-structure-e1-e4-proposal.md` — Proposal (D, proposed). Four enterprise tiers.
-- `encode-07-customer-funded-b2c-funds-b2b-strategy.md` — Proposal (D, proposed). Customer-funded growth strategy.
-- `encode-08-open-core-enterprise-pricing-market-data.md` — Learning (L, observed). Open-core enterprise pricing market comp data.
+```
+journal/sessions/2026-05-06-tim-ian-brief/
+├── encodes/
+│   ├── encode-01-unit-economics-moat.md
+│   ├── encode-02-three-vertical-wedges.md
+│   ├── encode-03-open-closed-ip-cut-proposal.md
+│   ├── encode-04-tincan-tier-structure-proposal.md
+│   ├── encode-05-brand-voice-posture.md
+│   ├── encode-06-enterprise-tier-structure-e1-e4-proposal.md
+│   ├── encode-07-customer-funded-b2c-funds-b2b-strategy.md
+│   └── encode-08-open-core-enterprise-pricing-market-data.md
+├── exec-summary-tim-ian.md
+└── README.md
+```
 
-The wave-3 encodes (09–13) reference these via URI (`ams://encodes/2026-05-06/{slug}`). The URI namespace is logical, not file-path. References resolve once 01–08 land in this directory in a follow-up commit.
+The wave-3 encodes here (09–13) reference 01–08 by URI (`ams://encodes/2026-05-06/{slug}`). The URI namespace is logical, not file-path, so cross-references resolve regardless of physical location.
+
+Note: this directory contains a copy of `exec-summary-tim-ian.md` that duplicates the one in `journal/sessions/2026-05-06-tim-ian-brief/`. Operator may want to consolidate to one location; flagged for cleanup.
 
 ## Status of the batch
 

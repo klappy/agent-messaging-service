@@ -682,7 +682,8 @@ For NotebookLM and downstream content authors: this overview synthesizes from th
 - **`canon/decisions/D0001…D0026`** — 26 active canon decisions.
 - **`canon/principles/*`, `canon/constraints/*`, `canon/proposals/*`** — supporting governance layer.
 - **`journal/2026-05-01…2026-05-06`** — DOLCHEO+H TSV provenance journals, day-by-day record.
-- **`encodes/2026-05-06/*`** — strategic encodes from this week (09–13 + session overview committed; 01–08 in operator's local FS pending commit).
+- **`encodes/2026-05-06/*`** — wave-3 strategic encodes from this week (09–13), the v3 session overview, and this comprehensive overview document.
+- **`journal/sessions/2026-05-06-tim-ian-brief/encodes/*`** — wave-1/wave-2 strategic encodes from the prior-night strategy session (01–08) plus the Tim/Ian executive summary.
 
 ### Conversation context as supplement
 
