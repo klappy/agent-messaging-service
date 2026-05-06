@@ -13,6 +13,19 @@ function escapeHtml(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
+// Serialize a value for safe interpolation inside an inline <script> block.
+// JSON.stringify alone is unsafe: a string containing "</script>" terminates
+// the script element even though it's syntactically a valid JS string. Also
+// neutralize U+2028/U+2029, which are valid JSON but illegal in JS strings.
+function jsonForScript(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
 export interface PortalParams {
   namespace: string;
   alias: string;
@@ -255,12 +268,12 @@ export function portalResponse(p: PortalParams): Response {
   </div>
 
   <script>
-    const NS = ${JSON.stringify(p.namespace)};
-    const ALIAS = ${JSON.stringify(p.alias)};
-    const PERMISSIVE = ${JSON.stringify(p.permissive)};
-    const AMS_BASE = ${JSON.stringify(AMS_BASE)};
+    const NS = ${jsonForScript(p.namespace)};
+    const ALIAS = ${jsonForScript(p.alias)};
+    const PERMISSIVE = ${jsonForScript(p.permissive)};
+    const AMS_BASE = ${jsonForScript(AMS_BASE)};
     const CONNECT_URL = AMS_BASE + '/' + NS + '/conversations/' + ALIAS + '/connect?t=' + PERMISSIVE;
-    const MCP_URL = ${JSON.stringify(p.amsMagicLink)};
+    const MCP_URL = ${jsonForScript(p.amsMagicLink)};
 
     let ws = null;
     let bearer = null;
@@ -391,6 +404,14 @@ export function portalResponse(p: PortalParams): Response {
           }
         });
         if (joinRes?.error) throw new Error(joinRes.error.message);
+        // AMS tool failures surface as JSON-RPC results with isError: true,
+        // not as top-level errors. Treat those as join failures so a bad
+        // bearer or stream-name conflict doesn't masquerade as success.
+        if (joinRes?.result?.isError) {
+          const errText = (joinRes.result.content || [])
+            .find(c => c && c.type === 'text')?.text;
+          throw new Error(errText || 'ams_join failed');
+        }
 
         setStatus('connected');
         addEvent('joined', 'Joined as ' + streamName, null);
