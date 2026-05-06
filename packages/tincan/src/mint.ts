@@ -263,7 +263,7 @@ export function mintPageResponse(): Response {
     const openLink   = document.getElementById('open-link');
     const badgeEl    = document.getElementById('account-badge');
 
-    let account = null; // { namespace, account_id, bearer }
+    let account = null; // { namespace, account_id, credential }
 
     function showError(msg) {
       errorEl.textContent = msg;
@@ -291,7 +291,7 @@ export function mintPageResponse(): Response {
       const namespace = 'tincan-' + Array.from(crypto.getRandomValues(new Uint8Array(4)))
         .map(b => b.toString(16).padStart(2,'0')).join('');
 
-      const res = await fetch(AMS_BASE + '/v1/accounts', {
+      const res = await fetch('/v1/accounts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ namespace }),
@@ -306,7 +306,7 @@ export function mintPageResponse(): Response {
       return {
         namespace,
         account_id: data.account_id,
-        bearer: data.bearer,
+        credential: data.credential,
       };
     }
 
@@ -346,12 +346,12 @@ export function mintPageResponse(): Response {
         if (instructions) body.metadata = { instructions };
 
         const res = await fetch(
-          AMS_BASE + '/v1/' + encodeURIComponent(account.namespace) + '/conversations',
+          '/v1/' + encodeURIComponent(account.namespace) + '/conversations',
           {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': 'Bearer ' + account.bearer,
+              'Authorization': 'Bearer ' + account.credential,
             },
             body: JSON.stringify(body),
           }

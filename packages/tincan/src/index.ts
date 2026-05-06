@@ -31,6 +31,11 @@ export default {
       return proxyV1ToAms(req, env, url);
     }
 
+    // Same-origin proxy for account creation. Same CORS rationale as above.
+    if (method === "POST" && path === "/v1/accounts") {
+      return proxyV1ToAms(req, env, url);
+    }
+
     // Portal route — /{ns}/conversations/{alias}?t=<permissive>
     // Per ams://canon/decisions/D0025 and D0026:
     //   Browser GET → conversation portal (history, live stream, send surface)
