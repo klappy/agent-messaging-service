@@ -1,5 +1,4 @@
 const AMS_BASE = "https://ams.truthkit.ai";
-const TINCAN_BASE = "https://tincan.truthkit.ai";
 
 export interface PortalParams {
   namespace: string;
@@ -7,6 +6,18 @@ export interface PortalParams {
   permissive: string;
   magicLink: string;
   amsMagicLink: string;
+}
+
+// HTML-escape values that are interpolated into the portal HTML. Without
+// escaping, p.namespace, p.alias, and the joinInstructions string (which
+// contains p.amsMagicLink) would be reflected XSS sinks on the TinCan origin.
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 function buildJoinInstructions(p: PortalParams): string {
@@ -48,7 +59,7 @@ export function portalResponse(p: PortalParams): Response {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TinCan — ${p.namespace}/${p.alias}</title>
+  <title>TinCan — ${escapeHtml(p.namespace)}/${escapeHtml(p.alias)}</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Special+Elite&family=DM+Mono:wght@400;500&display=swap');
 
@@ -206,11 +217,11 @@ export function portalResponse(p: PortalParams): Response {
 </head>
 <body>
 
-  <pre class="ai-instructions" aria-label="AI agent join instructions">${joinInstructions}</pre>
+  <pre class="ai-instructions" aria-label="AI agent join instructions">${escapeHtml(joinInstructions)}</pre>
 
   <div class="header">
     <a class="header-back" href="/">←</a>
-    <span class="header-title"><strong>${p.namespace}</strong> / ${p.alias}</span>
+    <span class="header-title"><strong>${escapeHtml(p.namespace)}</strong> / ${escapeHtml(p.alias)}</span>
     <div class="status">
       <div class="dot joining" id="dot"></div>
       <span id="status-label">joining…</span>
@@ -254,14 +265,14 @@ export function portalResponse(p: PortalParams): Response {
     async function mintAccount() {
       const namespace = 'tincan-' + Array.from(crypto.getRandomValues(new Uint8Array(4)))
         .map(b => b.toString(16).padStart(2,'0')).join('');
-      const res = await fetch(AMS_BASE + '/v1/accounts', {
+      const res = await fetch('/v1/accounts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ namespace }),
       });
       if (!res.ok) throw new Error('Account mint failed: ' + res.status);
       const data = await res.json();
-      return { namespace, account_id: data.account_id, bearer: data.bearer };
+      return { namespace, account_id: data.account_id, credential: data.credential };
     }
     async function ensureAccount() {
       let a = loadAccount();
@@ -300,7 +311,7 @@ export function portalResponse(p: PortalParams): Response {
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json, text/event-stream',
-          'Authorization': 'Bearer ' + account.bearer,
+          'Authorization': 'Bearer ' + account.credential,
           ...(mcpSessionId ? { 'mcp-session-id': mcpSessionId } : {}),
         },
         body: JSON.stringify(body),
@@ -382,13 +393,14 @@ export function portalResponse(p: PortalParams): Response {
     }
 
     function renderFrame(frame) {
-      if (frame.type === 'stream_joined' && frame.stream_name !== streamName) {
-        addEvent('joined', frame.stream_name + ' joined');
-      } else if (frame.type === 'stream_left') {
-        addEvent('left', frame.stream_name + ' left');
-      } else if (frame.type === 'token') {
-        const own = frame.stream_name === streamName;
-        addEvent(own ? 'own' : 'token', frame.data, own ? null : frame.stream_name);
+      const params = frame.params || {};
+      if (frame.method === 'notifications/ams/stream_joined' && params.stream_name !== streamName) {
+        addEvent('joined', params.stream_name + ' joined');
+      } else if (frame.method === 'notifications/ams/stream_left') {
+        addEvent('left', params.stream_name + ' left');
+      } else if (frame.method === 'notifications/ams/token') {
+        const own = params.stream_name === streamName;
+        addEvent(own ? 'own' : 'token', params.data, own ? null : params.stream_name);
       }
     }
 
