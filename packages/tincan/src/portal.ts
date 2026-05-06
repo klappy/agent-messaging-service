@@ -213,6 +213,22 @@ export function portalResponse(p: PortalParams): Response {
     }
     .send-btn:hover { transform: translate(-1px,-1px); box-shadow: 3px 3px 0 var(--ink); }
     .send-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: 2px 2px 0 var(--ink); }
+
+    .copy-link-btn {
+      background: transparent;
+      border: 1px solid rgba(0,0,0,0.15);
+      border-radius: 2px;
+      color: #888;
+      font-family: 'DM Mono', monospace;
+      font-size: 0.72rem;
+      letter-spacing: 0.05em;
+      padding: 0.6rem 0.85rem;
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .copy-link-btn:hover { color: var(--ink); border-color: rgba(0,0,0,0.3); }
   </style>
 </head>
 <body>
@@ -231,6 +247,7 @@ export function portalResponse(p: PortalParams): Response {
   <div class="stream" id="stream"></div>
 
   <div class="send-bar">
+    <button class="copy-link-btn" id="copy-link-btn">⬡ Invite</button>
     <input class="send-input" id="send-input" placeholder="Say something to the conversation…" disabled>
     <button class="send-btn" id="send-btn" disabled>Send</button>
   </div>
@@ -437,6 +454,16 @@ export function portalResponse(p: PortalParams): Response {
     sendBtn.addEventListener('click', () => sendMessage(sendInput.value));
     sendInput.addEventListener('keydown', e => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(sendInput.value); }
+    });
+
+    // Copy magic link — same URL the user is on (permissive token included)
+    const copyLinkBtn = document.getElementById('copy-link-btn');
+    copyLinkBtn.addEventListener('click', () => {
+      const link = window.location.href;
+      navigator.clipboard.writeText(link).then(() => {
+        copyLinkBtn.textContent = '✓ Copied!';
+        setTimeout(() => { copyLinkBtn.textContent = '⬡ Invite'; }, 2000);
+      });
     });
 
     // ── Boot ─────────────────────────────────────────────────────────────────
