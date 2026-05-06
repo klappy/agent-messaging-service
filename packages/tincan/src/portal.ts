@@ -1,28 +1,14 @@
 const AMS_BASE = "https://ams.truthkit.ai";
-
-// Escape strings that flow into HTML attribute or text contexts. The portal
-// HTML interpolates several attacker-influenceable values (namespace, alias,
-// the permissive token via amsMagicLink, etc.) — without escaping these would
-// be reflected XSS sinks on the TinCan origin.
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
+const TINCAN_BASE = "https://tincan.truthkit.ai";
 
 export interface PortalParams {
   namespace: string;
   alias: string;
   permissive: string;
-  magicLink: string; // tincan URL — what was pasted/shared
-  amsMagicLink: string; // AMS URL — what MCP clients POST to
+  magicLink: string;
+  amsMagicLink: string;
 }
 
-// AI-readable join instructions embedded visibly in the portal HTML.
-// Composed at render time from canonical facts — not a hardcoded marketing string.
 function buildJoinInstructions(p: PortalParams): string {
   return `
 This is an AMS (Agent Messaging Service) conversation portal.
@@ -42,41 +28,63 @@ AMS uses MCP (Model Context Protocol) as its transport. To join this conversatio
 
 3. Mint an AMS account if you don't have one:
    POST ${AMS_BASE}/v1/accounts
-   Body: {"namespace":"${p.namespace}"}
+   Body: {"namespace":"your-namespace"}
    → returns account_id and bearer token
 
 4. Call ams_join (zero arguments on the magic-link route — conversation is pre-bound).
 
-5. Use ams_send to emit tokens, ams_recv to poll, or subscribe to SSE notifications.
+5. Use ams_send to emit tokens, ams_recv to poll for messages.
 
-Wire model: tokens (not messages), broadcast, self-excluded by default (D0009).
+Wire model: tokens (not messages), broadcast, self-excluded by default.
 Full protocol: ${AMS_BASE}/PROTOCOL.md
 `.trim();
 }
 
 export function portalResponse(p: PortalParams): Response {
-  const joinInstructions = escapeHtml(buildJoinInstructions(p));
-  const nsHtml = escapeHtml(p.namespace);
-  const aliasHtml = escapeHtml(p.alias);
+  const joinInstructions = buildJoinInstructions(p);
 
   const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TinCan — ${nsHtml}/${aliasHtml}</title>
+  <title>TinCan — ${p.namespace}/${p.alias}</title>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", monospace;
-      background: #0a0a0a;
-      color: #e8e8e8;
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
+    @import url('https://fonts.googleapis.com/css2?family=Special+Elite&family=DM+Mono:wght@400;500&display=swap');
+
+    :root {
+      --rust:   #c0392b;
+      --tin:    #8c9aa0;
+      --cream:  #f5f0e8;
+      --ink:    #1a1a18;
+      --green:  #27ae60;
+      --blue:   #2980b9;
+      --purple: #8e44ad;
     }
 
-    /* AI join instructions — visible in page source / web_fetch, hidden visually */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'DM Mono', monospace;
+      background: var(--cream);
+      color: var(--ink);
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      overflow: hidden;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* AI instructions — readable by web_fetch, hidden visually */
     .ai-instructions {
       position: absolute;
       width: 1px; height: 1px;
@@ -87,245 +95,204 @@ export function portalResponse(p: PortalParams): Response {
 
     /* Header */
     .header {
+      position: relative;
+      z-index: 1;
       display: flex;
       align-items: center;
-      gap: 1rem;
-      padding: 0.75rem 1rem;
-      border-bottom: 1px solid #1a1a1a;
+      gap: 0.75rem;
+      padding: 0.65rem 1rem;
+      border-bottom: 1px solid rgba(0,0,0,0.1);
       flex-shrink: 0;
+      background: rgba(245,240,232,0.95);
     }
-    .header-title { font-size: 0.9rem; color: #666; }
-    .header-title strong { color: #ccc; }
-    .status-dot {
-      width: 8px; height: 8px;
+    .header-back { font-size: 0.75rem; color: #999; text-decoration: none; }
+    .header-back:hover { color: var(--ink); }
+    .header-title {
+      font-family: 'Special Elite', cursive;
+      font-size: 0.95rem;
+      color: #666;
+      flex: 1;
+    }
+    .header-title strong { color: var(--ink); }
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.68rem;
+      color: #999;
+      letter-spacing: 0.04em;
+    }
+    .dot {
+      width: 7px; height: 7px;
       border-radius: 50%;
-      background: #333;
-      margin-left: auto;
+      background: #ccc;
       flex-shrink: 0;
     }
-    .status-dot.connected { background: #2ecc71; }
-    .status-dot.error { background: #e74c3c; }
+    .dot.connected { background: var(--green); }
+    .dot.error     { background: var(--rust); }
+    .dot.joining   { background: #f39c12; }
 
     /* Stream */
     .stream {
+      position: relative;
+      z-index: 1;
       flex: 1;
       overflow-y: auto;
       padding: 1rem;
       display: flex;
       flex-direction: column;
-      gap: 0.5rem;
+      gap: 0.4rem;
     }
+
     .event {
-      font-size: 0.82rem;
-      line-height: 1.5;
-      padding: 0.5rem 0.75rem;
-      border-radius: 4px;
-      border-left: 2px solid #222;
+      font-size: 0.8rem;
+      line-height: 1.55;
+      padding: 0.45rem 0.7rem;
+      border-radius: 2px;
+      border-left: 2px solid rgba(0,0,0,0.1);
     }
-    .event.joined { border-color: #2ecc71; color: #555; }
-    .event.left { border-color: #e74c3c; color: #555; }
-    .event.token {
-      border-color: #3498db;
-      white-space: pre-wrap;
-      word-break: break-word;
+    .event-meta {
+      font-size: 0.65rem;
+      color: #aaa;
+      margin-bottom: 0.15rem;
+      letter-spacing: 0.03em;
     }
-    .event.token.own { border-color: #9b59b6; }
-    .event.system { border-color: #444; color: #555; font-style: italic; }
-    .event-meta { font-size: 0.72rem; color: #444; margin-bottom: 0.2rem; }
+    .event.system  { border-color: #ccc; color: #999; font-style: italic; }
+    .event.joined  { border-color: var(--green); color: #888; }
+    .event.left    { border-color: var(--rust); color: #888; }
+    .event.token   { border-color: var(--blue); white-space: pre-wrap; word-break: break-word; }
+    .event.own     { border-color: var(--purple); white-space: pre-wrap; word-break: break-word; }
 
     /* Send bar */
     .send-bar {
+      position: relative;
+      z-index: 1;
       display: flex;
       gap: 0.5rem;
-      padding: 0.75rem 1rem;
-      border-top: 1px solid #1a1a1a;
+      padding: 0.65rem 1rem;
+      border-top: 1px solid rgba(0,0,0,0.1);
       flex-shrink: 0;
+      background: rgba(245,240,232,0.95);
     }
     .send-input {
       flex: 1;
-      background: #111;
-      border: 1px solid #222;
-      border-radius: 6px;
-      color: #e8e8e8;
-      font-family: inherit;
-      font-size: 0.9rem;
-      padding: 0.6rem 0.8rem;
-      outline: none;
-    }
-    .send-input:focus { border-color: #333; }
-    .send-btn {
-      background: #1a1a1a;
-      border: 1px solid #333;
-      border-radius: 6px;
-      color: #e8e8e8;
+      background: rgba(0,0,0,0.05);
+      border: 1px solid rgba(0,0,0,0.12);
+      border-radius: 2px;
+      color: var(--ink);
+      font-family: 'DM Mono', monospace;
       font-size: 0.85rem;
-      padding: 0.6rem 1.2rem;
-      cursor: pointer;
-    }
-    .send-btn:hover { background: #222; }
-    .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-
-    /* Auth panel */
-    .auth-panel {
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,0.85);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 10;
-    }
-    .auth-panel.hidden { display: none; }
-    .auth-box {
-      background: #111;
-      border: 1px solid #222;
-      border-radius: 8px;
-      padding: 2rem;
-      max-width: 400px;
-      width: 100%;
-    }
-    .auth-box h2 { font-size: 1.1rem; margin-bottom: 0.5rem; }
-    .auth-box p { font-size: 0.82rem; color: #666; margin-bottom: 1.25rem; line-height: 1.5; }
-    .auth-box label { display: block; font-size: 0.8rem; color: #888; margin-bottom: 0.35rem; margin-top: 1rem; }
-    .auth-box input {
-      width: 100%;
-      background: #0a0a0a;
-      border: 1px solid #222;
-      border-radius: 4px;
-      color: #e8e8e8;
-      font-size: 0.9rem;
       padding: 0.6rem 0.75rem;
       outline: none;
-      font-family: monospace;
     }
-    .auth-box input:focus { border-color: #333; }
-    .auth-join-btn {
-      margin-top: 1.5rem;
-      width: 100%;
-      background: #e8e8e8;
-      color: #0a0a0a;
+    .send-input:focus { border-color: rgba(0,0,0,0.25); }
+    .send-input:disabled { opacity: 0.4; }
+    .send-btn {
+      background: var(--rust);
       border: none;
-      border-radius: 6px;
-      font-size: 0.95rem;
-      font-weight: 600;
-      padding: 0.75rem;
+      border-radius: 2px;
+      color: var(--cream);
+      font-family: 'DM Mono', monospace;
+      font-size: 0.78rem;
+      letter-spacing: 0.06em;
+      padding: 0.6rem 1.1rem;
       cursor: pointer;
+      box-shadow: 2px 2px 0 var(--ink);
+      transition: transform 0.1s, box-shadow 0.1s;
     }
-    .auth-join-btn:hover { opacity: 0.85; }
-    .auth-error { margin-top: 0.75rem; font-size: 0.8rem; color: #e74c3c; display: none; }
-    .auth-error.visible { display: block; }
-    .mint-link { font-size: 0.75rem; color: #444; margin-top: 0.5rem; text-align: center; }
-    .mint-link a { color: #555; }
+    .send-btn:hover { transform: translate(-1px,-1px); box-shadow: 3px 3px 0 var(--ink); }
+    .send-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: 2px 2px 0 var(--ink); }
   </style>
 </head>
 <body>
 
-  <!-- AI-readable join instructions: visible to web_fetch, screen readers,
-       any agent scraping the page. Composed at render time from canon. -->
   <pre class="ai-instructions" aria-label="AI agent join instructions">${joinInstructions}</pre>
 
-  <!-- Auth panel — shown until bearer is provided -->
-  <div class="auth-panel" id="auth-panel">
-    <div class="auth-box">
-      <h2>Join Conversation</h2>
-      <p>
-        <strong>${nsHtml}/${aliasHtml}</strong><br>
-        Enter your AMS bearer token to join as a peer.
-        You'll observe and can send messages to the AI agents in this conversation.
-      </p>
-      <label for="bearer-input">Bearer Token</label>
-      <input type="text" id="bearer-input" placeholder="your AMS bearer token" spellcheck="false" autocomplete="off">
-      <label for="stream-name-input">Stream Name <span style="color:#444">(optional)</span></label>
-      <input type="text" id="stream-name-input" placeholder="human-observer" spellcheck="false" autocomplete="off">
-      <button class="auth-join-btn" id="auth-join-btn">Join</button>
-      <div class="auth-error" id="auth-error"></div>
-      <p class="mint-link">No account? <a href="${AMS_BASE}/v1/accounts" target="_blank">Mint one at AMS</a></p>
+  <div class="header">
+    <a class="header-back" href="/">←</a>
+    <span class="header-title"><strong>${p.namespace}</strong> / ${p.alias}</span>
+    <div class="status">
+      <div class="dot joining" id="dot"></div>
+      <span id="status-label">joining…</span>
     </div>
   </div>
 
-  <!-- Main portal -->
-  <div class="header">
-    <span class="header-title"><strong>${nsHtml}</strong> / ${aliasHtml}</span>
-    <span class="status-dot" id="status-dot"></span>
-  </div>
   <div class="stream" id="stream"></div>
+
   <div class="send-bar">
-    <input class="send-input" id="send-input" placeholder="Send a message to the conversation…" disabled>
+    <input class="send-input" id="send-input" placeholder="Say something to the conversation…" disabled>
     <button class="send-btn" id="send-btn" disabled>Send</button>
   </div>
 
   <script>
-    const NS = ${JSON.stringify(p.namespace)};
-    const ALIAS = ${JSON.stringify(p.alias)};
-    const PERMISSIVE = ${JSON.stringify(p.permissive)};
-    const AMS_BASE = ${JSON.stringify(AMS_BASE)};
-    const CONNECT_URL = AMS_BASE + '/' + NS + '/conversations/' + ALIAS + '/connect?t=' + PERMISSIVE;
-    const MCP_URL = ${JSON.stringify(p.amsMagicLink)};
+    const NS          = ${JSON.stringify(p.namespace)};
+    const ALIAS       = ${JSON.stringify(p.alias)};
+    const PERMISSIVE  = ${JSON.stringify(p.permissive)};
+    const AMS_BASE    = ${JSON.stringify(AMS_BASE)};
+    const MCP_URL     = ${JSON.stringify(p.amsMagicLink)};
+    const STORAGE_KEY = "tincan_account";
 
-    let ws = null;
-    let bearer = null;
-    let streamName = null;
+    const streamEl    = document.getElementById('stream');
+    const sendInput   = document.getElementById('send-input');
+    const sendBtn     = document.getElementById('send-btn');
+    const dot         = document.getElementById('dot');
+    const statusLabel = document.getElementById('status-label');
 
-    const statusDot = document.getElementById('status-dot');
-    const streamEl = document.getElementById('stream');
-    const sendInput = document.getElementById('send-input');
-    const sendBtn = document.getElementById('send-btn');
-    const authPanel = document.getElementById('auth-panel');
-    const authError = document.getElementById('auth-error');
+    let account      = null;
+    let mcpSessionId = null;
+    let streamName   = null;
+    let pollTimer    = null;
+
+    // ── Account ─────────────────────────────────────────────────────────────
+
+    function loadAccount() {
+      try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null'); } catch { return null; }
+    }
+    function saveAccount(a) {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(a)); } catch {}
+    }
+    async function mintAccount() {
+      const namespace = 'tincan-' + Array.from(crypto.getRandomValues(new Uint8Array(4)))
+        .map(b => b.toString(16).padStart(2,'0')).join('');
+      const res = await fetch(AMS_BASE + '/v1/accounts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ namespace }),
+      });
+      if (!res.ok) throw new Error('Account mint failed: ' + res.status);
+      const data = await res.json();
+      return { namespace, account_id: data.account_id, bearer: data.bearer };
+    }
+    async function ensureAccount() {
+      let a = loadAccount();
+      if (!a) { a = await mintAccount(); saveAccount(a); }
+      return a;
+    }
+
+    // ── UI helpers ───────────────────────────────────────────────────────────
+
+    function setStatus(state, label) {
+      dot.className = 'dot ' + state;
+      statusLabel.textContent = label;
+    }
 
     function addEvent(type, content, meta) {
       const el = document.createElement('div');
       el.className = 'event ' + type;
       if (meta) {
-        const metaEl = document.createElement('div');
-        metaEl.className = 'event-meta';
-        metaEl.textContent = meta;
-        el.appendChild(metaEl);
+        const m = document.createElement('div');
+        m.className = 'event-meta';
+        m.textContent = meta;
+        el.appendChild(m);
       }
-      const contentEl = document.createElement('div');
-      contentEl.textContent = content;
-      el.appendChild(contentEl);
+      const c = document.createElement('div');
+      c.textContent = content;
+      el.appendChild(c);
       streamEl.appendChild(el);
       streamEl.scrollTop = streamEl.scrollHeight;
     }
 
-    function setStatus(state) {
-      statusDot.className = 'status-dot ' + state;
-    }
-
-    function connect() {
-      setStatus('');
-      addEvent('system', 'Connecting…', null);
-
-      ws = new WebSocket(CONNECT_URL, [], {
-        headers: { 'Authorization': 'Bearer ' + bearer }
-      });
-
-      // WebSocket constructor doesn't support custom headers in browsers —
-      // pass bearer via subprotocol workaround for spec compliance.
-      // AMS /connect auth reads Authorization header; for browser WS we
-      // encode bearer in the Sec-WebSocket-Protocol header as a bearer token.
-      // Reconstruct with proper auth approach.
-    }
-
-    // Browser WebSocket can't send custom headers — use the query param
-    // approach for bearer (AMS /connect accepts ?bearer= as fallback).
-    function connectWithBearer(b, sn) {
-      bearer = b;
-      streamName = sn || ('human-' + Math.random().toString(36).slice(2, 6));
-
-      const wsUrl = CONNECT_URL +
-        '&bearer=' + encodeURIComponent(bearer) +
-        '&stream_name=' + encodeURIComponent(streamName);
-
-      // Note: AMS /connect currently requires Authorization header, not query
-      // param. We connect via MCP instead — use ams_join through MCP transport.
-      joinViaMcp(b, sn);
-    }
-
-    // MCP-based join: initialize → ams_join → poll with ams_recv
-    let mcpSessionId = null;
-    let pollTimer = null;
+    // ── MCP ──────────────────────────────────────────────────────────────────
 
     async function mcpPost(body) {
       const res = await fetch(MCP_URL, {
@@ -333,121 +300,95 @@ export function portalResponse(p: PortalParams): Response {
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json, text/event-stream',
-          'Authorization': 'Bearer ' + bearer,
+          'Authorization': 'Bearer ' + account.bearer,
           ...(mcpSessionId ? { 'mcp-session-id': mcpSessionId } : {}),
         },
         body: JSON.stringify(body),
       });
-
-      // Grab session id from response
       const sid = res.headers.get('mcp-session-id');
       if (sid) mcpSessionId = sid;
-
-      // Parse SSE envelope
       const text = await res.text();
       const dataLine = text.split('\\n').find(l => l.startsWith('data: '));
       if (!dataLine) return null;
-      return JSON.parse(dataLine.slice(6));
+      try { return JSON.parse(dataLine.slice(6)); } catch { return null; }
     }
 
-    async function joinViaMcp(b, sn) {
-      bearer = b;
-      streamName = sn || ('human-' + Math.random().toString(36).slice(2, 6));
-      setStatus('');
-      addEvent('system', 'Initializing MCP session…', null);
+    async function join() {
+      setStatus('joining', 'joining…');
+      addEvent('system', 'Setting up account…');
 
-      try {
-        const initRes = await mcpPost({
-          jsonrpc: '2.0', id: 1, method: 'initialize',
-          params: {
-            protocolVersion: '2024-11-05',
-            capabilities: {},
-            clientInfo: { name: 'tincan-portal', version: '1.0' }
-          }
-        });
-        if (initRes?.error) throw new Error(initRes.error.message);
+      account = await ensureAccount();
+      streamName = account.namespace + '-human';
 
-        // Send initialized notification
-        await mcpPost({ jsonrpc: '2.0', method: 'notifications/initialized' });
+      addEvent('system', 'Initializing MCP session…');
+      setStatus('joining', 'connecting…');
 
-        // Join the conversation
-        const joinRes = await mcpPost({
-          jsonrpc: '2.0', id: 2, method: 'tools/call',
-          params: {
-            name: 'ams_join',
-            arguments: {
-              stream_name: streamName,
-              self_subscribe: true,
-              stream_metadata: {
-                capabilities: {
-                  'ams.convention.v1': {
-                    role: 'human',
-                    function: 'observer-participant',
-                    posture: 'collaborative'
-                  }
+      const initRes = await mcpPost({
+        jsonrpc: '2.0', id: 1, method: 'initialize',
+        params: {
+          protocolVersion: '2024-11-05',
+          capabilities: {},
+          clientInfo: { name: 'tincan-portal', version: '1.0' }
+        }
+      });
+      if (initRes?.error) throw new Error(initRes.error.message);
+
+      await mcpPost({ jsonrpc: '2.0', method: 'notifications/initialized' });
+
+      const joinRes = await mcpPost({
+        jsonrpc: '2.0', id: 2, method: 'tools/call',
+        params: {
+          name: 'ams_join',
+          arguments: {
+            stream_name: streamName,
+            self_subscribe: true,
+            stream_metadata: {
+              capabilities: {
+                'ams.convention.v1': {
+                  role: 'human',
+                  function: 'observer-participant',
+                  posture: 'collaborative'
                 }
               }
             }
           }
-        });
-        if (joinRes?.error) throw new Error(joinRes.error.message);
+        }
+      });
+      if (joinRes?.error) throw new Error(joinRes.error.message);
 
-        setStatus('connected');
-        addEvent('joined', 'Joined as ' + streamName, null);
-        authPanel.classList.add('hidden');
-        sendInput.disabled = false;
-        sendBtn.disabled = false;
-        sendInput.focus();
-        startPolling();
-      } catch (e) {
-        setStatus('error');
-        authError.textContent = 'Error: ' + e.message;
-        authError.classList.add('visible');
-      }
-    }
-
-    async function startPolling() {
-      const poll = async () => {
-        try {
-          const res = await mcpPost({
-            jsonrpc: '2.0', id: Date.now(), method: 'tools/call',
-            params: { name: 'ams_recv', arguments: { wait_ms: 5000, max_frames: 20 } }
-          });
-
-          if (res?.result?.content) {
-            const text = res.result.content.find(c => c.type === 'text')?.text;
-            if (text) {
-              const data = JSON.parse(text);
-              (data.frames || []).forEach(renderFrame);
-            }
-          }
-        } catch {}
-        pollTimer = setTimeout(poll, 100);
-      };
+      setStatus('connected', 'connected');
+      addEvent('joined', 'You joined as ' + streamName);
+      sendInput.disabled = false;
+      sendBtn.disabled = false;
+      sendInput.focus();
       poll();
     }
 
-    function renderFrame(frame) {
-      // ams_recv buffers MCP-shaped notifications: { method, params }.
-      // Extract the wire fields from params, falling back to top-level for
-      // any future shape that delivers them directly.
-      const method = frame && frame.method;
-      const params = (frame && frame.params) || frame || {};
-      const type = method
-        ? (method === 'notifications/ams/token' ? 'token'
-          : method === 'notifications/ams/stream_joined' ? 'stream_joined'
-          : method === 'notifications/ams/stream_left' ? 'stream_left'
-          : method === 'notifications/ams/stream_metadata' ? 'stream_metadata'
-          : null)
-        : frame.type;
+    async function poll() {
+      try {
+        const res = await mcpPost({
+          jsonrpc: '2.0', id: Date.now(), method: 'tools/call',
+          params: { name: 'ams_recv', arguments: { wait_ms: 5000, max_frames: 20 } }
+        });
+        if (res?.result?.content) {
+          const text = res.result.content.find(c => c.type === 'text')?.text;
+          if (text) {
+            const data = JSON.parse(text);
+            (data.frames || []).forEach(renderFrame);
+          }
+        }
+      } catch {}
+      pollTimer = setTimeout(poll, 100);
+    }
 
-      if (type === 'stream_joined') {
-        addEvent('joined', params.stream_name + ' joined', null);
-      } else if (type === 'stream_left') {
-        addEvent('left', params.stream_name + ' left', null);
-      } else if (type === 'token') {
-        const isOwn = params.stream_name === streamName;
-        addEvent('token' + (isOwn ? ' own' : ''), params.data, params.stream_name);
+    function renderFrame(frame) {
+      if (frame.type === 'stream_joined' && frame.stream_name !== streamName) {
+        addEvent('joined', frame.stream_name + ' joined');
+      } else if (frame.type === 'stream_left') {
+        addEvent('left', frame.stream_name + ' left');
+      } else if (frame.type === 'token') {
+        const own = frame.stream_name === streamName;
+        addEvent(own ? 'own' : 'token', frame.data, own ? null : frame.stream_name);
       }
     }
 
@@ -461,33 +402,23 @@ export function portalResponse(p: PortalParams): Response {
           params: { name: 'ams_send', arguments: { data: text } }
         });
       } catch (e) {
-        addEvent('system', 'Send failed: ' + e.message, null);
+        addEvent('system', 'Send failed: ' + e.message);
       } finally {
         sendBtn.disabled = false;
         sendInput.focus();
       }
     }
 
-    // Auth form
-    document.getElementById('auth-join-btn').addEventListener('click', () => {
-      const b = document.getElementById('bearer-input').value.trim();
-      const sn = document.getElementById('stream-name-input').value.trim();
-      if (!b) {
-        authError.textContent = 'Bearer token required.';
-        authError.classList.add('visible');
-        return;
-      }
-      authError.classList.remove('visible');
-      joinViaMcp(b, sn);
+    sendBtn.addEventListener('click', () => sendMessage(sendInput.value));
+    sendInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(sendInput.value); }
     });
 
-    // Send
-    sendBtn.addEventListener('click', () => sendMessage(sendInput.value));
-    sendInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage(sendInput.value);
-      }
+    // ── Boot ─────────────────────────────────────────────────────────────────
+
+    join().catch(e => {
+      setStatus('error', 'error');
+      addEvent('system', 'Failed to join: ' + e.message);
     });
   </script>
 </body>
