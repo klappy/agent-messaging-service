@@ -236,10 +236,6 @@ export function portalResponse(p: PortalParams): Response {
   </div>
 
   <script>
-    const NS          = ${JSON.stringify(p.namespace)};
-    const ALIAS       = ${JSON.stringify(p.alias)};
-    const PERMISSIVE  = ${JSON.stringify(p.permissive)};
-    const AMS_BASE    = ${JSON.stringify(AMS_BASE)};
     const MCP_URL     = ${JSON.stringify(p.amsMagicLink)};
     const STORAGE_KEY = "tincan_account";
 
@@ -263,7 +259,8 @@ export function portalResponse(p: PortalParams): Response {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(a)); } catch {}
     }
     async function mintAccount() {
-      const namespace = 'tincan-' + Array.from(crypto.getRandomValues(new Uint8Array(4)))
+      // Random namespace: tincan- + 32 hex chars (128 bits of entropy)
+      const namespace = 'tincan-' + Array.from(crypto.getRandomValues(new Uint8Array(16)))
         .map(b => b.toString(16).padStart(2,'0')).join('');
       const res = await fetch('/v1/accounts', {
         method: 'POST',
@@ -316,6 +313,12 @@ export function portalResponse(p: PortalParams): Response {
         },
         body: JSON.stringify(body),
       });
+      // Bearer may have expired — clear stored account so caller can re-mint.
+      if (res.status === 401 || res.status === 403) {
+        localStorage.removeItem(STORAGE_KEY);
+        throw new Error('auth_expired');
+      }
+      if (!res.ok) throw new Error('MCP request failed: ' + res.status);
       const sid = res.headers.get('mcp-session-id');
       if (sid) mcpSessionId = sid;
       const text = await res.text();
@@ -342,7 +345,8 @@ export function portalResponse(p: PortalParams): Response {
           clientInfo: { name: 'tincan-portal', version: '1.0' }
         }
       });
-      if (initRes?.error) throw new Error(initRes.error.message);
+      if (!initRes) throw new Error('initialize returned no response');
+      if (initRes.error) throw new Error(initRes.error.message);
 
       await mcpPost({ jsonrpc: '2.0', method: 'notifications/initialized' });
 
@@ -365,7 +369,8 @@ export function portalResponse(p: PortalParams): Response {
           }
         }
       });
-      if (joinRes?.error) throw new Error(joinRes.error.message);
+      if (!joinRes) throw new Error('ams_join returned no response');
+      if (joinRes.error) throw new Error(joinRes.error.message);
 
       setStatus('connected', 'connected');
       addEvent('joined', 'You joined as ' + streamName);
@@ -428,7 +433,24 @@ export function portalResponse(p: PortalParams): Response {
 
     // ── Boot ─────────────────────────────────────────────────────────────────
 
-    join().catch(e => {
+    async function bootJoin() {
+      try {
+        await join();
+      } catch (e) {
+        // Stored credential was rejected — mcpPost already cleared it.
+        // Reset session state and retry once with a fresh account.
+        if (e && e.message === 'auth_expired') {
+          account = null;
+          mcpSessionId = null;
+          streamName = null;
+          await join();
+          return;
+        }
+        throw e;
+      }
+    }
+
+    bootJoin().catch(e => {
       setStatus('error', 'error');
       addEvent('system', 'Failed to join: ' + e.message);
     });
