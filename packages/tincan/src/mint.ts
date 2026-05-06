@@ -287,8 +287,8 @@ export function mintPageResponse(): Response {
     }
 
     async function mintAccount() {
-      // Random namespace: tincan- + 8 hex chars
-      const namespace = 'tincan-' + Array.from(crypto.getRandomValues(new Uint8Array(4)))
+      // Random namespace: tincan- + 32 hex chars (128 bits of entropy)
+      const namespace = 'tincan-' + Array.from(crypto.getRandomValues(new Uint8Array(16)))
         .map(b => b.toString(16).padStart(2,'0')).join('');
 
       const res = await fetch('/v1/accounts', {
