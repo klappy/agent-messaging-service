@@ -49,8 +49,8 @@ PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r'\*\*EDIT\*\*\s+`([^`]+)`'), CLAIM_MUST_EXIST),
     (re.compile(r'\*\*REPLACE\*\*\s+`([^`]+)`'), CLAIM_MUST_EXIST),
     (re.compile(r'\*\*DELETE\*\*\s+`([^`]+)`'), CLAIM_MUST_EXIST),
-    (re.compile(r'(?:new file(?:\s+at)?|create(?:\s+file)?(?:\s+at)?):\s*`([^`]+)`', re.IGNORECASE), CLAIM_MUST_NOT_EXIST),
-    (re.compile(r'(?:located at|lives at|exists at|file at):\s*`([^`]+)`', re.IGNORECASE), CLAIM_MUST_EXIST),
+    (re.compile(r'(?:new file(?:\s+at)?|create(?:\s+file)?(?:\s+at)?):?\s*`([^`]+)`', re.IGNORECASE), CLAIM_MUST_NOT_EXIST),
+    (re.compile(r'(?:located at|lives at|exists at|file at):?\s*`([^`]+)`', re.IGNORECASE), CLAIM_MUST_EXIST),
 ]
 
 ASPIRATIONAL_FENCE_RE = re.compile(r'^```(?:aspirational|future)\b')
@@ -94,8 +94,10 @@ def is_project_path(s: str) -> bool:
     # Must look like a path with an extension
     if not re.match(r'^[a-zA-Z0-9_./-]+\.[a-zA-Z0-9]+$', s):
         return False
-    # Reject obvious MIME types (e.g. application/json, text/markdown)
-    if re.match(r'^[a-z]+/[a-z][a-z0-9.+-]*$', s):
+    # Reject obvious MIME types (e.g. application/json, text/markdown).
+    # Restrict the prefix to known IANA top-level MIME types so that
+    # single-depth lowercase paths like `worker/package.json` aren't dropped.
+    if re.match(r'^(?:application|audio|font|image|message|model|multipart|text|video)/[a-z][a-z0-9.+-]*$', s):
         return False
     return True
 
