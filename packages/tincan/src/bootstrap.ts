@@ -278,9 +278,17 @@ export async function renderBootstrapJson(
   post_endpoint: string;
   tincan_url: string;
 }> {
-  const s = await loadAllSections();
+  // Only fetch the three sections this shape needs (sections 1, 2, and 4 per
+  // the constraint's §Content Negotiation). Avoids coupling JSON availability
+  // to sections it never renders (Pre-bound, If Joining Doesn't Work, For
+  // Humans), and skips three unnecessary MCP round-trips on cold isolates.
+  const [identity, howToJoin, requiredBeforeJoining] = await Promise.all([
+    oddkitGetSection(SECTION_IDENTITY),
+    oddkitGetSection(SECTION_HOW_TO_JOIN),
+    oddkitGetSection(SECTION_REQUIRED_BEFORE_JOINING),
+  ]);
   const instructions =
-    [s.identity, s.howToJoin, s.requiredBeforeJoining].join("\n\n").trim() + "\n";
+    [identity, howToJoin, requiredBeforeJoining].join("\n\n").trim() + "\n";
   return {
     instructions,
     pre_bound: {
