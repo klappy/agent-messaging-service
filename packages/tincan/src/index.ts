@@ -1,7 +1,12 @@
+import {
+  negotiateAccept,
+  renderBootstrapJson,
+  renderBootstrapMarkdown,
+} from "./bootstrap";
 import { homepageHeadResponse, homepageResponse } from "./homepage";
 import { mintPageResponse } from "./mint";
 import { portalResponse } from "./portal";
-import type { Env } from "./types";
+import type { ConvRecord, Env } from "./types";
 
 const AMS_BASE = "https://ams.truthkit.ai";
 const TINCAN_BASE = "https://tincan.truthkit.ai";
@@ -38,7 +43,9 @@ export default {
 
     // Portal route — /{ns}/conversations/{alias}?t=<permissive>
     // Per ams://canon/decisions/D0025 and D0026:
-    //   Browser GET → conversation portal (history, live stream, send surface)
+    //   Browser GET → conversation portal HTML (history, live stream, send surface)
+    //   AI fetch (markdown / JSON Accept) → canon-rendered bootstrap per
+    //     ams://canon/constraints/portal-bootstrap-content
     //   MCP POST / SSE GET → proxy to AMS via service binding (D0023 compliance)
     const convAliasMatch = path.match(/^\/([^/]+)\/conversations\/([^/]+)\/?$/);
     if (convAliasMatch) {
@@ -53,28 +60,70 @@ export default {
 
         if (isMcpSse && method === "GET") {
           // SSE leg of MCP transport — proxy to AMS
-          return proxyToAms(req, env, ns, alias, url);
+          return proxyToAms(req, env, url);
         }
 
         if (method === "HEAD") {
           return new Response(null, { headers: { "content-type": "text/html;charset=UTF-8" } });
         }
 
-        // Browser GET — serve the portal
+        // Browser/AI GET — content-negotiated bootstrap.
         if (!permissive) {
           return new Response("Missing permissive token.", { status: 400 });
         }
 
-        // AMS magic link — same path, AMS domain. MCP clients POST here directly.
+        // AMS magic link — same path on the AMS host. MCP clients POST here.
         const amsMagicLink = AMS_BASE + path + "?t=" + permissive;
-        const magicLink = TINCAN_BASE + path + "?t=" + permissive;
+        const tincanMagicLink = TINCAN_BASE + path + "?t=" + permissive;
 
-        return portalResponse({ namespace: ns, alias, permissive, magicLink, amsMagicLink });
+        // Server-side fetch of the conversation record via the AMS service
+        // binding. Required for every render path: HTML uses it for the
+        // embedded bootstrap, markdown/JSON use it directly.
+        const record = await fetchConversationRecord(env, ns, alias, permissive);
+        if (!record) {
+          return jsonError(404, "conversation_not_found", "No conversation matched the magic-link path or the permissive token did not validate.");
+        }
+
+        const shape = negotiateAccept(
+          req.headers.get("accept") ?? "",
+          req.headers.get("user-agent") ?? "",
+        );
+
+        if (shape === "json") {
+          const body = await renderBootstrapJson({
+            record,
+            amsMagicLink,
+            tincanUrl: tincanMagicLink,
+          });
+          return new Response(JSON.stringify(body, null, 2), {
+            headers: { "content-type": "application/json; charset=utf-8" },
+          });
+        }
+        if (shape === "markdown") {
+          const md = await renderBootstrapMarkdown({
+            record,
+            amsMagicLink,
+            tincanUrl: tincanMagicLink,
+          });
+          return new Response(md, {
+            headers: { "content-type": "text/markdown; charset=utf-8" },
+          });
+        }
+        // Browser → full HTML portal with the canon-rendered bootstrap
+        // embedded as a visually-hidden but AI-readable <pre> block.
+        return portalResponse({
+          namespace: ns,
+          alias,
+          permissive,
+          magicLink: tincanMagicLink,
+          amsMagicLink,
+          record,
+        });
       }
 
       if (method === "POST" || method === "DELETE" || method === "OPTIONS") {
         // MCP transport — proxy to AMS via service binding
-        return proxyToAms(req, env, ns, alias, url);
+        return proxyToAms(req, env, url);
       }
     }
 
@@ -88,7 +137,7 @@ export default {
 // Proxy MCP POST / SSE GET / DELETE / OPTIONS to AMS Worker via service binding.
 // Service bindings are same-process Cloudflare calls — zero network hop, no egress.
 // Rewrites the URL from tincan.truthkit.ai to ams.truthkit.ai preserving path + query.
-async function proxyToAms(req: Request, env: Env, ns: string, alias: string, url: URL): Promise<Response> {
+async function proxyToAms(req: Request, env: Env, url: URL): Promise<Response> {
   const amsUrl = new URL(AMS_BASE + url.pathname + url.search);
   const proxied = new Request(amsUrl.toString(), {
     method: req.method,
@@ -109,4 +158,30 @@ async function proxyV1ToAms(req: Request, env: Env, url: URL): Promise<Response>
     body: req.body,
   });
   return env.AMS.fetch(proxied);
+}
+
+// Fetch the AMS conversation record via service binding. Validates permissive
+// token server-side as a side effect (AMS returns 403 if the token is wrong),
+// so the portal never has to reach into KV directly.
+async function fetchConversationRecord(
+  env: Env,
+  ns: string,
+  alias: string,
+  permissive: string,
+): Promise<ConvRecord | null> {
+  const amsUrl = `${AMS_BASE}/v1/${ns}/conversations/${alias}?t=${encodeURIComponent(permissive)}`;
+  const res = await env.AMS.fetch(new Request(amsUrl, { method: "GET" }));
+  if (!res.ok) return null;
+  try {
+    return (await res.json()) as ConvRecord;
+  } catch {
+    return null;
+  }
+}
+
+function jsonError(status: number, code: string, message: string): Response {
+  return new Response(JSON.stringify({ error: code, message }), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
 }
