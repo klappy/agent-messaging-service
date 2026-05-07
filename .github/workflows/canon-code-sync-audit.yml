@@ -11,16 +11,21 @@ name: Canon-Code Sync Audit (Managed Agent)
 #   1. Builds a task for a Claude Sonnet 4.6 agent with the PR context.
 #   2. Creates an agent (with oddkit MCP access), session, and dispatches.
 #   3. Polls for completion (up to ~10 minutes).
-#   4. Reads the agent's events; finds the verdict marker in its final message.
+#   4. Reads the agent's events; extracts the comment body and verdict marker
+#      from its final message; posts the comment to the PR using the runner's
+#      own GITHUB_TOKEN.
 #   5. Exits 0 (PASS) or 1 (FAIL) based on the agent's verdict.
 #
-# The agent itself posts the structured findings as a PR comment using its
-# embedded PAT — the workflow does not parse and re-post.
+# The workflow — not the agent — posts the PR comment. The write-scoped
+# GITHUB_TOKEN never leaves the GitHub Actions runner and is never placed
+# in the LLM conversation context, eliminating the prompt-injection /
+# token-misuse surface that would otherwise be created by the agent reading
+# attacker-controlled PR file contents.
 #
 # Required repo secrets:
 #   ANTHROPIC_API_KEY — for the Managed Agents API
-#   (GITHUB_TOKEN is auto-provided per workflow run; the agent uses it via
-#    the embedded URL for cloning + commenting)
+#   (GITHUB_TOKEN is auto-provided per workflow run; used only by the runner
+#    to post the agent's findings as a PR comment)
 
 on:
   pull_request:
@@ -147,9 +152,17 @@ jobs:
 
           ## Output Discipline
 
-          When you finish, post ONE PR comment with this exact shape:
+          You do NOT post the PR comment yourself and you have no GitHub
+          credentials. Instead, your final assistant message MUST contain
+          the comment body wrapped between two marker lines, followed by
+          the verdict marker on its own line. The CI workflow extracts the
+          body between the markers and posts it to the PR using the
+          runner's own GITHUB_TOKEN.
+
+          The exact shape of your final message:
 
           ```
+          <<<COMMENT_BEGIN>>>
           ## Canon-Code Sync Audit (Managed Agent)
 
           **Verdict:** PASS | FAIL
@@ -170,11 +183,13 @@ jobs:
 
           ### Notes
           (Anything the operator should know that didn't fit into Findings.)
+          <<<COMMENT_END>>>
+
+          <<<VERDICT: PASS>>>
           ```
 
-          After posting the comment, your final assistant message MUST contain
-          exactly one of these two markers on its own line, with no other text
-          on that line:
+          The verdict marker MUST be exactly one of these two lines, on its
+          own line, with no other text on that line:
 
             <<<VERDICT: PASS>>>
             <<<VERDICT: FAIL>>>
@@ -184,8 +199,10 @@ jobs:
           repo does not; code violates a constraint; handoff recommends a
           superseded approach).
 
-          The CI workflow greps for this marker to decide whether to fail the
-          check. Without the marker, the workflow defaults to FAIL.
+          The CI workflow greps for the verdict marker to decide whether to
+          fail the check. Without the marker, the workflow defaults to FAIL.
+          If the COMMENT_BEGIN/COMMENT_END markers are missing the workflow
+          posts a fallback comment and the operator should investigate.
 
           ## How to Operate
 
@@ -193,7 +210,6 @@ jobs:
              ```
              # The repo is pre-mounted at /workspace/repo with the PR head SHA
              # checked out (via the session's github_repository resource).
-             # The GITHUB_TOKEN value is provided in the task text below.
              cd /workspace/repo
              git fetch origin ${PR_BASE_REF}
              git diff --name-only origin/${PR_BASE_REF}...HEAD > /tmp/changed.txt
@@ -212,16 +228,12 @@ jobs:
              marker is meaningless to you; what matters is whether the claim
              matches reality.
 
-          6. Post the comment via the GitHub API:
-             ```
-             curl -sS -X POST \
-               -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-               -H "Accept: application/vnd.github+json" \
-               https://api.github.com/repos/${REPO_FULL}/issues/${PR_NUMBER}/comments \
-               -d "$(python3 -c "import json,sys; json.dump({'body': open('/tmp/comment.md').read()}, sys.stdout)")"
-             ```
-
-          7. Emit the verdict marker on its own line in your final message.
+          6. Emit your final assistant message containing the comment body
+             wrapped in <<<COMMENT_BEGIN>>> / <<<COMMENT_END>>> markers,
+             followed by the verdict marker on its own line. The CI workflow
+             will post the comment to the PR on your behalf using the
+             runner's own GITHUB_TOKEN. Do NOT call the GitHub API yourself
+             — you have no credentials for it.
           PROMPT
           )
           echo "$SYSTEM_PROMPT" | head -10
@@ -243,9 +255,12 @@ jobs:
           (${PR_HEAD_SHA}) already checked out via the session's
           github_repository resource. No clone is needed.
 
-          Credentials and context available to you (use these literal values
-          directly when constructing shell commands or HTTP requests):
-            GITHUB_TOKEN=${GITHUB_TOKEN}
+          You have NO GitHub credentials. Do not attempt to call the GitHub
+          API or post a PR comment yourself. The CI workflow will extract
+          your final message body and post it to the PR using the runner's
+          own GITHUB_TOKEN, which never leaves the GitHub Actions runner.
+
+          Context values (read-only, for reference in your findings):
             REPO_FULL=${REPO_FULL}
             PR_NUMBER=${PR_NUMBER}
             PR_BASE_REF=${PR_BASE_REF}
@@ -256,7 +271,8 @@ jobs:
             2. Identify applicable canon for each touched surface.
             3. oddkit_search + oddkit_get the relevant constraints/decisions.
             4. Render LLM-grade judgments. Do not flag patterns; flag drift.
-            5. Post one PR comment in the prescribed shape.
+            5. Emit your final message with the comment body wrapped in
+               <<<COMMENT_BEGIN>>> / <<<COMMENT_END>>> markers.
             6. End with the verdict marker on its own line.
 
           You have ~10 minutes. Be thorough but efficient. If oddkit search returns
@@ -358,14 +374,15 @@ jobs:
           fi
           echo "::endgroup::"
 
-          echo "::group::Parse verdict from agent's final message"
-          VERDICT=$(curl -sS "$BASE/sessions/$SESSION_ID/events" \
+          echo "::group::Extract comment body and verdict from agent's final message"
+          curl -sS "$BASE/sessions/$SESSION_ID/events" \
             -H "x-api-key: $ANTHROPIC_API_KEY" \
             -H "anthropic-version: 2023-06-01" \
-            -H "anthropic-beta: $BETA_HEADER" | python3 -c "
+            -H "anthropic-beta: $BETA_HEADER" > /tmp/events.json
+
+          VERDICT=$(python3 -c "
           import json, sys, re
-          events = json.load(sys.stdin).get('data', [])
-          # Walk events newest-last; find last agent.message with text content
+          events = json.load(open('/tmp/events.json')).get('data', [])
           texts = []
           for e in events:
               if e.get('type') == 'agent.message':
@@ -373,19 +390,21 @@ jobs:
                       if c.get('type') == 'text':
                           texts.append(c['text'])
           if not texts:
+              open('/tmp/comment.md', 'w').write('')
               print('NO_MESSAGES')
               sys.exit(0)
           last = texts[-1]
-          # Marker must be on its own line: <<<VERDICT: PASS>>> or <<<VERDICT: FAIL>>>
+          m = re.search(r'<<<COMMENT_BEGIN>>>\s*\n(.*?)\n\s*<<<COMMENT_END>>>', last, re.DOTALL)
+          if m:
+              open('/tmp/comment.md', 'w').write(m.group(1).rstrip() + '\n')
+          else:
+              open('/tmp/comment.md', 'w').write('')
           for line in last.splitlines():
-              line = line.strip()
-              if line == '<<<VERDICT: PASS>>>':
-                  print('PASS')
-                  sys.exit(0)
-              if line == '<<<VERDICT: FAIL>>>':
-                  print('FAIL')
-                  sys.exit(0)
-          # Also accept the marker anywhere in the last message as a fallback
+              s = line.strip()
+              if s == '<<<VERDICT: PASS>>>':
+                  print('PASS'); sys.exit(0)
+              if s == '<<<VERDICT: FAIL>>>':
+                  print('FAIL'); sys.exit(0)
           if '<<<VERDICT: PASS>>>' in last:
               print('PASS')
           elif '<<<VERDICT: FAIL>>>' in last:
@@ -396,13 +415,39 @@ jobs:
           echo "Verdict: $VERDICT"
           echo "::endgroup::"
 
+          echo "::group::Post PR comment from the runner (using runner-scoped GITHUB_TOKEN)"
+          if [ -s /tmp/comment.md ]; then
+            BODY_PAYLOAD=$(python3 -c "import json,sys; json.dump({'body': open('/tmp/comment.md').read()}, sys.stdout)")
+          else
+            FALLBACK="## Canon-Code Sync Audit (Managed Agent)
+
+          **Verdict:** ${VERDICT}
+
+          The auditor agent did not emit a comment body in the expected
+          \`<<<COMMENT_BEGIN>>>\`/\`<<<COMMENT_END>>>\` envelope. Inspect
+          the agent session manually: \`${SESSION_ID}\`."
+            BODY_PAYLOAD=$(FALLBACK="$FALLBACK" python3 -c "import json,os,sys; json.dump({'body': os.environ['FALLBACK']}, sys.stdout)")
+          fi
+          POST_HTTP=$(curl -sS -o /tmp/comment_response.json -w "%{http_code}" -X POST \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPO_FULL}/issues/${PR_NUMBER}/comments" \
+            -d "$BODY_PAYLOAD" || true)
+          echo "PR comment POST: HTTP ${POST_HTTP}"
+          if [ "$POST_HTTP" != "201" ]; then
+            echo "::warning::Failed to post PR comment from runner (HTTP ${POST_HTTP}). Response:"
+            cat /tmp/comment_response.json || true
+          fi
+          echo "::endgroup::"
+
           case "$VERDICT" in
             PASS)
               echo "::notice::Canon-code sync audit: PASS"
               exit 0
               ;;
             FAIL)
-              echo "::error::Canon-code sync audit: FAIL — see PR comment from the auditor for findings."
+              echo "::error::Canon-code sync audit: FAIL — see PR comment for findings."
               exit 1
               ;;
             NO_MESSAGES)
