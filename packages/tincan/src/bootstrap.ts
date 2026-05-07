@@ -165,11 +165,15 @@ function composePreBound(template: string, inputs: BootstrapInputs): string {
     typeof opInstr === "string" && opInstr.length > 0
       ? `### Conversation purpose\n\n${opInstr}`
       : "";
+  // Use function replacements so `$`-prefixed sequences in user-supplied
+  // values (namespace, alias, conversation_id, opBlock) are emitted verbatim
+  // rather than triggering String.prototype.replace's special patterns
+  // ($$, $&, $`, $').
   return template
-    .replace(/\{namespace\}/g, inputs.record.namespace)
-    .replace(/\{alias\}/g, inputs.record.alias)
-    .replace(/\{conversation_id\}/g, inputs.record.conversation_id)
-    .replace(/\{operator_metadata_instructions_if_present\}/g, opBlock)
+    .replace(/\{namespace\}/g, () => inputs.record.namespace)
+    .replace(/\{alias\}/g, () => inputs.record.alias)
+    .replace(/\{conversation_id\}/g, () => inputs.record.conversation_id)
+    .replace(/\{operator_metadata_instructions_if_present\}/g, () => opBlock)
     .replace(/\n{3,}/g, "\n\n")
     .trimEnd();
 }
@@ -182,7 +186,7 @@ export function composeBootstrapMarkdown(
   inputs: BootstrapInputs,
 ): string {
   const preBound = composePreBound(sections.preBoundTemplate, inputs);
-  const forHumans = sections.forHumans.replace(/\{tincan_url\}/g, inputs.tincanUrl);
+  const forHumans = sections.forHumans.replace(/\{tincan_url\}/g, () => inputs.tincanUrl);
   return [
     sections.identity,
     sections.howToJoin,
