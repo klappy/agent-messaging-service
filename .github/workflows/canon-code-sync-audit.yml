@@ -1,0 +1,397 @@
+name: Canon-Code Sync Audit (Managed Agent)
+
+# Audits canon ↔ code ↔ deployed-config coherence on every PR touching governance
+# surfaces. The gate is a Managed Agent dispatched against the Anthropic API per
+# the managed-agents skill, NOT a regex script. This is required by:
+#
+#   klappy://canon/constraints/audit-gates-are-managed-agents (Tier-1, klappy.dev)
+#   ams://canon/constraints/canon-code-sync-via-managed-agent (Tier-2, AMS adoption)
+#
+# What the workflow does:
+#   1. Builds a task for a Claude Sonnet 4.6 agent with the PR context.
+#   2. Creates an agent (with oddkit MCP access), session, and dispatches.
+#   3. Polls for completion (up to ~10 minutes).
+#   4. Reads the agent's events; finds the verdict marker in its final message.
+#   5. Exits 0 (PASS) or 1 (FAIL) based on the agent's verdict.
+#
+# The agent itself posts the structured findings as a PR comment using its
+# embedded PAT — the workflow does not parse and re-post.
+#
+# Required repo secrets:
+#   ANTHROPIC_API_KEY — for the Managed Agents API
+#   (GITHUB_TOKEN is auto-provided per workflow run; the agent uses it via
+#    the embedded URL for cloning + commenting)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'canon/**'
+      - 'docs/**'
+      - 'proposals/**'
+      - 'writings/**'
+      - 'packages/*/wrangler.toml'
+      - 'worker/wrangler.toml'
+      - 'packages/**/*.ts'
+      - 'worker/**/*.ts'
+      - 'SPEC*.md'
+      - 'README.md'
+      - 'AGENTS.md'
+      - 'TINCAN-*.md'
+      - 'POC-*.md'
+      - '.github/workflows/canon-code-sync-audit.yml'
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  audit:
+    name: Dispatch Managed Agent for canon-code sync audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Verify ANTHROPIC_API_KEY is configured
+        env:
+          KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::error::ANTHROPIC_API_KEY repo secret is not set."
+            echo "::error::This workflow requires the secret to dispatch a Managed Agent for the audit."
+            echo "::error::Add it under Settings → Secrets and variables → Actions, then re-run."
+            exit 1
+          fi
+
+      - name: Dispatch Managed Agent and await verdict
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          REPO_FULL: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          BASE="https://api.anthropic.com/v1"
+          BETA_HEADER="managed-agents-2026-04-01"
+          ENV_ID="env_016RffZyqSdHeb5s3Z6UABw8"
+
+          echo "::group::System prompt"
+          SYSTEM_PROMPT=$(cat <<'PROMPT'
+          ## Identity of Proactive Integrity
+
+          Before I speak, I observe. Before I claim, I verify. Before I confirm, I prove.
+          What I have not seen, I do not know. What I have not verified, I will not imply.
+
+          ## Foundational Axioms
+          1. Reality Is Sovereign — observe before asserting.
+          2. A Claim Is a Debt — every assertion requires evidence. Silence > ungrounded speech.
+          3. Integrity Is Non-Negotiable Efficiency — a false "done" costs more than an honest "I haven't checked."
+          4. You Cannot Verify What You Did Not Observe — if you didn't look, you don't know.
+
+          ## Epistemic Backbone: oddkit
+          You have access to the oddkit MCP server as a proactive cognitive rhythm.
+          - orient when context shifts
+          - search before claiming
+          - get to fetch canonical documents
+          - challenge before encoding consequential decisions
+          - encode findings as durable records (output does NOT persist — save to file)
+          - validate before declaring done
+
+          Search before claiming. Validate before declaring done.
+
+          ## Your Role
+
+          You are the canon-code sync auditor for klappy/agent-messaging-service.
+          The merge gate for governance audits in this repo is a Managed Agent — that
+          is you — per:
+
+            klappy://canon/constraints/audit-gates-are-managed-agents (your charter)
+            ams://canon/constraints/canon-code-sync-via-managed-agent (project adoption)
+
+          Your charter forbids the alternative architecture (a hand-rolled regex
+          script as the merge gate). The earlier version of this workflow shipped
+          such a script; it has been retired. You replace it.
+
+          You exercise LLM-grade judgment that mechanical pattern matchers cannot.
+          You read prose, recognize equivalence under renaming, follow supersession
+          chains, and cross-reference adjacent canon. Do not behave like a regex.
+
+          ## What You Are Auditing
+
+          AMS-specific drift surfaces, in order of importance:
+
+          1. Canon ↔ deployment config — does anything in canon/ contradict the
+             actual contents of packages/*/wrangler.toml or worker/wrangler.toml
+             on this PR's branch?
+          2. Canon ↔ code — does any constraint, decision, or charter description
+             still match the TypeScript implementation in worker/src/ or
+             packages/*/src/ as of this PR?
+          3. Cross-canon — do any docs added or edited in this PR contradict
+             adjacent canon already on main? Use oddkit_search to find adjacent
+             constraints/decisions for each touched concept; oddkit_get to read
+             them; compare claims.
+          4. Handoffs and writings ↔ shipped reality — if a handoff doc recommends
+             an approach, has the approach since been superseded? Look in the
+             journal/ directory for supersession evidence.
+          5. Supersession chains — if a doc claims to supersede another, does the
+             other doc carry the matching superseded_by frontmatter?
+
+          You are NOT looking for: typos, formatting, prose style, frontmatter
+          schema violations (a separate structural check handles those). Your job
+          is the LLM-judgment audit only.
+
+          ## Output Discipline
+
+          When you finish, post ONE PR comment with this exact shape:
+
+          ```
+          ## Canon-Code Sync Audit (Managed Agent)
+
+          **Verdict:** PASS | FAIL
+
+          ### Coverage
+          - Files reviewed: <list of files changed in PR>
+          - Canon documents fetched: <list of klappy:// and ams:// URIs you read>
+
+          ### Findings
+
+          (For each finding, in order of severity:)
+          - **[severity: substantive | cosmetic]** <location>
+            - **Claim:** <what the doc/code says>
+            - **Reality:** <what the actual repo state is>
+            - **Suggested fix:** <one-line action>
+
+          (If no findings, write: "No drift detected. Canon, code, and deployment config are coherent on this PR.")
+
+          ### Notes
+          (Anything the operator should know that didn't fit into Findings.)
+          ```
+
+          After posting the comment, your final assistant message MUST contain
+          exactly one of these two markers on its own line, with no other text
+          on that line:
+
+            <<<VERDICT: PASS>>>
+            <<<VERDICT: FAIL>>>
+
+          PASS = no substantive findings. Cosmetic findings are fine to PASS with.
+          FAIL = at least one substantive finding (canon claims something the
+          repo does not; code violates a constraint; handoff recommends a
+          superseded approach).
+
+          The CI workflow greps for this marker to decide whether to fail the
+          check. Without the marker, the workflow defaults to FAIL.
+
+          ## How to Operate
+
+          1. Set up:
+             ```
+             git clone https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO_FULL}.git /tmp/repo
+             cd /tmp/repo
+             git fetch origin pull/${PR_NUMBER}/head:pr
+             git checkout pr
+             git diff --name-only origin/${PR_BASE_REF}...HEAD > /tmp/changed.txt
+             ```
+
+          2. For each changed file, decide which kind of audit applies (canon,
+             code, config, handoff, etc.) and which canon documents are relevant.
+
+          3. Use oddkit_search to find applicable constraints. Use oddkit_get to
+             read them. Use oddkit_catalog if you need to discover what exists.
+
+          4. For each touched concept, also search adjacent canon — a canon edit
+             often has implications for sibling docs that aren't in the PR.
+
+          5. Render judgments. Do not flag patterns; flag drift. A `**NEW**`
+             marker is meaningless to you; what matters is whether the claim
+             matches reality.
+
+          6. Post the comment via the GitHub API:
+             ```
+             curl -sS -X POST \
+               -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+               -H "Accept: application/vnd.github+json" \
+               https://api.github.com/repos/${REPO_FULL}/issues/${PR_NUMBER}/comments \
+               -d "$(python3 -c "import json,sys; json.dump({'body': open('/tmp/comment.md').read()}, sys.stdout)")"
+             ```
+
+          7. Emit the verdict marker on its own line in your final message.
+          PROMPT
+          )
+          echo "$SYSTEM_PROMPT" | head -10
+          echo "..."
+          echo "::endgroup::"
+
+          echo "::group::Build agent task"
+          TASK=$(cat <<TASK_END
+          Audit klappy/agent-messaging-service PR #${PR_NUMBER} for canon ↔ code ↔ deployed-config coherence.
+
+          PR context:
+            repo: ${REPO_FULL}
+            PR number: ${PR_NUMBER}
+            head branch: ${PR_HEAD_REF}
+            head SHA: ${PR_HEAD_SHA}
+            base branch: ${PR_BASE_REF}
+
+          Credentials available to you in the shell environment:
+            GITHUB_TOKEN — for cloning the repo and posting the PR comment
+            REPO_FULL=${REPO_FULL}
+            PR_NUMBER=${PR_NUMBER}
+            PR_BASE_REF=${PR_BASE_REF}
+
+          Follow the operating procedure in your system prompt:
+            1. Clone, checkout PR head, compute diff.
+            2. Identify applicable canon for each touched surface.
+            3. oddkit_search + oddkit_get the relevant constraints/decisions.
+            4. Render LLM-grade judgments. Do not flag patterns; flag drift.
+            5. Post one PR comment in the prescribed shape.
+            6. End with the verdict marker on its own line.
+
+          You have ~10 minutes. Be thorough but efficient. If oddkit search returns
+          a constraint you have already read this session, do not re-fetch.
+          TASK_END
+          )
+          echo "$TASK" | head -20
+          echo "..."
+          echo "::endgroup::"
+
+          echo "::group::Create agent"
+          AGENT_ID=$(python3 -c "
+          import json, sys, os
+          json.dump({
+              'name': 'ams-canon-code-sync-auditor',
+              'model': 'claude-sonnet-4-6',
+              'system': os.environ['SYS_PROMPT'],
+              'tools': [
+                  {'type': 'agent_toolset_20260401'},
+                  {'type': 'mcp_toolset', 'mcp_server_name': 'oddkit',
+                   'default_config': {'permission_policy': {'type': 'always_allow'}}}
+              ],
+              'mcp_servers': [
+                  {'type': 'url', 'name': 'oddkit', 'url': 'https://oddkit.klappy.dev/mcp'}
+              ]
+          }, sys.stdout)
+          " | SYS_PROMPT="$SYSTEM_PROMPT" curl -sS "$BASE/agents" \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "anthropic-beta: $BETA_HEADER" \
+            -H "content-type: application/json" \
+            -d @- | jq -r '.id')
+
+          if [ -z "$AGENT_ID" ] || [ "$AGENT_ID" = "null" ]; then
+            echo "::error::Failed to create agent — check ANTHROPIC_API_KEY and Managed Agents API beta access."
+            exit 1
+          fi
+          echo "Agent: $AGENT_ID"
+          echo "::endgroup::"
+
+          echo "::group::Create session"
+          SESSION_ID=$(curl -sS "$BASE/sessions" \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "anthropic-beta: $BETA_HEADER" \
+            -H "content-type: application/json" \
+            -d "{\"agent\":\"$AGENT_ID\",\"environment_id\":\"$ENV_ID\",\"title\":\"Canon-code sync audit PR #$PR_NUMBER\"}" \
+            | jq -r '.id')
+
+          if [ -z "$SESSION_ID" ] || [ "$SESSION_ID" = "null" ]; then
+            echo "::error::Failed to create session."
+            exit 1
+          fi
+          echo "Session: $SESSION_ID"
+          echo "::endgroup::"
+
+          echo "::group::Dispatch task"
+          python3 -c "
+          import json, sys, os
+          json.dump({'events':[{'type':'user.message','content':[{'type':'text','text':os.environ['TASK_TEXT']}]}]}, sys.stdout)
+          " | TASK_TEXT="$TASK" curl -sS "$BASE/sessions/$SESSION_ID/events" \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "anthropic-beta: $BETA_HEADER" \
+            -H "content-type: application/json" \
+            -d @- -o /dev/null -w "Task dispatched: HTTP %{http_code}\n"
+          echo "::endgroup::"
+
+          echo "::group::Poll for completion (up to ~10 minutes)"
+          STATUS="unknown"
+          for i in $(seq 1 60); do
+            STATUS=$(curl -sS "$BASE/sessions/$SESSION_ID" \
+              -H "x-api-key: $ANTHROPIC_API_KEY" \
+              -H "anthropic-version: 2023-06-01" \
+              -H "anthropic-beta: $BETA_HEADER" | jq -r '.status')
+            echo "Poll $i ($(date -u +%H:%M:%S)): $STATUS"
+            [ "$STATUS" = "idle" ] && break
+            sleep 10
+          done
+
+          if [ "$STATUS" != "idle" ]; then
+            echo "::warning::Session did not reach idle within ~10 minutes (last status: $STATUS)."
+            echo "::warning::Defaulting verdict to FAIL — operator should investigate the session manually."
+            echo "Session ID for manual inspection: $SESSION_ID"
+            exit 1
+          fi
+          echo "::endgroup::"
+
+          echo "::group::Parse verdict from agent's final message"
+          VERDICT=$(curl -sS "$BASE/sessions/$SESSION_ID/events" \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "anthropic-beta: $BETA_HEADER" | python3 -c "
+          import json, sys, re
+          events = json.load(sys.stdin).get('data', [])
+          # Walk events newest-last; find last agent.message with text content
+          texts = []
+          for e in events:
+              if e.get('type') == 'agent.message':
+                  for c in e.get('content', []):
+                      if c.get('type') == 'text':
+                          texts.append(c['text'])
+          if not texts:
+              print('NO_MESSAGES')
+              sys.exit(0)
+          last = texts[-1]
+          # Marker must be on its own line: <<<VERDICT: PASS>>> or <<<VERDICT: FAIL>>>
+          for line in last.splitlines():
+              line = line.strip()
+              if line == '<<<VERDICT: PASS>>>':
+                  print('PASS')
+                  sys.exit(0)
+              if line == '<<<VERDICT: FAIL>>>':
+                  print('FAIL')
+                  sys.exit(0)
+          # Also accept the marker anywhere in the last message as a fallback
+          if '<<<VERDICT: PASS>>>' in last:
+              print('PASS')
+          elif '<<<VERDICT: FAIL>>>' in last:
+              print('FAIL')
+          else:
+              print('NO_MARKER')
+          ")
+          echo "Verdict: $VERDICT"
+          echo "::endgroup::"
+
+          case "$VERDICT" in
+            PASS)
+              echo "::notice::Canon-code sync audit: PASS"
+              exit 0
+              ;;
+            FAIL)
+              echo "::error::Canon-code sync audit: FAIL — see PR comment from the auditor for findings."
+              exit 1
+              ;;
+            NO_MESSAGES)
+              echo "::error::Agent session ended without producing any messages. Inspect session manually: $SESSION_ID"
+              exit 1
+              ;;
+            NO_MARKER|*)
+              echo "::error::Agent did not emit a recognized verdict marker. Defaulting to FAIL."
+              echo "::error::Inspect the session events at: $BASE/sessions/$SESSION_ID/events"
+              exit 1
+              ;;
+          esac
