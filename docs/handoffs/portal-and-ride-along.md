@@ -1,5 +1,14 @@
 # Handoff — Portal Bootstrap + Ride-Along Implementation
 
+> **STATUS (2026-05-07): Both tasks shipped. Document retained for historical reference.**
+>
+> - **Task A (`packages/tincan/src/portal.ts` + `bootstrap.ts`)** shipped in PR [#61](https://github.com/klappy/agent-messaging-service/pull/61) and refactored in PR [#64](https://github.com/klappy/agent-messaging-service/pull/64). PR #61 implemented Task A as written below — `raw.githubusercontent.com` fetch + handrolled markdown blockquote extraction + frozen-prose fallback. Operator-flagged brittleness on the merged PR led to PR #64 superseding the fetch mechanism with the **oddkit MCP client** alternative explicitly named in step A1.2 of this document. Six parallel `oddkit_get` tools/calls; section addressing delegated to oddkit; no markdown parser; no frozen prose; 503 on canon-unreachable. Rationale and DOLCHE+H trail in [`journal/2026-05-07-bootstrap-via-oddkit-mcp-rewrite.tsv`](../../journal/2026-05-07-bootstrap-via-oddkit-mcp-rewrite.tsv).
+> - **Task B (`worker/src/mcp.ts` ride-along)** shipped in PR #61 as written. `withRideAlong` per `D0027 §Mechanism`, `RIDE_ALONG_BUDGET = 64`, `ams_recv` correctly un-wrapped, two-way-door reversibility intact.
+>
+> New work in this area should fetch current canon directly via `oddkit_get` per the doc's Posture preface — **not** treat this handoff as authoritative going forward.
+
+---
+
 > **Canon governs this work. This document is a roadmap, not a spec.** When canon and this handoff disagree, canon wins. When the handoff is silent, fetch the relevant canon and let it speak.
 
 PR [#60](https://github.com/klappy/agent-messaging-service/pull/60) merged the canon. Two implementation tasks follow. They are independent — each can ship in its own PR — but they compose to deliver one-prompt magic for AI-agent-to-AI-agent collaboration via magic link.
