@@ -25,8 +25,28 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Determine changed canon files
+        id: changed
+        run: |
+          set -euo pipefail
+          base_ref="${{ github.base_ref }}"
+          git fetch --no-tags --depth=1 origin "$base_ref"
+          # Per ams://canon/constraints/canon-implementation-path-integrity §"The Validation Rules",
+          # validation applies only to "every path reference in the changed files" — scope the
+          # scan to the PR's changed canon-tracked .md files instead of the whole corpus.
+          git diff --name-only --diff-filter=ACMRT \
+            "origin/${base_ref}...HEAD" -- canon writings docs/handoffs proposals \
+            | grep -E '\.md$' > changed-canon.txt || true
+          echo 'Changed canon files:'
+          cat changed-canon.txt
+
       - name: Run canon drift checker
-        run: python3 scripts/check-canon-drift.py --repo-root .
+        run: |
+          if [ ! -s changed-canon.txt ]; then
+            echo 'No changed canon-tracked .md files; nothing to validate.'
+            exit 0
+          fi
+          python3 scripts/check-canon-drift.py --repo-root . --files-from changed-canon.txt
 
       - name: Annotate findings as PR comment on failure
         if: failure()

@@ -83,6 +83,39 @@ def find_canon_files(repo_root: Path) -> list[Path]:
     return files
 
 
+def filter_to_canon(repo_root: Path, paths: list[str]) -> list[Path]:
+    """Restrict an explicit path list to existing .md files under CANON_DIRS.
+
+    Used to scope validation to a PR's changed files per
+    ams://canon/constraints/canon-implementation-path-integrity §"The Validation Rules"
+    ("every path reference in the changed files").
+    """
+    canon_roots = [(repo_root / d).resolve() for d in CANON_DIRS]
+    selected: list[Path] = []
+    for raw in paths:
+        raw = raw.strip()
+        if not raw:
+            continue
+        candidate = (repo_root / raw).resolve()
+        if not candidate.exists() or candidate.suffix != '.md':
+            continue
+        for root in canon_roots:
+            try:
+                candidate.relative_to(root)
+            except ValueError:
+                continue
+            selected.append(candidate)
+            break
+    # Stable, de-duplicated order
+    seen: set[Path] = set()
+    unique: list[Path] = []
+    for p in sorted(selected):
+        if p not in seen:
+            seen.add(p)
+            unique.append(p)
+    return unique
+
+
 def is_project_path(s: str) -> bool:
     """Heuristic: project paths look like 'a/b/c.ext' but not URLs, MIME types, etc."""
     if not s or s.startswith(('http://', 'https://', '@', '#', '/')):
@@ -140,15 +173,16 @@ def extract_claims(file_path: Path) -> list[tuple[str, str, int]]:
             heading_match = HEADING_RE.match(line)
             if heading_match:
                 heading_text = heading_match.group(1).lower().strip().rstrip('.,:;')
+                # Count leading '#' characters directly so tab-indented headings
+                # (matched by HEADING_RE's `\s+`) don't crash line.index(' ').
+                heading_level = len(line) - len(line.lstrip('#'))
                 if heading_text in SKIP_SECTION_HEADINGS:
                     in_skip_section = True
-                    aspirational_section_level = line.count('#', 0, line.index(' '))
+                    aspirational_section_level = heading_level
                     continue
                 # Any heading at or above the aspirational section's level closes it
-                if in_skip_section:
-                    level = line.count('#', 0, line.index(' '))
-                    if level <= aspirational_section_level:
-                        in_skip_section = False
+                if in_skip_section and heading_level <= aspirational_section_level:
+                    in_skip_section = False
 
         if in_skip_section:
             continue
@@ -178,6 +212,22 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--repo-root', default='.', help='Repo root (default: cwd)')
     parser.add_argument('--findings-md', default='drift-findings.md', help='Output path for markdown findings')
+    parser.add_argument(
+        '--files-from',
+        default=None,
+        help=(
+            'File containing newline-delimited paths (relative to --repo-root) to validate. '
+            'Paths outside CANON_DIRS or non-.md files are ignored. '
+            'Used by CI to scope validation to the PR\'s changed files per '
+            'ams://canon/constraints/canon-implementation-path-integrity. '
+            'If omitted, the script scans every .md under CANON_DIRS.'
+        ),
+    )
+    parser.add_argument(
+        'files',
+        nargs='*',
+        help='Specific files to validate (alternative to --files-from). Same scoping rules.',
+    )
     args = parser.parse_args()
 
     repo_root = Path(args.repo_root).resolve()
@@ -185,8 +235,25 @@ def main() -> int:
         print(f'error: --repo-root does not exist: {repo_root}', file=sys.stderr)
         return 2
 
-    canon_files = find_canon_files(repo_root)
-    print(f'Scanning {len(canon_files)} markdown files in {", ".join(CANON_DIRS)} for path drift...')
+    explicit_paths: list[str] | None = None
+    if args.files_from:
+        try:
+            explicit_paths = (Path(args.files_from)).read_text(encoding='utf-8').splitlines()
+        except OSError as e:
+            print(f'error: could not read --files-from {args.files_from}: {e}', file=sys.stderr)
+            return 2
+    elif args.files:
+        explicit_paths = args.files
+
+    if explicit_paths is not None:
+        canon_files = filter_to_canon(repo_root, explicit_paths)
+        print(
+            f'Scanning {len(canon_files)} changed markdown file(s) under '
+            f'{", ".join(CANON_DIRS)} for path drift...'
+        )
+    else:
+        canon_files = find_canon_files(repo_root)
+        print(f'Scanning {len(canon_files)} markdown files in {", ".join(CANON_DIRS)} for path drift...')
 
     findings: list[DriftFinding] = []
     for f in canon_files:
