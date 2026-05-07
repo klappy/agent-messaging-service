@@ -27,6 +27,8 @@
 
 import { McpAgent } from "agents/mcp";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
+import type { ServerNotification, ServerRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 import { authenticate } from "./auth";
@@ -77,6 +79,17 @@ interface ResolvedPrebind {
   conversation_id: string;
   record: ConversationRecord;
 }
+
+// SDK's request-handler `extra` argument. Used by withRideAlong to flush
+// buffered peer frames onto the active POST tool-call response stream — per
+// ams://canon/decisions/D0027 §Mechanism, the SDK pre-binds `relatedRequestId`
+// on extra.sendNotification so notifications route to the in-flight request
+// rather than the standalone SSE GET leg. The SDK's ServerNotification union
+// does not enumerate AMS-specific methods (notifications/ams/token,
+// notifications/ams/stream_metadata, notifications/ams/truncated), so we cast
+// at the call site — same pattern the existing broadcastNotification uses for
+// server.server.notification(...) below.
+type ToolHandlerExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
 
 const PROTOCOL_POINTER_URL =
   "https://github.com/klappy/agent-messaging-service/blob/main/PROTOCOL.md";
@@ -193,11 +206,20 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
   private wireWs: WebSocket | null = null;
   private joined: JoinedSnapshot | null = null;
 
-  // Frame buffer for ams_recv (long-poll fallback for runtimes that cannot
-  // consume the SDK's standalone SSE leg). Bounded; oldest-drop on overflow.
+  // Frame buffer drained by the three delivery paths in
+  // ams://canon/decisions/D0027-inbound-delivery-is-transport-adaptive:
+  //   • push       — SDK's standalone SSE GET leg (broadcastNotification)
+  //   • ride-along — drained onto active POST tool-call responses by withRideAlong
+  //   • poll       — explicit ams_recv tool
+  // Bounded; oldest-drop on overflow with truncation surfaced to whichever
+  // path drains next.
   private recvBuffer: BufferedFrame[] = [];
   private recvTruncated = false;
   private static readonly RECV_BUDGET = 1000;
+  // Cap drain count per ride-along call so a backlogged session does not block
+  // a single tool-call response on flushing thousands of frames. Remainder
+  // stays in the buffer for the next drain (next tool call, ams_recv, or push).
+  private static readonly RIDE_ALONG_BUDGET = 64;
   private waiters: Array<() => void> = [];
 
   override async init(): Promise<void> {
@@ -334,6 +356,11 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
   // --- tools ---------------------------------------------------------------
 
   private registerTools(prebind: ResolvedPrebind | null): void {
+    // Three of the four tools are wrapped with withRideAlong per
+    // ams://canon/decisions/D0027 §Mechanism so buffered peer frames are
+    // drained onto the POST response stream of any tool call. ams_recv stays
+    // un-wrapped — it owns the buffer explicitly; double-drain would lose
+    // frames on consumers that expect the recv path to be authoritative.
     this.server.registerTool(
       "ams_create_conversation",
       {
@@ -362,7 +389,7 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
             ),
         },
       },
-      async (args) => this.tool_ams_create_conversation(args),
+      this.withRideAlong(async (args) => this.tool_ams_create_conversation(args)),
     );
 
     // ams_join: magic_link is OPTIONAL. On the magic-link prebind route the
@@ -399,7 +426,7 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
             ),
         },
       },
-      async (args) => this.tool_ams_join(args, prebind),
+      this.withRideAlong(async (args) => this.tool_ams_join(args, prebind)),
     );
 
     this.server.registerTool(
@@ -413,7 +440,7 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
             .describe("Opaque UTF-8 token payload (up to 64 KiB)."),
         },
       },
-      async (args) => this.tool_ams_send(args),
+      this.withRideAlong(async (args) => this.tool_ams_send(args)),
     );
 
     this.server.registerTool(
@@ -768,10 +795,27 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
   }
 
   private broadcastNotification(method: string, params: unknown): void {
-    // Buffer for ams_recv (poll-mode consumers).
+    // Buffer-side eviction with truncation surfacing per
+    // ams://canon/decisions/D0027 §Echo Filter and Truncation: when the
+    // per-session buffer overflows, the next drain across all three paths
+    // (push, ride-along, poll) emits a notifications/ams/truncated frame.
+    // We surface that frame in-band via the buffer (idempotent: at most one
+    // truncated marker per drain cycle, gated on the recvTruncated flag) so
+    // the ride-along and poll drains pick it up naturally; we also push it
+    // via the SDK so push-leg consumers see it without having to drain.
+    let truncatedTransition = false;
     if (this.recvBuffer.length >= AmsMcpAgent.RECV_BUDGET) {
       this.recvBuffer.shift();
-      this.recvTruncated = true;
+      if (!this.recvTruncated) {
+        this.recvTruncated = true;
+        truncatedTransition = true;
+      }
+    }
+    if (truncatedTransition) {
+      this.recvBuffer.push({
+        method: "notifications/ams/truncated",
+        params: {},
+      });
     }
     this.recvBuffer.push({ method, params });
     const waiters = this.waiters;
@@ -786,11 +830,54 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
 
     // Push through the SDK's escape hatch per the day-3 stdio migration pattern.
     // Goes to the standalone Streamable HTTP SSE leg if a client has it open.
+    if (truncatedTransition) {
+      try {
+        void this.server.server.notification({
+          method: "notifications/ams/truncated",
+          params: {} as never,
+        });
+      } catch {
+        // No active transport / not initialized yet — buffer carries it.
+      }
+    }
     try {
       void this.server.server.notification({ method, params: params as never });
     } catch {
       // No active transport / not initialized yet — buffered above is enough.
     }
+  }
+
+  // Ride-along delivery wrapper per ams://canon/decisions/D0027 §Mechanism.
+  // Wraps a tool handler so that buffered peer frames are flushed onto the
+  // active POST response stream via the SDK's extra.sendNotification (which
+  // routes to the response by relatedRequestId). Capped at RIDE_ALONG_BUDGET
+  // frames per call to keep response latency bounded; remainder stays in the
+  // buffer for the next drain. Not applied to ams_recv — that tool drains the
+  // buffer explicitly and a wrapped version would double-drain.
+  private withRideAlong<TArgs, TResult>(
+    handler: (args: TArgs, extra: ToolHandlerExtra) => Promise<TResult>,
+  ): (args: TArgs, extra: ToolHandlerExtra) => Promise<TResult> {
+    return async (args, extra) => {
+      const result = await handler(args, extra);
+      const drain = this.recvBuffer.splice(0, AmsMcpAgent.RIDE_ALONG_BUDGET);
+      // recvTruncated is reset whenever a drain consumes the in-band marker
+      // so the next overflow can surface a fresh marker.
+      let drainedTruncated = false;
+      for (const frame of drain) {
+        if (frame.method === "notifications/ams/truncated") drainedTruncated = true;
+        try {
+          await extra.sendNotification({
+            method: frame.method,
+            params: frame.params,
+          } as never);
+        } catch {
+          // Response stream gone / transport closed — drop on the floor; the
+          // SDK push leg or a subsequent ams_recv will carry future frames.
+        }
+      }
+      if (drainedTruncated) this.recvTruncated = false;
+      return result;
+    };
   }
 
   // --- auth helper ---------------------------------------------------------
