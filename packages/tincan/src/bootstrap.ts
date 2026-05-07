@@ -8,6 +8,9 @@
 // the constraint's "Living-Canon Posture", render-time fetching is the
 // conformance path; the frozen text is not a substitute.
 
+import type { ConvRecord } from "./types";
+export type { ConvRecord };
+
 const CANON_RAW_URL =
   "https://raw.githubusercontent.com/klappy/agent-messaging-service/main/canon/constraints/portal-bootstrap-content.md";
 
@@ -22,14 +25,6 @@ interface CacheEntry {
 }
 
 let cache: CacheEntry | null = null;
-
-export interface ConvRecord {
-  conversation_id: string;
-  namespace: string;
-  alias: string;
-  metadata: Record<string, unknown>;
-  created_at: string;
-}
 
 export interface BootstrapInputs {
   record: ConvRecord;
@@ -52,7 +47,15 @@ async function fetchCanonText(): Promise<string> {
   // Cloudflare's edge cache is also leaned on (cf.cacheTtl) so a cold isolate
   // fetches from the colo cache rather than crossing the public internet on
   // every cold start.
-  const res = await fetch(CANON_RAW_URL, { cf: { cacheTtl: 3600 } });
+  let res: Response;
+  try {
+    res = await fetch(CANON_RAW_URL, { cf: { cacheTtl: 3600 } });
+  } catch (err) {
+    // Network-level failure (DNS, TLS, etc.). Stale cache still beats the
+    // frozen fallback per the constraint's degradation rule.
+    if (cache) return cache.text;
+    throw err;
+  }
   if (!res.ok) {
     if (cache) return cache.text;
     throw new Error(`canon_fetch_failed_${res.status}`);

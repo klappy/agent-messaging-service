@@ -809,6 +809,9 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
       if (!this.recvTruncated) {
         this.recvTruncated = true;
         truncatedTransition = true;
+        // The truncated marker we're about to push consumes a buffer slot
+        // too, so evict an additional entry to honor RECV_BUDGET.
+        if (this.recvBuffer.length > 0) this.recvBuffer.shift();
       }
     }
     if (truncatedTransition) {
