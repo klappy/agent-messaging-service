@@ -261,7 +261,7 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::Create agent"
-          AGENT_ID=$(python3 -c "
+          AGENT_ID=$(SYS_PROMPT="$SYSTEM_PROMPT" python3 -c "
           import json, sys, os
           json.dump({
               'name': 'ams-canon-code-sync-auditor',
@@ -276,7 +276,7 @@ jobs:
                   {'type': 'url', 'name': 'oddkit', 'url': 'https://oddkit.klappy.dev/mcp'}
               ]
           }, sys.stdout)
-          " | SYS_PROMPT="$SYSTEM_PROMPT" curl -sS "$BASE/agents" \
+          " | curl -sS "$BASE/agents" \
             -H "x-api-key: $ANTHROPIC_API_KEY" \
             -H "anthropic-version: 2023-06-01" \
             -H "anthropic-beta: $BETA_HEADER" \
@@ -307,10 +307,10 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::Dispatch task"
-          python3 -c "
+          TASK_TEXT="$TASK" python3 -c "
           import json, sys, os
           json.dump({'events':[{'type':'user.message','content':[{'type':'text','text':os.environ['TASK_TEXT']}]}]}, sys.stdout)
-          " | TASK_TEXT="$TASK" curl -sS "$BASE/sessions/$SESSION_ID/events" \
+          " | curl -sS "$BASE/sessions/$SESSION_ID/events" \
             -H "x-api-key: $ANTHROPIC_API_KEY" \
             -H "anthropic-version: 2023-06-01" \
             -H "anthropic-beta: $BETA_HEADER" \
