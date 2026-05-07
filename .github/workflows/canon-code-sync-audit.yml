@@ -191,10 +191,11 @@ jobs:
 
           1. Set up:
              ```
-             git clone https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO_FULL}.git /tmp/repo
-             cd /tmp/repo
-             git fetch origin pull/${PR_NUMBER}/head:pr
-             git checkout pr
+             # The repo is pre-mounted at /workspace/repo with the PR head SHA
+             # checked out (via the session's github_repository resource).
+             # The GITHUB_TOKEN value is provided in the task text below.
+             cd /workspace/repo
+             git fetch origin ${PR_BASE_REF}
              git diff --name-only origin/${PR_BASE_REF}...HEAD > /tmp/changed.txt
              ```
 
@@ -238,14 +239,20 @@ jobs:
             head SHA: ${PR_HEAD_SHA}
             base branch: ${PR_BASE_REF}
 
-          Credentials available to you in the shell environment:
-            GITHUB_TOKEN — for cloning the repo and posting the PR comment
+          Repository: pre-mounted at /workspace/repo with the PR head SHA
+          (${PR_HEAD_SHA}) already checked out via the session's
+          github_repository resource. No clone is needed.
+
+          Credentials and context available to you (use these literal values
+          directly when constructing shell commands or HTTP requests):
+            GITHUB_TOKEN=${GITHUB_TOKEN}
             REPO_FULL=${REPO_FULL}
             PR_NUMBER=${PR_NUMBER}
             PR_BASE_REF=${PR_BASE_REF}
 
-          Follow the operating procedure in your system prompt:
-            1. Clone, checkout PR head, compute diff.
+          Follow the operating procedure in your system prompt (skip the
+          clone step since the repo is pre-mounted):
+            1. cd /workspace/repo, fetch base, compute diff.
             2. Identify applicable canon for each touched surface.
             3. oddkit_search + oddkit_get the relevant constraints/decisions.
             4. Render LLM-grade judgments. Do not flag patterns; flag drift.
@@ -291,13 +298,26 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::Create session"
-          SESSION_ID=$(curl -sS "$BASE/sessions" \
+          SESSION_ID=$(AGENT_ID="$AGENT_ID" ENV_ID="$ENV_ID" python3 -c "
+          import json, sys, os
+          json.dump({
+              'agent': os.environ['AGENT_ID'],
+              'environment_id': os.environ['ENV_ID'],
+              'title': f\"Canon-code sync audit PR #{os.environ['PR_NUMBER']}\",
+              'resources': [{
+                  'type': 'github_repository',
+                  'url': f\"https://github.com/{os.environ['REPO_FULL']}\",
+                  'mount_path': '/workspace/repo',
+                  'authorization_token': os.environ['GITHUB_TOKEN'],
+                  'checkout': {'type': 'commit', 'sha': os.environ['PR_HEAD_SHA']},
+              }],
+          }, sys.stdout)
+          " | curl -sS "$BASE/sessions" \
             -H "x-api-key: $ANTHROPIC_API_KEY" \
             -H "anthropic-version: 2023-06-01" \
             -H "anthropic-beta: $BETA_HEADER" \
             -H "content-type: application/json" \
-            -d "{\"agent\":\"$AGENT_ID\",\"environment_id\":\"$ENV_ID\",\"title\":\"Canon-code sync audit PR #$PR_NUMBER\"}" \
-            | jq -r '.id')
+            -d @- | jq -r '.id')
 
           if [ -z "$SESSION_ID" ] || [ "$SESSION_ID" = "null" ]; then
             echo "::error::Failed to create session."
@@ -310,7 +330,7 @@ jobs:
           TASK_TEXT="$TASK" python3 -c "
           import json, sys, os
           json.dump({'events':[{'type':'user.message','content':[{'type':'text','text':os.environ['TASK_TEXT']}]}]}, sys.stdout)
-          " | curl -sS "$BASE/sessions/$SESSION_ID/events" \
+          " | curl -fsS "$BASE/sessions/$SESSION_ID/events" \
             -H "x-api-key: $ANTHROPIC_API_KEY" \
             -H "anthropic-version: 2023-06-01" \
             -H "anthropic-beta: $BETA_HEADER" \
