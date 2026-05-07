@@ -89,36 +89,51 @@ export default {
           req.headers.get("user-agent") ?? "",
         );
 
-        if (shape === "json") {
-          const body = await renderBootstrapJson({
-            record,
+        // All three render shapes pull prescribed text from canon via oddkit.
+        // If canon is unreachable AND no in-isolate cache exists, the renderer
+        // throws — per ams://canon/constraints/portal-bootstrap-content §The
+        // Living-Canon Posture, frozen prose in source is forbidden. Loud 503
+        // is the correct degradation: operators see it, drift never lands.
+        try {
+          if (shape === "json") {
+            const body = await renderBootstrapJson({
+              record,
+              amsMagicLink,
+              tincanUrl: tincanMagicLink,
+            });
+            return new Response(JSON.stringify(body, null, 2), {
+              headers: { "content-type": "application/json; charset=utf-8" },
+            });
+          }
+          if (shape === "markdown") {
+            const md = await renderBootstrapMarkdown({
+              record,
+              amsMagicLink,
+              tincanUrl: tincanMagicLink,
+            });
+            return new Response(md, {
+              headers: { "content-type": "text/markdown; charset=utf-8" },
+            });
+          }
+          // Browser → full HTML portal with the canon-rendered bootstrap
+          // embedded as a visually-hidden but AI-readable <pre> block.
+          return await portalResponse({
+            namespace: ns,
+            alias,
+            permissive,
+            magicLink: tincanMagicLink,
             amsMagicLink,
-            tincanUrl: tincanMagicLink,
-          });
-          return new Response(JSON.stringify(body, null, 2), {
-            headers: { "content-type": "application/json; charset=utf-8" },
-          });
-        }
-        if (shape === "markdown") {
-          const md = await renderBootstrapMarkdown({
             record,
-            amsMagicLink,
-            tincanUrl: tincanMagicLink,
           });
-          return new Response(md, {
-            headers: { "content-type": "text/markdown; charset=utf-8" },
-          });
+        } catch (err) {
+          const reason = (err as Error).message ?? "unknown";
+          console.error(`bootstrap_render_failed shape=${shape} reason=${reason}`);
+          return jsonError(
+            503,
+            "bootstrap_unavailable",
+            `Canon-rendered bootstrap is temporarily unavailable. Retry shortly. (${reason})`,
+          );
         }
-        // Browser → full HTML portal with the canon-rendered bootstrap
-        // embedded as a visually-hidden but AI-readable <pre> block.
-        return portalResponse({
-          namespace: ns,
-          alias,
-          permissive,
-          magicLink: tincanMagicLink,
-          amsMagicLink,
-          record,
-        });
       }
 
       if (method === "POST" || method === "DELETE" || method === "OPTIONS") {

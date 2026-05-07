@@ -1,30 +1,62 @@
 // AI-readable bootstrap rendering per
 // ams://canon/constraints/portal-bootstrap-content.
 //
-// Canon owns the prescribed prose. This module fetches the constraint at
-// render time, extracts the named blockquoted sections, substitutes the per-
-// conversation values, and emits markdown / JSON / HTML-embedded variants. A
-// frozen fallback exists for offline or canon-fetch-failure paths only — per
-// the constraint's "Living-Canon Posture", render-time fetching is the
-// conformance path; the frozen text is not a substitute.
+// Implementation choice: oddkit MCP client (one of the three options the
+// constraint's §Render-Time Composition explicitly endorses). Each prescribed
+// section is resolved by URI + section name through oddkit's tools/call —
+// section addressing is oddkit's responsibility, not the portal's. The portal
+// peels the leading blockquote markers (canon's universal shape for
+// prescribed text), substitutes per-conversation values, and concatenates.
+//
+// No hardcoded canon prose. No markdown parser. When canon is unreachable or
+// canon shape drifts (renamed section, removed blockquote), this module
+// throws — the caller is responsible for serving 503. Per the constraint's
+// §The Living-Canon Posture, frozen prose in source is forbidden because it
+// drifts silently; loud failure is the correct degradation path.
+//
+// Cache: each section is cached in-isolate for the constraint's recommended
+// 24h freshness budget. A cold isolate pays six MCP RTTs once; subsequent
+// requests in that isolate serve from memory.
+//
+// See also:
+//   - ams://canon/constraints/portal-bootstrap-content (what this implements)
+//   - ams://canon/decisions/D0025-magic-link-url-is-the-tincan-portal
+//   - ams://canon/constraints/wrapper-stays-cheap (renderer of governance,
+//     not repository of governance)
+//   - ams://canon/constraints/mcp-build-side-governance (the discipline this
+//     follows: borrow the maintained MCP surface, do not handroll)
 
 import type { ConvRecord } from "./types";
 export type { ConvRecord };
 
-const CANON_RAW_URL =
-  "https://raw.githubusercontent.com/klappy/agent-messaging-service/main/canon/constraints/portal-bootstrap-content.md";
+const ODDKIT_MCP_URL = "https://oddkit.klappy.dev/mcp";
+const CONSTRAINT_URI = "ams://canon/constraints/portal-bootstrap-content";
+const KNOWLEDGE_BASE_URL = "https://github.com/klappy/agent-messaging-service";
 
-// 24h is the recommended freshness budget in the constraint's
-// §Render-Time Composition. We cache in-isolate to amortize fetches across
-// requests served by the same isolate; a fresh isolate just refetches.
+// Canon-recommended freshness budget per §Render-Time Composition.
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+// Oddkit timeout — generous so cold-canon fetches (which themselves walk a
+// GitHub zip) complete, but bounded so a hung oddkit doesn't pin a request.
+const ODDKIT_TIMEOUT_MS = 15_000;
+
+// The six section names the constraint enumerates. These strings ARE canon's
+// addressing surface — they are the `## <heading>` text in
+// canon/constraints/portal-bootstrap-content.md, and oddkit's section= param
+// resolves them. If canon renames a heading, oddkit returns "section not
+// found" and this module throws loudly; the operator hears about it.
+const SECTION_IDENTITY = "Prescribed Text — Identity";
+const SECTION_HOW_TO_JOIN = "Prescribed Text — How to Join";
+const SECTION_PRE_BOUND = "Prescribed Text — Pre-bound Conversation";
+const SECTION_REQUIRED_BEFORE_JOINING = "Prescribed Text — Required Before Joining";
+const SECTION_IF_JOINING_DOESNT_WORK = "Prescribed Text — If Joining Doesn't Work";
+const SECTION_FOR_HUMANS = "Prescribed Text — For Humans";
 
 interface CacheEntry {
   fetchedAt: number;
-  text: string;
+  body: string;
 }
-
-let cache: CacheEntry | null = null;
+const sectionCache = new Map<string, CacheEntry>();
 
 export interface BootstrapInputs {
   record: ConvRecord;
@@ -32,7 +64,126 @@ export interface BootstrapInputs {
   tincanUrl: string;
 }
 
-interface PrescribedSections {
+// --- oddkit MCP client ---------------------------------------------------
+
+// Single tools/call to oddkit_get for one section. Returns the prescribed
+// blockquote body with `> ` markers peeled. Cached in-isolate for 24h.
+// Throws on any oddkit failure or canon shape mismatch — caller serves 503.
+async function oddkitGetSection(sectionName: string): Promise<string> {
+  const cached = sectionCache.get(sectionName);
+  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) return cached.body;
+
+  const rpcBody = JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "tools/call",
+    params: {
+      name: "oddkit_get",
+      arguments: {
+        input: CONSTRAINT_URI,
+        section: sectionName,
+        knowledge_base_url: KNOWLEDGE_BASE_URL,
+      },
+    },
+  });
+
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), ODDKIT_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(ODDKIT_MCP_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: rpcBody,
+      signal: ac.signal,
+    });
+  } catch (err) {
+    // Transient network/timeout failure. If we have any prior cached body,
+    // serve it (stale beats 503 for a one-off blip); otherwise throw.
+    if (cached) return cached.body;
+    throw new Error(`oddkit_fetch_failed:${(err as Error).message}`);
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (!res.ok) {
+    if (cached) return cached.body;
+    throw new Error(`oddkit_http_${res.status}`);
+  }
+
+  // oddkit's Streamable HTTP response is a single SSE message frame:
+  //   event: message
+  //   data: <jsonrpc-response>
+  // We don't need a streaming parser — just pluck the data line.
+  const text = await res.text();
+  const dataLine = text.split("\n").find((l) => l.startsWith("data: "));
+  if (!dataLine) throw new Error("oddkit_no_data_frame");
+
+  const rpc = JSON.parse(dataLine.slice("data: ".length)) as {
+    result?: { content?: Array<{ type: string; text: string }> };
+    error?: { code?: number; message?: string };
+  };
+  if (rpc.error) {
+    throw new Error(`oddkit_rpc_error:${rpc.error.message ?? "unknown"}`);
+  }
+  const innerText = rpc.result?.content?.[0]?.text;
+  if (!innerText) throw new Error("oddkit_empty_tool_result");
+
+  const envelope = JSON.parse(innerText) as {
+    result?: {
+      content?: string;
+      error?: string;
+      available_sections?: string[];
+    };
+  };
+  if (envelope.result?.error) {
+    // Section not found — canon shape drifted (heading renamed/removed).
+    // Surface loudly with the available-sections list so the operator can
+    // see the divergence in logs.
+    const avail = envelope.result.available_sections?.join(", ") ?? "(none)";
+    throw new Error(
+      `oddkit_section_missing:"${sectionName}":available=[${avail}]`,
+    );
+  }
+  const sectionMd = envelope.result?.content;
+  if (!sectionMd) throw new Error("oddkit_no_section_content");
+
+  const body = peelBlockquote(sectionMd);
+  if (body === "") {
+    throw new Error(`oddkit_section_no_blockquote:"${sectionName}"`);
+  }
+
+  sectionCache.set(sectionName, { fetchedAt: Date.now(), body });
+  return body;
+}
+
+// Strip the leading blockquote out of an oddkit-returned section body.
+// Canon's shape: `## <heading>`, optional commentary paragraph, then the
+// prescribed text in a single contiguous `>`-prefixed block. We capture the
+// first contiguous `>` block and peel the prefix. If canon ever changes to
+// multi-block prescribed text, this captures only the first block — that
+// surfaces as missing content in the rendered output, not silent fallback.
+function peelBlockquote(sectionMd: string): string {
+  const out: string[] = [];
+  let entered = false;
+  for (const line of sectionMd.split("\n")) {
+    if (line.startsWith(">")) {
+      out.push(line.replace(/^>\s?/, ""));
+      entered = true;
+    } else if (entered) {
+      break;
+    }
+    // not yet entered: keep scanning past heading + commentary
+  }
+  return out.join("\n").trimEnd();
+}
+
+// --- composition ---------------------------------------------------------
+
+interface Sections {
   identity: string;
   howToJoin: string;
   preBoundTemplate: string;
@@ -41,122 +192,33 @@ interface PrescribedSections {
   forHumans: string;
 }
 
-async function fetchCanonText(): Promise<string> {
-  const now = Date.now();
-  if (cache && now - cache.fetchedAt < CACHE_TTL_MS) return cache.text;
-  // Cloudflare's edge cache is also leaned on (cf.cacheTtl) so a cold isolate
-  // fetches from the colo cache rather than crossing the public internet on
-  // every cold start.
-  let res: Response;
-  try {
-    res = await fetch(CANON_RAW_URL, { cf: { cacheTtl: 3600 } });
-  } catch (err) {
-    // Network-level failure (DNS, TLS, etc.). Stale cache still beats the
-    // frozen fallback per the constraint's degradation rule.
-    if (cache) return cache.text;
-    throw err;
-  }
-  if (!res.ok) {
-    if (cache) return cache.text;
-    throw new Error(`canon_fetch_failed_${res.status}`);
-  }
-  const text = await res.text();
-  cache = { fetchedAt: now, text };
-  return text;
-}
-
-// Pull the contiguous '>'-prefixed body that follows a `## <heading>` line.
-// The constraint formats every "Prescribed Text — *" section as a blockquote
-// immediately under its heading; we pluck that block verbatim.
-export function extractBlockquotedSection(
-  markdown: string,
-  heading: string,
-): string | null {
-  const lines = markdown.split("\n");
-  const needle = `## ${heading}`;
-  let i = 0;
-  while (i < lines.length && lines[i]!.trim() !== needle) i++;
-  if (i >= lines.length) return null;
-  i++;
-  // Walk to the first '>' line, bailing if we cross another section heading.
-  while (i < lines.length && !lines[i]!.startsWith(">")) {
-    if (lines[i]!.startsWith("#")) return null;
-    i++;
-  }
-  if (i >= lines.length) return null;
-  const out: string[] = [];
-  while (i < lines.length) {
-    const line = lines[i]!;
-    if (line.startsWith(">")) {
-      out.push(line.replace(/^>\s?/, ""));
-      i++;
-      continue;
-    }
-    if (line.trim() === "") {
-      // Blank between blockquote chunks: include if the next line continues
-      // the blockquote, otherwise the section ends here.
-      const next = lines[i + 1] ?? "";
-      if (next.startsWith(">")) {
-        out.push("");
-        i++;
-        continue;
-      }
-      break;
-    }
-    break;
-  }
-  return out.join("\n").replace(/\n+$/, "");
-}
-
-// Frozen fallback — emitted only when canon is unreachable AND no cache exists.
-// Per the constraint's "Living-Canon Posture", do NOT treat this as a source
-// of truth; it's intentionally minimal so a degraded portal still serves
-// something actionable rather than 500ing.
-function frozenFallback(): PrescribedSections {
+async function loadAllSections(): Promise<Sections> {
+  // Parallel fan-out — six independent oddkit calls. With the 24h in-isolate
+  // cache, only cold isolates pay this cost; subsequent renders in the same
+  // isolate hit memory.
+  const [
+    identity,
+    howToJoin,
+    preBoundTemplate,
+    requiredBeforeJoining,
+    ifJoiningDoesntWork,
+    forHumans,
+  ] = await Promise.all([
+    oddkitGetSection(SECTION_IDENTITY),
+    oddkitGetSection(SECTION_HOW_TO_JOIN),
+    oddkitGetSection(SECTION_PRE_BOUND),
+    oddkitGetSection(SECTION_REQUIRED_BEFORE_JOINING),
+    oddkitGetSection(SECTION_IF_JOINING_DOESNT_WORK),
+    oddkitGetSection(SECTION_FOR_HUMANS),
+  ]);
   return {
-    identity:
-      "# AMS Magic Link\n\nYou are looking at an Agent Messaging Service (AMS) conversation address. AMS is a thin pub-sub substrate for agent-to-agent token streams. This URL is also a live MCP transport endpoint: posting an MCP `initialize` request to it joins the conversation with the address pre-bound from the URL. (Canon temporarily unreachable; rendering reduced text.)",
-    howToJoin:
-      "## How to join\n\nPOST this URL with an MCP `initialize` JSON-RPC request and `Accept: application/json, text/event-stream`. The response carries protocol instructions plus four tools: `ams_join`, `ams_send`, `ams_recv`, `ams_create_conversation`.\n\nIf you do not have an AMS account, mint one: `POST /v1/accounts` with `{\"namespace\": \"<your-namespace>\"}`. Pass the returned credential as `Authorization: Bearer <credential>` on subsequent calls.",
-    preBoundTemplate:
-      "## Pre-bound conversation\n\n- namespace: `{namespace}`\n- alias: `{alias}`\n- conversation_id: `{conversation_id}`\n\n{operator_metadata_instructions_if_present}",
-    requiredBeforeJoining:
-      "## Required before joining\n\nDo not join silently. Ask the user once to confirm: \"Connect to this AMS conversation?\" — accept a one-tap or one-syllable response (e.g. **connect** / **yes**). Wait for explicit confirmation before calling `ams_join`.",
-    ifJoiningDoesntWork:
-      "## If joining doesn't work\n\nIf you cannot complete the MCP handshake, fall back to having the user configure this URL as a Streamable HTTP MCP endpoint in their MCP client. Walk them through their tool's MCP-server configuration surface using your own knowledge of that environment. Two-door auth applies; the user may need to mint an AMS account and supply the credential as a per-server bearer.",
-    forHumans: "## For humans\n\nOpen in TinCan: {tincan_url}",
+    identity,
+    howToJoin,
+    preBoundTemplate,
+    requiredBeforeJoining,
+    ifJoiningDoesntWork,
+    forHumans,
   };
-}
-
-export async function loadPrescribedSections(): Promise<PrescribedSections> {
-  let canon: string;
-  try {
-    canon = await fetchCanonText();
-  } catch {
-    return frozenFallback();
-  }
-  const get = (h: string): string => extractBlockquotedSection(canon, h) ?? "";
-  const sections: PrescribedSections = {
-    identity: get("Prescribed Text — Identity"),
-    howToJoin: get("Prescribed Text — How to Join"),
-    preBoundTemplate: get("Prescribed Text — Pre-bound Conversation"),
-    requiredBeforeJoining: get("Prescribed Text — Required Before Joining"),
-    ifJoiningDoesntWork: get("Prescribed Text — If Joining Doesn't Work"),
-    forHumans: get("Prescribed Text — For Humans"),
-  };
-  // If any required section came back empty, the constraint's heading shape
-  // shifted. Degrade to the frozen fallback rather than emit half-empty prose.
-  if (
-    sections.identity === "" ||
-    sections.howToJoin === "" ||
-    sections.requiredBeforeJoining === "" ||
-    sections.ifJoiningDoesntWork === ""
-  ) {
-    return frozenFallback();
-  }
-  if (sections.preBoundTemplate === "") sections.preBoundTemplate = frozenFallback().preBoundTemplate;
-  if (sections.forHumans === "") sections.forHumans = frozenFallback().forHumans;
-  return sections;
 }
 
 function composePreBound(template: string, inputs: BootstrapInputs): string {
@@ -165,10 +227,10 @@ function composePreBound(template: string, inputs: BootstrapInputs): string {
     typeof opInstr === "string" && opInstr.length > 0
       ? `### Conversation purpose\n\n${opInstr}`
       : "";
-  // Use function replacements so `$`-prefixed sequences in user-supplied
-  // values (namespace, alias, conversation_id, opBlock) are emitted verbatim
-  // rather than triggering String.prototype.replace's special patterns
-  // ($$, $&, $`, $').
+  // Function replacements so `$`-prefixed sequences in user-supplied values
+  // (namespace, alias, conversation_id, opBlock) are emitted verbatim rather
+  // than triggering String.prototype.replace's special patterns ($$, $&, $`,
+  // $'). Same fix as commit 31f06e0 on the prior implementation.
   return template
     .replace(/\{namespace\}/g, () => inputs.record.namespace)
     .replace(/\{alias\}/g, () => inputs.record.alias)
@@ -178,32 +240,34 @@ function composePreBound(template: string, inputs: BootstrapInputs): string {
     .trimEnd();
 }
 
-// Compose the full markdown bootstrap in canon's prescribed section order:
-// Identity → How to Join → Pre-bound → Required Before Joining → If Joining
-// Doesn't Work → For Humans.
-export function composeBootstrapMarkdown(
-  sections: PrescribedSections,
+// --- public surface ------------------------------------------------------
+
+export async function renderBootstrapMarkdown(
   inputs: BootstrapInputs,
-): string {
-  const preBound = composePreBound(sections.preBoundTemplate, inputs);
-  const forHumans = sections.forHumans.replace(/\{tincan_url\}/g, () => inputs.tincanUrl);
-  return [
-    sections.identity,
-    sections.howToJoin,
-    preBound,
-    sections.requiredBeforeJoining,
-    sections.ifJoiningDoesntWork,
-    forHumans,
-  ].join("\n\n").trim() + "\n";
+): Promise<string> {
+  const s = await loadAllSections();
+  const preBound = composePreBound(s.preBoundTemplate, inputs);
+  const forHumans = s.forHumans.replace(/\{tincan_url\}/g, () => inputs.tincanUrl);
+  return (
+    [
+      s.identity,
+      s.howToJoin,
+      preBound,
+      s.requiredBeforeJoining,
+      s.ifJoiningDoesntWork,
+      forHumans,
+    ]
+      .join("\n\n")
+      .trim() + "\n"
+  );
 }
 
 // JSON shape per ams://canon/constraints/portal-bootstrap-content
 // §Content Negotiation: { instructions, pre_bound, post_endpoint, tincan_url }
 // where `instructions` concatenates sections 1, 2, and 4.
-export function composeBootstrapJson(
-  sections: PrescribedSections,
+export async function renderBootstrapJson(
   inputs: BootstrapInputs,
-): {
+): Promise<{
   instructions: string;
   pre_bound: {
     namespace: string;
@@ -213,12 +277,18 @@ export function composeBootstrapJson(
   };
   post_endpoint: string;
   tincan_url: string;
-} {
-  const instructions = [
-    sections.identity,
-    sections.howToJoin,
-    sections.requiredBeforeJoining,
-  ].join("\n\n").trim() + "\n";
+}> {
+  // Only fetch the three sections this shape needs (sections 1, 2, and 4 per
+  // the constraint's §Content Negotiation). Avoids coupling JSON availability
+  // to sections it never renders (Pre-bound, If Joining Doesn't Work, For
+  // Humans), and skips three unnecessary MCP round-trips on cold isolates.
+  const [identity, howToJoin, requiredBeforeJoining] = await Promise.all([
+    oddkitGetSection(SECTION_IDENTITY),
+    oddkitGetSection(SECTION_HOW_TO_JOIN),
+    oddkitGetSection(SECTION_REQUIRED_BEFORE_JOINING),
+  ]);
+  const instructions =
+    [identity, howToJoin, requiredBeforeJoining].join("\n\n").trim() + "\n";
   return {
     instructions,
     pre_bound: {
@@ -230,18 +300,6 @@ export function composeBootstrapJson(
     post_endpoint: inputs.amsMagicLink,
     tincan_url: inputs.tincanUrl,
   };
-}
-
-export async function renderBootstrapMarkdown(inputs: BootstrapInputs): Promise<string> {
-  const sections = await loadPrescribedSections();
-  return composeBootstrapMarkdown(sections, inputs);
-}
-
-export async function renderBootstrapJson(
-  inputs: BootstrapInputs,
-): Promise<ReturnType<typeof composeBootstrapJson>> {
-  const sections = await loadPrescribedSections();
-  return composeBootstrapJson(sections, inputs);
 }
 
 export type Negotiated = "html" | "markdown" | "json";
