@@ -38,16 +38,14 @@ The Managed Agent gate audits these surfaces in priority order:
 
 ## How the Audit Runs
 
-`.github/workflows/canon-code-sync-audit.yml` triggers on every PR touching governance surfaces (canon, docs, proposals, writings, wrangler files, top-level Markdown, and the workflow itself). For each PR, the workflow:
+The audit is split between a thin GitHub Actions trigger and a Python dispatcher; neither encodes audit logic. The dispatcher constructs and supervises the Managed Agent. The agent fetches canon at runtime and emits its verdict as structured JSON.
 
-1. Verifies `ANTHROPIC_API_KEY` is set as a repo secret.
-2. Builds a Managed Agent (`claude-sonnet-4-6`, oddkit MCP at `https://oddkit.klappy.dev/mcp` with `permission_policy.always_allow`, `agent_toolset_20260401`) configured with the foundation system prompt from the managed-agents skill plus the AMS auditor role.
-3. Dispatches the audit task with PR context (number, head SHA, base ref, repo coordinates, ephemeral `GITHUB_TOKEN` for clone + comment).
-4. Polls the Anthropic API for completion (~10 minute ceiling).
-5. Reads the agent's final message; parses the verdict marker (`<<<VERDICT: PASS>>>` / `<<<VERDICT: FAIL>>>`) on its own line.
-6. Exits 0 on PASS, 1 on FAIL. The agent itself posts the structured findings as a PR comment with its own credentials — the workflow does not parse and re-post.
+- **`.github/workflows/canon-code-sync-audit.yml`** — the trigger and comment-poster. ~120 lines. Fires on every PR touching governance surfaces (canon, docs, proposals, writings, wrangler files, TypeScript under `worker/` and `packages/`, top-level Markdown, the dispatcher, and the workflow itself). Verifies the `ANTHROPIC_API_KEY` secret, runs the dispatcher, posts the agent's `comment_body` to the PR using the runner's own `GITHUB_TOKEN` (which never leaves the runner), and exits on the agent's verdict.
+- **`tools/audit-via-agent.py`** — the dispatcher. Builds a Managed Agent (`claude-sonnet-4-6`, oddkit MCP at `https://oddkit.klappy.dev/mcp` with `permission_policy.always_allow`, plus `agent_toolset_20260401`) configured with the foundation system prompt from the managed-agents skill plus the AMS auditor role. Creates a session in the reusable cloud environment, dispatches the audit task with PR coordinates, and watches the session's events stream for a terminal sentinel — a fenced JSON block in the agent's final message. The dispatcher does **not** poll session status; status reports `idle` before the worker has picked up the dispatched event (race window 280–500 ms), which made an earlier status-driven workflow exit before the agent ran.
+- **Output contract.** The agent's final message is a single fenced `json` block with shape `{"verdict": "PASS"|"FAIL", "comment_body": "<markdown>", "summary": "<one-line>"}`. The dispatcher prints `{verdict, comment_body, summary, session_id, agent_id, duration_s}` JSON to stdout. The workflow extracts `comment_body` with `jq` and posts it verbatim.
+- **Fail-closed defaults.** If the agent's JSON is malformed or missing, the dispatcher emits `verdict: FAIL`. If the dispatcher itself fails before producing a verdict (network, API, timeout), it emits `verdict: ERROR` with the session id for manual inspection. Either case fails the gate; the silent green pre-incident is the failure mode this guards against.
 
-The agent's task scope and reporting shape are specified in the workflow's inline system prompt. The model, the MCP server, and the toolset reference are stable; the task scope evolves as canon evolves, since the agent fetches canon at runtime via `oddkit_get` rather than reading hardcoded copies.
+The agent's task scope and reporting shape are specified in the dispatcher's system prompt. The model, the MCP server, and the toolset reference are stable; the task scope evolves as canon evolves, since the agent fetches canon at runtime via `oddkit_get` rather than reading hardcoded copies.
 
 ## What This Forbids in AMS
 
@@ -83,6 +81,7 @@ These do not require LLM-grade judgment and are explicitly out of scope for this
 
 ## See Also
 
-- `.github/workflows/canon-code-sync-audit.yml` — the workflow that runs the gate.
+- `tools/audit-via-agent.py` — the dispatcher (creates the agent, supervises the session, parses the agent's JSON output).
+- `.github/workflows/canon-code-sync-audit.yml` — the trigger and comment-poster.
 - `klappy://canon/constraints/audit-gates-are-managed-agents` — the upstream rule.
 - `journal/` — the supersession evidence trail the agent walks for handoff/writing audits.
