@@ -115,11 +115,14 @@ def extract_claims(file_path: Path) -> list[tuple[str, str, int]]:
         return []
 
     for line_num, line in enumerate(lines, 1):
-        # Track aspirational fences (skip everything inside)
-        if ASPIRATIONAL_FENCE_RE.match(line):
-            in_aspirational_fence = not in_aspirational_fence
-            continue
+        # Track aspirational fences (skip everything inside).
+        # The opening fence is e.g. ```aspirational; the closing fence is a plain ```.
         if in_aspirational_fence:
+            if PLAIN_FENCE_RE.match(line):
+                in_aspirational_fence = False
+            continue
+        if ASPIRATIONAL_FENCE_RE.match(line):
+            in_aspirational_fence = True
             continue
 
         # Track plain fences (still extract paths inside? Yes — code blocks contain real refs.)
@@ -127,19 +130,23 @@ def extract_claims(file_path: Path) -> list[tuple[str, str, int]]:
         if PLAIN_FENCE_RE.match(line):
             in_plain_fence = not in_plain_fence
 
-        # Track section headings — skip aspirational/future-work sections
-        heading_match = HEADING_RE.match(line)
-        if heading_match:
-            heading_text = heading_match.group(1).lower().strip().rstrip('.,:;')
-            if heading_text in SKIP_SECTION_HEADINGS:
-                in_skip_section = True
-                aspirational_section_level = line.count('#', 0, line.index(' '))
-                continue
-            # Any heading at or above the aspirational section's level closes it
-            if in_skip_section:
-                level = line.count('#', 0, line.index(' '))
-                if level <= aspirational_section_level:
-                    in_skip_section = False
+        # Track section headings — skip aspirational/future-work sections.
+        # Only honor headings outside fenced code blocks; otherwise a markdown
+        # example like `## Future Work` inside a ```markdown block would silently
+        # disable drift checks for the rest of the file.
+        if not in_plain_fence:
+            heading_match = HEADING_RE.match(line)
+            if heading_match:
+                heading_text = heading_match.group(1).lower().strip().rstrip('.,:;')
+                if heading_text in SKIP_SECTION_HEADINGS:
+                    in_skip_section = True
+                    aspirational_section_level = line.count('#', 0, line.index(' '))
+                    continue
+                # Any heading at or above the aspirational section's level closes it
+                if in_skip_section:
+                    level = line.count('#', 0, line.index(' '))
+                    if level <= aspirational_section_level:
+                        in_skip_section = False
 
         if in_skip_section:
             continue
