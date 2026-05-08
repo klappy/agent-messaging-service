@@ -317,12 +317,19 @@ def dispatch_task(api_key: str, session_id: str, task_text: str) -> None:
         raise RuntimeError(f"dispatch failed: HTTP {status} body={resp!r}")
 
 
-def fetch_events(api_key: str, session_id: str) -> list[dict]:
+def fetch_events(api_key: str, session_id: str) -> list[dict] | None:
+    """Fetch the session's event list, or None on transient API failure.
+
+    Returning None (rather than []) on error lets callers distinguish
+    "API blip — try again" from "session genuinely has no events yet."
+    Conflating the two would let a transient failure look like the event
+    count dropped to zero and reset settle-timer logic in the watch loop.
+    """
     status, resp = _api_request(
         "GET", f"/sessions/{session_id}/events", api_key=api_key
     )
     if status != 200 or not resp:
-        return []
+        return None
     return resp.get("data", []) or []
 
 
@@ -499,6 +506,13 @@ def watch_for_terminal_sentinel(api_key: str, session_id: str) -> dict:
 
     while time.time() - started < MAX_WAIT_S:
         events = fetch_events(api_key, session_id)
+        if events is None:
+            # Transient API failure — do not touch the settle timer or
+            # event-count tracking, otherwise a phantom N→0→N cycle on
+            # recovery would falsely reset last_change_at twice and
+            # could accumulate into a MAX_WAIT_S timeout.
+            time.sleep(POLL_INTERVAL_S)
+            continue
         n = len(events)
 
         if n != last_event_count:
