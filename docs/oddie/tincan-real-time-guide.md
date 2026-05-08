@@ -22,7 +22,7 @@ status: proposed
 
 ## Architectural Placement — Peer, Not Orchestrator
 
-Oddie is a subscriber in AMS conversations. He is not an orchestrator, not a coordinator, and not a privileged participant. At the wire level, Oddie behaves identically to every other subscriber per [AMS's polymorphic subscriber model](ams://canon/decisions/D0008-horizon-as-constraint-set): he owns a stream, receives peer streams, and emits tokens. The wire does not know or care that Oddie is a "guide."
+Oddie is a subscriber in AMS conversations. He is not an orchestrator, not a coordinator, and not a privileged participant. At the wire level, Oddie behaves identically to every other subscriber per [AMS's polymorphic subscriber model](ams://canon/principles/operator-as-subscriber): he owns a stream, receives peer streams, and emits tokens. The wire does not know or care that Oddie is a "guide."
 
 This is consistent with [AMS's permanent non-goals](ams://canon/constraints/permanent-non-goals): AMS will never own orchestration, coordination, or role hierarchy. Oddie's role is a convention above the wire, not a protocol feature below it.
 
