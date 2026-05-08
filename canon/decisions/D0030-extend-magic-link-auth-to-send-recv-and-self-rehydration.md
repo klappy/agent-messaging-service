@@ -179,7 +179,7 @@ This decision **complements** `D0029` and explicitly **retires** the "Why not ex
 - `D0029`'s "Why not extend" sub-section's rationale ("Once `ams_join` populates `this.props`, subsequent `ams_send` / `ams_recv` calls in the session pass `requireAccount()` via the same mechanism") is **retired** — empirically false for the consumer class `D0029` was named after.
 - `D0029`'s frontmatter is updated by this PR to add `extended_by: "D0030 — extends the magic-link-as-argument auth path to ams_send and ams_recv after the non-extension rationale was empirically falsified."`
 
-Bidirectional supersession-chain linking per `klappy://canon/constraints/canon-additions-require-bidirectional-supersession-links` (or its overlay equivalent). The forward link (`derives_from` D0029) is in this file's frontmatter; the back-link (`extended_by` D0030) is added to D0029 by the same commit.
+Bidirectional frontmatter pointers per `klappy://canon/methods/supersession` Constraints ("Graduation MUST use explicit bidirectional frontmatter pointers. Implicit supersession — inferred from content similarity, recency, or scope — is prohibited"). D0030 *extends* rather than *supersedes* D0029, so the discipline is applied analogously: the forward link (`derives_from` → D0029) is in this file's frontmatter; the back-link (`extended_by` → D0030) is added to D0029 by the same commit. This makes the relationship traceable in both directions even though it is not a full graduation event.
 
 ## See Also
 
