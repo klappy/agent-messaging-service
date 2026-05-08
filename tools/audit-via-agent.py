@@ -178,12 +178,15 @@ Field rules:
 ## How to Operate
 
 1. Clone the public AMS repo unauthenticated. You have no GitHub credentials
-   and do not need them — the repo is public:
-     git clone --quiet https://github.com/${REPO_FULL}.git /tmp/repo
+   and do not need them — the repo is public. Substitute the concrete
+   values from the `PR context` block in your task message for the
+   <repo_full>, <pr_number>, and <pr_base_ref> placeholders below; the
+   shell will not expand them for you:
+     git clone --quiet https://github.com/<repo_full>.git /tmp/repo
      cd /tmp/repo
-     git fetch --quiet origin pull/${PR_NUMBER}/head:pr
+     git fetch --quiet origin pull/<pr_number>/head:pr
      git checkout --quiet pr
-     git diff --name-only origin/${PR_BASE_REF}...HEAD > /tmp/changed.txt
+     git diff --name-only origin/<pr_base_ref>...HEAD > /tmp/changed.txt
 2. For each changed file, decide which kind of audit applies (canon, code,
    config, handoff) and which canon documents are relevant.
 3. Use oddkit_search / oddkit_get / oddkit_catalog to fetch applicable canon.
