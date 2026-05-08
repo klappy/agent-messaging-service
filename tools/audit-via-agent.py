@@ -433,10 +433,21 @@ def _normalize_result(parsed: dict) -> dict:
 
 
 def _has_session_idle(events: list[dict]) -> bool:
-    """True if any event of type session.status_idle has appeared."""
+    """True if a terminal session.status_idle event has appeared.
+
+    Per the Managed Agents API, session.status_idle carries a stop_reason
+    field. An idle whose stop_reason.type is "requires_action" means the
+    agent is blocked awaiting input (tool confirmation or custom tool
+    result), not that it has finished — so it is not terminal. Filter
+    those out so the fallback sentinel does not fire prematurely.
+    """
     for e in events:
-        if e.get("type") == "session.status_idle":
-            return True
+        if e.get("type") != "session.status_idle":
+            continue
+        stop_reason = e.get("stop_reason") or {}
+        if isinstance(stop_reason, dict) and stop_reason.get("type") == "requires_action":
+            continue
+        return True
     return False
 
 
@@ -485,7 +496,7 @@ def watch_for_terminal_sentinel(api_key: str, session_id: str) -> dict:
             e.get("type") == "agent.message"
             for e in events[last_user_idx + 1:]
         )
-        idle_seen = _has_session_idle(events)
+        idle_seen = last_user_idx >= 0 and _has_session_idle(events[last_user_idx + 1:])
         settled  = (time.time() - last_change_at) >= SETTLE_S
 
         if has_agent_after_user and settled:
