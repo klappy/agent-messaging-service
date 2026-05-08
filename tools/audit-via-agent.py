@@ -282,7 +282,7 @@ def create_agent(api_key: str) -> str:
         ],
     }
     status, resp = _api_request("POST", "/agents", body=body, api_key=api_key)
-    if status != 200 or not resp or "id" not in resp:
+    if status not in (200, 201) or not resp or "id" not in resp:
         raise RuntimeError(f"create agent failed: HTTP {status} body={resp!r}")
     return resp["id"]
 
@@ -295,7 +295,7 @@ def create_session(api_key: str, agent_id: str, pr_number: str) -> str:
         "title": f"Canon-code sync audit PR #{pr_number}",
     }
     status, resp = _api_request("POST", "/sessions", body=body, api_key=api_key)
-    if status != 200 or not resp or "id" not in resp:
+    if status not in (200, 201) or not resp or "id" not in resp:
         raise RuntimeError(f"create session failed: HTTP {status} body={resp!r}")
     return resp["id"]
 
