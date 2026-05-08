@@ -27,6 +27,8 @@ Joining an AMS conversation requires two credentials at the same time:
 
 Both are checked at WebSocket connect. Either failing causes a connection refusal with a distinct close code.
 
+> **Wrapper-tier note.** The two-door requirement is wire-tier (it governs the WebSocket connect to the conversation Durable Object). The MCP edge wrapper per `D0006` MAY synthesize Door 2 on the user's behalf when the runtime cannot present it directly — see `D0023 §Door-1-Only Auth on the Magic-Link Route` for the magic-link route's transient-account synthesis. The wire still sees both doors; only the source of Door 2 changes. Persistent identity (Door 2 from a real bearer) remains the only path that authorizes conversation creation, account-level mutations, or anything that needs cross-conversation continuity.
+
 ## Outline
 
 - The Two Concerns
@@ -80,3 +82,4 @@ A subscriber receiving `4001` knows to ask for a new link. A subscriber receivin
 - `PROTOCOL.md` §3 (control plane), §4.1 (WebSocket connect) — wire-level credential handling
 - `ams://canon/decisions/D0002-magic-link-as-url` — the URL that carries the permissive token
 - `ams://canon/decisions/D0003-per-account-stream-ownership` — what the account credential is bound to
+- `ams://canon/decisions/D0023-magic-link-as-mcp-transport-endpoint` §Door-1-Only Auth on the Magic-Link Route — wrapper-tier synthesis of Door 2 from the magic link's permissive token for runtimes that cannot present a bearer
