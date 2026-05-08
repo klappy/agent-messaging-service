@@ -1037,12 +1037,14 @@ async function buildAuthProps(
   req: Request,
   env: Env,
   base: AmsProps,
-): Promise<AmsProps> {
+): Promise<AmsProps | Response> {
   // authenticate() returns either an AccountRecord or a Response. We only set
-  // account_id when the bearer is present and valid; absent/invalid auth just
-  // leaves account_id undefined so unauthenticated MCP calls (initialize,
+  // account_id when the bearer is present and valid; absent auth just leaves
+  // account_id undefined so unauthenticated MCP calls (initialize,
   // prompts/list, resources/list, resources/read) still work and tool calls
-  // that need it surface a clean isError result.
+  // that need it surface a clean isError result. An explicitly-presented but
+  // invalid bearer is surfaced as a transport-level auth error rather than
+  // silently downgraded — see the Door-1 fallback below.
   const account = await authenticate(req, env);
   if (!(account instanceof Response)) {
     return {
@@ -1051,6 +1053,20 @@ async function buildAuthProps(
       account_namespace: account.namespace,
       account_is_transient: false,
     };
+  }
+
+  // Distinguish "no bearer presented" from "bearer presented but invalid".
+  // authenticate() returns a Response in both cases, but only the former is
+  // eligible for the Door-1 transient fallback or the no-account path. An
+  // explicit-but-invalid bearer must not be silently downgraded — the caller
+  // intended to act under their persistent identity, and a fresh transient
+  // account would attribute their actions to a different identity without
+  // any signal that their credential was rejected.
+  const bearerPresented = /^Bearer\s+\S/i.test(
+    req.headers.get("authorization") ?? "",
+  );
+  if (bearerPresented) {
+    return account;
   }
 
   // Door-1-only path. If we have a resolved prebind (the request arrived on
@@ -1153,6 +1169,9 @@ export async function handleMcp(
   }
 
   const props = await buildAuthProps(req, env, baseProps);
+  if (props instanceof Response) {
+    return props;
+  }
 
   // The SDK's URLPattern is anchored at "/mcp"; rewrite the incoming URL so
   // both /mcp and /{ns}/conversations/{alias} hit the same handler.
