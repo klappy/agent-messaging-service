@@ -698,8 +698,17 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
       (effectiveStreamName === undefined || effectiveStreamName.length === 0) &&
       args.peer_identity
     ) {
-      const sessionDiscriminator =
-        this.props?.mcp_session_id ?? account.account_id;
+      // Use the SDK-managed transport session id directly. The earlier path
+      // of reading mcp-session-id off the request header into props does not
+      // work for the auto-name discriminator: the initial `initialize` request
+      // carries no `mcp-session-id` header (the SDK generates one and returns
+      // it in the response), so the value never lands in props on first hit
+      // and the fallback to account_id collapses simultaneous consumers on
+      // the same magic link onto the same auto stream_name — contradicting
+      // D0028's distinct-streams consequence. McpAgent.getSessionId() returns
+      // the SDK's session id derived from the DO instance name, which is
+      // populated for every request after init().
+      const sessionDiscriminator = this.getSessionId() || account.account_id;
       effectiveStreamName = await deriveAutoStreamName(
         this.env,
         args.peer_identity,
