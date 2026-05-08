@@ -135,7 +135,7 @@ const STATIC_INSTRUCTIONS = [
   "Wire model (canon-derived):",
   "  • Tokens, not messages: payloads are opaque bytes (D0001). Use ams_send to emit; peer tokens arrive via notifications/ams/token (push) or ams_recv (poll).",
   "  • Streams own themselves: by default a stream does not see its own emissions (D0009). Pass self_subscribe: true at ams_join to opt in.",
-  "  • Two-door auth: door 1 is the magic link (capability to attach a stream). Door 2 is the Bearer in Authorization (persistent account identity). On the magic-link route, ams_join / ams_send / ams_recv accept Door 1 alone — the wrapper synthesizes a transient session-scoped account from the magic link's permissive token. ams_create_conversation always requires Door 2 (mint at POST /v1/accounts). On the /mcp endpoint, all four tools require Door 2.",
+  "  • Two-door auth: door 1 is the magic link (capability to attach a stream). Door 2 is the Bearer in Authorization (persistent account identity). On the magic-link route (POST to a magic-link URL), ams_join / ams_send / ams_recv accept Door 1 alone — the wrapper synthesizes a transient session-scoped account from the magic link's permissive token. On the /mcp endpoint, ams_join also accepts Door 1 when 'magic_link' is supplied as a tool argument (D0029 — the path for ChatGPT-class consumers that configure a stable connector URL and pass magic links as tool arguments). ams_create_conversation always requires Door 2 (mint at POST /v1/accounts) regardless of route.",
   "  • Polling fallback: ams_recv is the long-poll degradation path for runtimes that cannot consume the SSE leg of the Streamable HTTP transport. Pass wait_ms to wait for frames.",
   "  • Convention manifest: 'ams.convention.v1' is the application-level namespace inside stream_metadata.capabilities (role / function / posture / scope / attestation). Round-trips opaquely through the wrapper.",
   "",
@@ -611,7 +611,11 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
       // Mutate this.props so subsequent ams_send / ams_recv calls in this
       // session pass requireAccount() via the same mechanism. The agent
       // instance survives across requests within an MCP session per the SDK
-      // (this.wireWs at line ~690 is the existing precedent).
+      // (this.wireWs at line ~690 is the existing precedent). Includes
+      // prebind_record_json so a subsequent ams_join({}) (without re-passing
+      // magic_link) in the same session — e.g. after a wire drop where the
+      // consumer uses D0028 resume-by-stream_name semantics — finds a valid
+      // prebind via readPrebindFromProps. Audit M-2 fix.
       this.props = {
         ...(this.props ?? {}),
         account_id: synthesized.account_id,
@@ -621,6 +625,7 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
         prebind_alias: synthesized.prebind.alias,
         prebind_permissive: synthesized.prebind.permissive,
         prebind_conversation_id: synthesized.prebind.conversation_id,
+        prebind_record_json: JSON.stringify(synthesized.prebind.record),
       };
       account = await this.requireAccount();
       // The validated magic link also acts as the prebind for this call so

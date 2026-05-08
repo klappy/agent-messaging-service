@@ -38,7 +38,7 @@ This decision establishes a deterministic identity model at three layers and a r
 For accounts synthesized from a magic-link's permissive token (Door-1-only auth per `D0023`'s URL route, or via `D0029`'s `magic_link` argument on `/mcp`):
 
 ```
-account_id = `acc_anon_${pepperedHash(env.AMS_PERMISSIVE_TOKEN_PEPPER, "anon-account|" || permissive_token).slice(0, 26)}`
+account_id = `acc_anon_${pepperedHash(env.AMS_PERMISSIVE_TOKEN_PEPPER, "anon-account|" + permissive_token).slice(0, 26)}`
 ```
 
 The domain separator (`"anon-account|"`) prevents collision with any other peppered-hash use of the same secret. Same magic link → same `account_id`, every request, every session. Stateless. No DO storage. No SDK-behavior dependency. Replaces the existing `acc_anon_${ulid()}` call site in `buildAuthProps`.
@@ -50,7 +50,7 @@ Persistent (Door-2) accounts continue to use their existing minting flow at `POS
 Stream identity is a pure function of the join payload:
 
 ```
-stream_id = `str_${pepperedHash(env.AMS_PERMISSIVE_TOKEN_PEPPER, "stream|" || conversation_id || "|" || account_id || "|" || stream_name).slice(0, 26)}`
+stream_id = `str_${pepperedHash(env.AMS_PERMISSIVE_TOKEN_PEPPER, "stream|" + conversation_id + "|" + account_id + "|" + stream_name).slice(0, 26)}`
 ```
 
 Same `(conversation_id, account_id, stream_name)` tuple → same `stream_id`, always. The Conversation DO computes `stream_id` from the join payload (`worker/src/conversation.ts` line 86) instead of minting a fresh ULID. Reconnect with the same tuple resumes the same `stream_id` rather than orphaning the prior one.
@@ -88,7 +88,7 @@ When `stream_name` is not supplied to `ams_join` and `peer_identity` IS supplied
 stream_name = `${slugify(peer_identity.client ?? peer_identity.kind)}-${shortHash(mcp_session_id)}`
 ```
 
-where `shortHash` is 4 base32 chars derived from the MCP session id. Examples: `chatgpt-7f3k`, `claude-code-q9m2`, `tincan-x4n8`.
+where `shortHash` is the first 4 hex characters of `pepperedHash(AMS_PERMISSIVE_TOKEN_PEPPER, "auto-stream-name|" + mcp_session_id)` — 2 bytes of entropy, 65,536 distinct values per slug, sufficient for in-conversation discrimination of simultaneous consumers under the same magic link. Examples (hex character set, 0–9 a–f): `chatgpt-7f3a`, `claude-code-9c2e`, `tincan-1d8b`.
 
 Properties:
 
