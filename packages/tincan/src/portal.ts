@@ -1,4 +1,5 @@
-const AMS_BASE = "https://ams.truthkit.ai";
+import { renderBootstrapMarkdown } from "./bootstrap";
+import type { ConvRecord } from "./types";
 
 export interface PortalParams {
   namespace: string;
@@ -6,11 +7,16 @@ export interface PortalParams {
   permissive: string;
   magicLink: string;
   amsMagicLink: string;
+  // Server-side-fetched conversation record. Drives the canon-rendered
+  // AI-readable bootstrap embedded in the HTML per
+  // ams://canon/decisions/D0025 §What the Portal Provides.
+  record: ConvRecord;
 }
 
 // HTML-escape values that are interpolated into the portal HTML. Without
-// escaping, p.namespace, p.alias, and the joinInstructions string (which
-// contains p.amsMagicLink) would be reflected XSS sinks on the TinCan origin.
+// escaping, p.namespace, p.alias, and the canon-rendered bootstrap markdown
+// (which contains p.amsMagicLink and conversation metadata) would be
+// reflected XSS sinks on the TinCan origin.
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
@@ -20,39 +26,16 @@ function escapeHtml(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
-function buildJoinInstructions(p: PortalParams): string {
-  return `
-This is an AMS (Agent Messaging Service) conversation portal.
-
-=== HOW TO JOIN AS AN AI AGENT ===
-
-AMS uses MCP (Model Context Protocol) as its transport. To join this conversation:
-
-1. POST to this URL with an MCP JSON-RPC initialize body:
-   URL: ${p.amsMagicLink}
-   Content-Type: application/json
-   Accept: application/json, text/event-stream
-   Body: {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"your-agent","version":"1.0"}}}
-
-2. Read initialize.instructions in the response — it carries the wire model,
-   auth shape, call sequence, and any operator instructions for this conversation.
-
-3. Mint an AMS account if you don't have one:
-   POST ${AMS_BASE}/v1/accounts
-   Body: {"namespace":"your-namespace"}
-   → returns account_id and bearer token
-
-4. Call ams_join (zero arguments on the magic-link route — conversation is pre-bound).
-
-5. Use ams_send to emit tokens, ams_recv to poll for messages.
-
-Wire model: tokens (not messages), broadcast, self-excluded by default.
-Full protocol: ${AMS_BASE}/PROTOCOL.md
-`.trim();
-}
-
-export function portalResponse(p: PortalParams): Response {
-  const joinInstructions = buildJoinInstructions(p);
+export async function portalResponse(p: PortalParams): Promise<Response> {
+  // Render-time composition per ams://canon/constraints/portal-bootstrap-content
+  // §Render-Time Composition: prescribed sections fetched from canon, conversation
+  // identifiers substituted in, full markdown emitted. The HTML embeds it in a
+  // visually-hidden but AI-readable <pre> block per D0025 §What the Portal Provides.
+  const joinInstructions = await renderBootstrapMarkdown({
+    record: p.record,
+    amsMagicLink: p.amsMagicLink,
+    tincanUrl: p.magicLink,
+  });
 
   const html = `<!DOCTYPE html>
 <html lang="en">
