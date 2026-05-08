@@ -71,15 +71,15 @@ jobs:
           REPO_FULL:   ${{ github.repository }}
         run: |
           set -euo pipefail
-          python3 tools/audit-via-agent.py > /tmp/result.json
+          python3 tools/audit-via-agent.py > "${GITHUB_WORKSPACE}/result.json"
           echo "::group::Dispatcher result"
-          jq '.' /tmp/result.json
+          jq '.' "${GITHUB_WORKSPACE}/result.json"
           echo "::endgroup::"
-          VERDICT=$(jq -r '.verdict' /tmp/result.json)
+          VERDICT=$(jq -r '.verdict' "${GITHUB_WORKSPACE}/result.json")
           echo "verdict=${VERDICT}" >> "$GITHUB_OUTPUT"
 
       - name: Post agent's findings as PR comment
-        if: always() && hashFiles('/tmp/result.json') != ''
+        if: always() && hashFiles('result.json') != ''
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER:    ${{ github.event.pull_request.number }}
@@ -88,7 +88,7 @@ jobs:
           set -euo pipefail
           # Build the GitHub API request body from the dispatcher's
           # comment_body field. jq handles all JSON escaping for us.
-          jq '{body: .comment_body}' /tmp/result.json > /tmp/comment-payload.json
+          jq '{body: .comment_body}' "${GITHUB_WORKSPACE}/result.json" > /tmp/comment-payload.json
           POST_HTTP=$(curl -sS -o /tmp/comment-resp.json -w "%{http_code}" \
             -X POST \
             -H "Authorization: Bearer ${GITHUB_TOKEN}" \
