@@ -535,6 +535,42 @@ def watch_for_terminal_sentinel(api_key: str, session_id: str) -> dict:
         idle_seen = last_user_idx >= 0 and _has_session_idle(events[last_user_idx + 1:])
         settled  = (time.time() - last_change_at) >= SETTLE_S
 
+        # Hard early-exit: settled-idle with a session.error in the post-
+        # dispatch slice means the API rejected the session before the
+        # agent could produce any output (commonly billing/auth/rate-limit
+        # failures on the very first model call). Waiting for an
+        # agent.message is hopeless — there will never be one. Surface
+        # the error immediately so the operator gets the right diagnosis
+        # in 1 minute instead of 10.
+        if idle_seen and settled and last_user_idx >= 0:
+            err = _first_session_error(events[last_user_idx + 1:])
+            if err and not has_agent_after_user:
+                err_type = str(err.get("type") or "session_error")
+                err_msg  = str(err.get("message") or "(no message)")
+                surface_verdict = (
+                    "ERROR" if err_type in ("billing_error", "rate_limit_error",
+                                            "authentication_error",
+                                            "permission_error",
+                                            "overloaded_error")
+                    else "FAIL"
+                )
+                return {
+                    "verdict": surface_verdict,
+                    "summary": f"session.error ({err_type}) before agent ran: {err_msg[:120]}",
+                    "comment_body": (
+                        "## Canon-Code Sync Audit (Managed Agent)\n\n"
+                        f"**Verdict:** {surface_verdict} — `session.error` "
+                        f"of type `{err_type}` (agent never ran)\n\n"
+                        "The auditor agent could not start because the "
+                        "Anthropic API returned an account/infra error on "
+                        "the first model call. The audit did not run; this "
+                        "verdict reflects a dispatcher failure, not a "
+                        "finding against the PR.\n\n"
+                        f"**Error message:** {err_msg}\n\n"
+                        f"Session for manual inspection: `{session_id}`."
+                    ),
+                }
+
         if has_agent_after_user and settled:
             text = _last_agent_message_text(events)
 
@@ -548,7 +584,7 @@ def watch_for_terminal_sentinel(api_key: str, session_id: str) -> dict:
             # parse JSON. Two distinct cases — each gets its own surface so
             # the operator can act on the right remedy.
             if idle_seen:
-                err = _first_session_error(events)
+                err = _first_session_error(events[last_user_idx + 1:])
                 if err:
                     err_type = str(err.get("type") or "session_error")
                     err_msg  = str(err.get("message") or "(no message)")
