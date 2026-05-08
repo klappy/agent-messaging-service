@@ -1,4 +1,4 @@
-# AMS Spec / PRD — v1.1
+# AMS Spec / PRD — v1.1.3
 
 > Token stream routing.
 

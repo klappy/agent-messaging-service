@@ -53,7 +53,7 @@ Stream identity is a pure function of the join payload:
 stream_id = `str_${pepperedHash(env.AMS_PERMISSIVE_TOKEN_PEPPER, "stream|" + conversation_id + "|" + account_id + "|" + stream_name).slice(0, 26)}`
 ```
 
-Same `(conversation_id, account_id, stream_name)` tuple → same `stream_id`, always. The Conversation DO computes `stream_id` from the join payload (`worker/src/conversation.ts` line 86) instead of minting a fresh ULID. Reconnect with the same tuple resumes the same `stream_id` rather than orphaning the prior one.
+Same `(conversation_id, account_id, stream_name)` tuple → same `stream_id`, always. The Conversation DO computes `stream_id` from the join payload via the `deriveStreamId` helper in `worker/src/conversation.ts` instead of minting a fresh ULID. Reconnect with the same tuple resumes the same `stream_id` rather than orphaning the prior one.
 
 ### 3. Reconnect resumes the existing stream when the account_id matches
 
@@ -97,6 +97,8 @@ Properties:
 - **Operator-typed `stream_name` bypasses the formula**: explicit `stream_name = "klappy"` is used verbatim, providing the cross-session-stable escape hatch for users who want their identity to persist across app restarts.
 
 When neither `stream_name` nor `peer_identity` is supplied, auto-generation falls back to the existing random `stream-NNNNNN` pattern (no behavior change for legacy callers).
+
+**Discriminator fallback.** When `mcp_session_id` is unavailable in props (non-standard invocations such as in-process tests or future transports that do not expose a session id header), the wrapper falls back to `account_id` as the discriminator input to `shortHash`. Effect: two consumers under the same magic link in such a non-standard environment would collapse to the same `stream_name` and therefore the same `stream_id`. The fallback exists so the auto-name path is total (never throws) and so the standard MCP-over-Streamable-HTTP flow — where `mcp-session-id` is always populated by the SDK — works without special-casing. Production consumers should not encounter the fallback.
 
 ### 6. Cross-session continuity for transient accounts becomes correct
 
