@@ -42,6 +42,8 @@ Architecture choices that matter:
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import os
 import sys
@@ -120,38 +122,56 @@ You are NOT looking for: typos, formatting, prose style, frontmatter schema
 violations (a separate structural check handles those). Your job is the
 LLM-judgment audit only.
 
-## Output Contract — Final Message Is JSON
+## Output Contract — Final Message Is JSON With base64-Encoded Body
 
 You have NO GitHub credentials and you do NOT post the comment yourself. The
-CI workflow extracts your final message and posts the comment_body field to
-the PR using its own GITHUB_TOKEN.
+CI workflow extracts your final message and posts the comment to the PR
+using its own GITHUB_TOKEN.
 
 YOUR FINAL ASSISTANT MESSAGE MUST BE EXACTLY ONE FENCED JSON BLOCK and
 NOTHING ELSE. The workflow's terminal-sentinel parser locates the block,
-parses it, and treats the parsed object as the audit result.
+parses it, decodes the base64 comment body, and posts that markdown
+verbatim to the PR.
 
-The fenced block:
+The fenced block has this exact shape:
 
-```json
+```
 {
   "verdict": "PASS",
-  "comment_body": "## Canon-Code Sync Audit (Managed Agent)\\n\\n**Verdict:** PASS\\n\\n…the markdown that will be posted to the PR…",
-  "summary": "one-line summary of what you found"
+  "summary": "one-line summary for the CI logs",
+  "comment_body_b64": "<base64-encoded markdown — no whitespace, single line>"
 }
 ```
 
-Rules:
+Why base64: the comment body is markdown that often contains double-quotes
+(e.g. quoting canon prose), and writing those inline inside a JSON string
+without escape errors is fragile. Base64 sidesteps this entirely.
+
+How to produce comment_body_b64 reliably: write the markdown to a file
+inside your sandbox, then base64-encode it with bash and read the result:
+
+  cat > /tmp/comment.md <<'COMMENT'
+  ## Canon-Code Sync Audit (Managed Agent)
+  ...your full markdown comment body, ANY content, no escapes needed...
+  COMMENT
+  base64 -w 0 /tmp/comment.md
+
+Take the single-line base64 output and place it as the value of
+`comment_body_b64` in the JSON. Do not wrap it, do not break lines.
+
+Field rules:
 
 - "verdict" MUST be exactly "PASS" or "FAIL".
   - PASS = no substantive findings. Cosmetic items are fine to PASS with.
-  - FAIL = at least one substantive finding (canon claims something the repo
-    does not; code violates a constraint; handoff recommends a superseded
-    approach; broken supersession chain).
-- "comment_body" is the markdown the workflow will post verbatim to the PR.
-  Include the verdict, the files reviewed, the canon documents fetched, the
-  findings (with severity / location / claim / reality / suggested fix), and
-  any notes. If verdict is PASS with no findings, say so plainly.
-- "summary" is a single line for CI logs.
+  - FAIL = at least one substantive finding (canon claims something the
+    repo does not; code violates a constraint; handoff recommends a
+    superseded approach; broken supersession chain).
+- "summary" is a single line for CI logs. Plain text, no markdown.
+- "comment_body_b64" is base64 (standard, not URL-safe) of the UTF-8
+  markdown the workflow will post verbatim. Include the verdict, the files
+  reviewed, the canon documents fetched, the findings (severity / location
+  / claim / reality / suggested fix), and any notes. If verdict is PASS
+  with no findings, say so plainly inside the comment body.
 - Output ONLY the fenced JSON block as your final message. No preamble, no
   closing remarks. The fence is your terminal sentinel.
 
@@ -201,8 +221,10 @@ Follow the operating procedure in your system prompt:
   2. Identify applicable canon for each touched surface.
   3. oddkit_search + oddkit_get the relevant canon. Use oddkit_catalog to discover.
   4. Render LLM-grade judgments. Flag drift, not patterns.
-  5. Emit your final message as ONE fenced JSON block per the output contract.
-     The JSON shape: {{"verdict": "PASS"|"FAIL", "comment_body": "...", "summary": "..."}}
+  5. Write your full markdown comment to a file in your sandbox, run
+     `base64 -w 0` on it via bash, and place the base64 string in
+     comment_body_b64 of the final JSON. Output ONLY the fenced JSON block.
+     The JSON shape: {{"verdict": "PASS"|"FAIL", "summary": "...", "comment_body_b64": "..."}}
 
 You have ~10 minutes. Be thorough but efficient. Do not re-fetch canon docs
 you have already read this session.
@@ -372,10 +394,66 @@ def _extract_fenced_json(text: str) -> dict | None:
 
 # --------------------------------------------------------------- main loop --
 
+def _normalize_result(parsed: dict) -> dict:
+    """Apply the comment_body_b64 → comment_body decode and field defaults.
+
+    Accepts either contract: comment_body_b64 (preferred, robust) OR
+    comment_body (legacy, brittle on markdown). Coerces verdict to a known
+    value; missing/unrecognized verdicts fail closed to FAIL.
+    """
+    verdict = str(parsed.get("verdict", "")).upper().strip()
+    if verdict not in ("PASS", "FAIL"):
+        verdict = "FAIL"
+
+    comment_body = ""
+    b64 = parsed.get("comment_body_b64")
+    if isinstance(b64, str) and b64.strip():
+        try:
+            comment_body = base64.b64decode(
+                b64.strip(), validate=False
+            ).decode("utf-8", errors="replace")
+        except (binascii.Error, ValueError) as e:
+            comment_body = (
+                f"## Canon-Code Sync Audit (Managed Agent)\n\n"
+                f"**Verdict:** {verdict}\n\n"
+                f"_(comment_body_b64 failed to decode: {e})_"
+            )
+    elif isinstance(parsed.get("comment_body"), str):
+        comment_body = parsed["comment_body"]
+
+    summary = parsed.get("summary", "") if isinstance(parsed.get("summary"), str) else ""
+    return {
+        "verdict":      verdict,
+        "comment_body": comment_body
+                        or f"## Canon-Code Sync Audit (Managed Agent)\n\n**Verdict:** {verdict}\n\n(no comment_body emitted)",
+        "summary":      summary,
+    }
+
+
+def _has_session_idle(events: list[dict]) -> bool:
+    """True if any event of type session.status_idle has appeared."""
+    for e in events:
+        if e.get("type") == "session.status_idle":
+            return True
+    return False
+
+
 def watch_for_terminal_sentinel(api_key: str, session_id: str) -> dict:
-    """Poll events. Return the parsed JSON object once the terminal sentinel
-    (a fenced JSON block in the latest agent.message) is observed AND the
-    event count has been stable for SETTLE_S.
+    """Poll events. Return the parsed JSON object once one of two terminal
+    sentinels has been observed AND the event count has been stable for
+    SETTLE_S:
+
+      1. (Preferred) The latest agent.message contains a parseable fenced
+         JSON object with a "verdict" field.
+      2. (Fallback) A session.status_idle event has appeared. The agent
+         has stopped working; we accept whatever we can extract from the
+         latest agent.message (or fail closed if nothing extractable).
+
+    The fallback exists because LLMs sometimes emit JSON with unescaped
+    internal quotes (markdown content with double-quotes inside a JSON
+    string). When that happens, _extract_fenced_json returns None and the
+    primary sentinel never fires. In that case the session does still go
+    idle, and we must terminate.
 
     Raises RuntimeError on timeout.
     """
@@ -400,22 +478,43 @@ def watch_for_terminal_sentinel(api_key: str, session_id: str) -> dict:
                   file=sys.stderr)
             last_status_log = time.time()
 
-        # Need at least: our user.message dispatched AND an agent.message after it.
         last_user_idx = _last_event_index_after_user(events)
-        has_agent_after_user = any(
+        has_agent_after_user = last_user_idx >= 0 and any(
             e.get("type") == "agent.message"
-            for e in events[last_user_idx + 1:] if last_user_idx >= 0
+            for e in events[last_user_idx + 1:]
         )
+        idle_seen = _has_session_idle(events)
+        settled  = (time.time() - last_change_at) >= SETTLE_S
 
-        if has_agent_after_user:
+        if has_agent_after_user and settled:
             text = _last_agent_message_text(events)
+
+            # Primary sentinel: parseable JSON with verdict field.
             if text:
                 obj = _extract_fenced_json(text)
                 if isinstance(obj, dict) and "verdict" in obj:
-                    # Fence is the terminal sentinel. Settle to ensure no
-                    # further events arrive (i.e. the agent really stopped).
-                    if time.time() - last_change_at >= SETTLE_S:
-                        return obj
+                    return obj
+
+            # Fallback sentinel: session is idle, settled, and we cannot
+            # parse JSON. Surface what we have so the caller can fail-closed
+            # with a useful comment for the operator.
+            if idle_seen:
+                return {
+                    "verdict": "FAIL",
+                    "summary": "agent finished but emitted no parseable JSON verdict",
+                    "comment_body": (
+                        "## Canon-Code Sync Audit (Managed Agent)\n\n"
+                        "**Verdict:** FAIL (no parseable JSON)\n\n"
+                        "The auditor agent reached `session.status_idle` "
+                        "without emitting a fenced JSON block matching the "
+                        "output contract. The most common cause is markdown "
+                        "content with internal double-quotes inside a JSON "
+                        "string — the agent forgot to base64-encode the "
+                        "comment body per the contract.\n\n"
+                        f"Session for manual inspection: `{session_id}`. "
+                        f"Final agent message text length: {len(text or '')} chars."
+                    ),
+                }
 
         time.sleep(POLL_INTERVAL_S)
 
@@ -485,14 +584,11 @@ def main() -> int:
 
     # Normal path: hand the agent's structured output back, plus dispatcher metadata.
     duration = time.time() - started
-    verdict = str(result.get("verdict", "")).upper()
-    if verdict not in ("PASS", "FAIL"):
-        verdict = "FAIL"  # malformed = fail-closed, per Axiom 3 (false done > honest fail)
+    norm = _normalize_result(result)
     out = {
-        "verdict":      verdict,
-        "comment_body": result.get("comment_body", "")
-                        or f"## Canon-Code Sync Audit (Managed Agent)\n\n**Verdict:** {verdict}\n\n(no comment_body emitted)",
-        "summary":      result.get("summary", ""),
+        "verdict":      norm["verdict"],
+        "comment_body": norm["comment_body"],
+        "summary":      norm["summary"],
         "session_id":   session_id,
         "agent_id":     agent_id,
         "duration_s":   round(duration, 2),
