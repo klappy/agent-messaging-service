@@ -209,11 +209,19 @@ interface JoinedSnapshot {
   stream_name: string;
   metadata: Record<string, unknown>;
   self_subscribe: boolean;
+  // Set by the Conversation DO when this attach displaced and resumed an
+  // existing stream per D0028. Absent / false on a fresh join.
+  resumed?: boolean;
+  // Optional human-readable peer metadata supplied at join time per D0028.
+  // Echoed back on the joined frame so the tool result can surface it
+  // alongside the opaque stream_id.
+  peer_identity?: PeerIdentity;
   peers: Array<{
     stream_id: string;
     stream_name: string;
     owner_account_id: string;
     metadata: Record<string, unknown>;
+    peer_identity?: PeerIdentity;
   }>;
 }
 
@@ -476,7 +484,19 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
             ),
         },
       },
-      this.withRideAlong(async (args) => this.tool_ams_join(args, prebind)),
+      // Read the prebind fresh from this.props on every call, not the value
+      // captured at registration time. The D0029 magic-link synthesis path in
+      // tool_ams_join mutates this.props mid-session to record a new prebind;
+      // a closure-captured `prebind` value would still be null on a
+      // subsequent ams_join({}) (no magic_link argument) within the same DO
+      // lifetime, breaking the comment's guarantee that re-join works after
+      // synthesis without re-passing magic_link. Audit fix.
+      this.withRideAlong(async (args) =>
+        this.tool_ams_join(
+          args,
+          readPrebindFromProps(this.props as AmsProps | undefined),
+        ),
+      ),
     );
 
     this.server.registerTool(
@@ -656,43 +676,14 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
           message: "ams_join requires magic_link as a string.",
         });
       }
-      let parsed: { ns: string; alias: string; permissive: string };
-      try {
-        parsed = parseMagicLink(args.magic_link);
-      } catch (err) {
-        return mcpToolError({
-          error: "invalid_magic_link",
-          message: (err as Error).message,
-        });
-      }
-      const id = await this.env.AMS_KV.get(ALIAS_KEY(parsed.ns, parsed.alias));
-      if (!id)
-        return mcpToolError({
-          error: "conversation_not_found",
-          message: "No conversation with that namespace+alias.",
-        });
-      const recordRaw = await this.env.AMS_KV.get(CONVERSATION_KEY(id));
-      if (!recordRaw)
-        return mcpToolError({
-          error: "conversation_not_found",
-          message: "Conversation record missing.",
-        });
-      const record = JSON.parse(recordRaw) as ConversationRecord;
-      const tokenHash = await pepperedHash(
-        this.env.AMS_PERMISSIVE_TOKEN_PEPPER,
-        parsed.permissive,
-      );
-      if (!timingSafeEqualHex(tokenHash, record.permissive_token_hash))
-        return mcpToolError({
-          error: "invalid_magic_link",
-          message: "Permissive token did not match.",
-        });
+      const validated = await validateMagicLinkArgument(this.env, args.magic_link);
+      if ("error" in validated) return mcpToolError(validated.error);
       resolved = {
-        ns: parsed.ns,
-        alias: parsed.alias,
-        permissive: parsed.permissive,
-        conversation_id: id,
-        record,
+        ns: validated.parsed.ns,
+        alias: validated.parsed.alias,
+        permissive: validated.parsed.permissive,
+        conversation_id: validated.conversation_id,
+        record: validated.record,
       };
     }
 
@@ -737,6 +728,9 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
       metadata: dial.joined.metadata,
       self_subscribe: dial.joined.self_subscribe,
       peers: dial.joined.peers,
+      // Surface D0028 displace-and-resume to the consumer so a reconnect that
+      // resumed an existing stream is distinguishable from a fresh join.
+      ...(dial.joined.resumed ? { resumed: true } : {}),
       ...(args.peer_identity ? { peer_identity: args.peer_identity } : {}),
     });
   }
@@ -1088,18 +1082,20 @@ async function deriveAnonId(env: Env, permissive: string): Promise<string> {
   return `acc_anon_${hex.slice(0, 26)}`;
 }
 
-// Synthesize a transient account from a magic_link argument on /mcp per
-// D0029. Validates the link, derives the anon account_id deterministically
-// per D0028, and returns both the synthesized identity and the resolved
-// prebind so tool_ams_join can flow through its existing prebind path.
-async function synthesizeFromMagicLink(
+// Validate a magic_link string supplied as a tool argument. Performs the
+// four-step check (parse, KV alias lookup, KV record lookup, peppered-hash
+// token comparison) and returns the parsed link, the resolved
+// conversation_id, and the conversation record. Shared by the D0029
+// synthesizeFromMagicLink path and the inline magic_link branch in
+// tool_ams_join so both validate identically.
+async function validateMagicLinkArgument(
   env: Env,
   link: string,
 ): Promise<
   | {
-      account_id: string;
-      namespace: string;
-      prebind: ResolvedPrebind;
+      parsed: { ns: string; alias: string; permissive: string };
+      conversation_id: string;
+      record: ConversationRecord;
     }
   | { error: { error: string; message: string } }
 > {
@@ -1142,16 +1138,36 @@ async function synthesizeFromMagicLink(
       },
     };
   }
-  const account_id = await deriveAnonId(env, parsed.permissive);
+  return { parsed, conversation_id: id, record };
+}
+
+// Synthesize a transient account from a magic_link argument on /mcp per
+// D0029. Validates the link, derives the anon account_id deterministically
+// per D0028, and returns both the synthesized identity and the resolved
+// prebind so tool_ams_join can flow through its existing prebind path.
+async function synthesizeFromMagicLink(
+  env: Env,
+  link: string,
+): Promise<
+  | {
+      account_id: string;
+      namespace: string;
+      prebind: ResolvedPrebind;
+    }
+  | { error: { error: string; message: string } }
+> {
+  const validated = await validateMagicLinkArgument(env, link);
+  if ("error" in validated) return validated;
+  const account_id = await deriveAnonId(env, validated.parsed.permissive);
   return {
     account_id,
-    namespace: parsed.ns,
+    namespace: validated.parsed.ns,
     prebind: {
-      ns: parsed.ns,
-      alias: parsed.alias,
-      permissive: parsed.permissive,
-      conversation_id: id,
-      record,
+      ns: validated.parsed.ns,
+      alias: validated.parsed.alias,
+      permissive: validated.parsed.permissive,
+      conversation_id: validated.conversation_id,
+      record: validated.record,
     },
   };
 }
