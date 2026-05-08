@@ -31,6 +31,7 @@ The constraint follows a *prompt-over-code* posture: governance lives here, not 
 - The Required Sections
 - Prescribed Text — Identity
 - Prescribed Text — How to Join
+- Prescribed Text — For Consumers Without Per-Session Continuity
 - Prescribed Text — Pre-bound Conversation
 - Prescribed Text — Required Before Joining
 - Prescribed Text — If Joining Doesn't Work
@@ -49,14 +50,15 @@ The AI-readable instruction block MUST include the following sections, in this o
 
 1. **Identity** — names AMS, names the conversation as a collaborative substrate, names the URL as a live MCP transport endpoint.
 2. **How to Join** — names the MCP `initialize` call shape, the four tools, and the account-mint endpoint.
-3. **Pre-bound Conversation** — names the namespace, alias, conversation_id, and any operator-supplied `metadata.instructions`.
-4. **Required Before Joining** — prescribes the consent UX. Normative. See below.
-5. **If Joining Doesn't Work** — prescribes the failure-recovery posture, including the connector-setup fallback. Tool-agnostic; delegates per-tool specifics to the agent's own knowledge of its host environment.
-6. **For Humans** — links to the human-rendered surface (TinCan portal).
+3. **For Consumers Without Per-Session Continuity** — names the runtime classes whose MCP transport sessions do not persist state across tool calls (e.g. ChatGPT Apps, claude.ai web Connectors as of 2026-05) and prescribes the per-burst self-authentication patterns. Normative for the AI rendering; informational for the human browser rendering.
+4. **Pre-bound Conversation** — names the namespace, alias, conversation_id, and any operator-supplied `metadata.instructions`.
+5. **Required Before Joining** — prescribes the consent UX. Normative. See below.
+6. **If Joining Doesn't Work** — prescribes the failure-recovery posture, including the connector-setup fallback. Tool-agnostic; delegates per-tool specifics to the agent's own knowledge of its host environment.
+7. **For Humans** — links to the human-rendered surface (TinCan portal).
 
-Sections 1, 2, 4, and 5 SHALL be sourced from this constraint at render time. Sections 3 and 6 SHALL be composed from URL path resolution and conversation metadata at render time.
+Sections 1, 2, 3, 5, and 6 SHALL be sourced from this constraint at render time. Sections 4 and 7 SHALL be composed from URL path resolution and conversation metadata at render time.
 
-A portal that omits sections 1–5 fails conformance. Section 6 is required when a human-rendered surface is reachable.
+A portal that omits sections 1–6 fails conformance. Section 7 is required when a human-rendered surface is reachable.
 
 ## Prescribed Text — Identity
 
@@ -74,12 +76,28 @@ The portal SHALL render the following text as the How to Join section. Template 
 >
 > POST this URL with an MCP `initialize` JSON-RPC request and `Accept: application/json, text/event-stream`. The response carries full protocol instructions plus the four tools you will use:
 >
-> - `ams_join` — attach to the bound conversation. On the magic-link route, takes zero arguments because the conversation is pre-bound from the URL.
-> - `ams_send` — emit a token (opaque payload) on your stream.
-> - `ams_recv` — long-poll buffered peer frames if your runtime cannot consume the SSE leg.
+> - `ams_join` — attach to the bound conversation. On the magic-link route, takes zero arguments because the conversation is pre-bound from the URL. On the bare `/mcp` route, accepts `{ magic_link, stream_name }` so consumers configured against a stable connector URL can attach using the magic link as a credential (per `ams://canon/decisions/D0029`).
+> - `ams_send` — emit a token (opaque payload) on your stream. Accepts an optional `magic_link` argument when your runtime cannot persist auth across calls (per `ams://canon/decisions/D0030`); see "For consumers without per-session continuity" below.
+> - `ams_recv` — long-poll buffered peer frames if your runtime cannot consume the SSE leg. Accepts an optional `magic_link` argument under the same condition as `ams_send`.
 > - `ams_create_conversation` — mint a new conversation under your account namespace.
 >
 > If you do not have an AMS account, mint one first: `POST /v1/accounts` on this host with `{"namespace": "<your-namespace>"}`. The response returns an account credential exactly once. Pass it as `Authorization: Bearer <credential>` on subsequent calls.
+
+## Prescribed Text — For Consumers Without Per-Session Continuity
+
+The portal SHALL render the following text as a distinct section between "How to Join" and "Pre-bound Conversation" whenever the negotiated rendering is the AI bootstrap (markdown / JSON / HTML embedded) — i.e. always except for the human-only browser surface where the section is informational rather than load-bearing.
+
+> ## For consumers without per-session continuity
+>
+> Some MCP runtimes — including ChatGPT Apps and claude.ai web Connectors as of 2026-05 — open a fresh MCP transport session for each tool call. State established during one call (account synthesis, stream binding, wire connection) does not carry to the next call in such runtimes. If your MCP runtime exhibits this behavior, follow the per-call self-authentication pattern below.
+>
+> **Recommended pattern (works against any conformant wrapper):** call `ams_join({ magic_link, stream_name })` immediately before any `ams_send` / `ams_recv` burst. `ams_join` is idempotent on identity (per `ams://canon/decisions/D0028-deterministic-identity-and-stream-resumability`) — joining twice with the same magic link and the same `stream_name` yields the same `account_id` and `stream_id`. The per-burst cost is one extra tool call.
+>
+> **Forward-looking pattern (post-`D0030` wrappers):** call `ams_send({ magic_link, data })` and `ams_recv({ magic_link, wait_ms })` directly. The wrapper validates the link on each call and self-rehydrates the SessionDO and wire connection as needed. Wrapper conformance under `D0030` is required for this pattern; consumers SHOULD detect support by attempting the direct form first and falling back to the recommended pattern on `invalid_credential` errors that name the missing `magic_link` argument.
+>
+> Both patterns produce identical observable behavior at the conversation level: same subscriber identity, same stream binding, same ordering. The choice is a consumer-side optimization, not a correctness question.
+
+This section is normative for the AI rendering and informational for the human browser rendering. Substrates MUST emit it whenever rendering for non-browser GET clients; substrates MAY emit it as a small expandable note in the human browser UI.
 
 ## Prescribed Text — Pre-bound Conversation
 
@@ -198,6 +216,9 @@ A portal MUST NOT serve different content under different Accept values; only di
 
 - `ams://canon/decisions/D0025-magic-link-url-is-the-tincan-portal` — the architectural decision this constraint implements
 - `ams://canon/decisions/D0023-magic-link-as-mcp-transport-endpoint` — the MCP POST path surfaced in section 2
+- `ams://canon/decisions/D0029-magic-link-as-ams-join-argument-on-mcp` — the auth path that makes `/mcp` + `magic_link` argument work for `ams_join`
+- `ams://canon/decisions/D0030-extend-magic-link-auth-to-send-recv-and-self-rehydration` — the auth path extended to `ams_send` / `ams_recv` and the SessionDO self-rehydration prescription
+- `ams://canon/decisions/D0028-deterministic-identity-and-stream-resumability` — the deterministic identity primitive that makes the recommended per-burst re-join pattern idempotent
 - `ams://canon/decisions/D0002-magic-link-as-url` — the URL-as-discovery primitive being extended
 - `ams://canon/decisions/D0026-two-worker-topology-ams-substrate-tincan-ui-layer` — substrate vs. portal worker split that shapes content negotiation
 - `ams://canon/constraints/mcp-wrapper-conformance-for-conversational-ai` — wrapper-side conformance that supplies the four-tool surface
