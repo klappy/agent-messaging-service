@@ -710,6 +710,7 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
       const sessionDiscriminator =
         this.props?.mcp_session_id ?? account.account_id;
       effectiveStreamName = await deriveAutoStreamName(
+        this.env,
         args.peer_identity,
         sessionDiscriminator,
       );
@@ -1156,12 +1157,15 @@ async function synthesizeFromMagicLink(
 }
 
 // Auto-derive a stream_name from peer_identity + an MCP-session discriminator
-// per D0028. Format: <client-slug>-<4-char-base32-hash(discriminator)>.
-// Examples: chatgpt-7f3k, claude-code-q9m2, tincan-x4n8. Stable within an
-// MCP session (same discriminator → same suffix → same stream resumes on
-// reconnect) and distinct across sessions (each fresh initialize mints a
-// new mcp-session-id, yielding a new auto-name even on the same magic link).
+// per D0028 §5. Format: <client-slug>-<first-4-hex-chars-of-pepperedHash>.
+// Examples: chatgpt-7f3a, claude-code-9c2e, tincan-1d8b. Stable within an MCP
+// session (same discriminator → same suffix → same stream resumes on
+// reconnect) and distinct across sessions (each fresh initialize mints a new
+// mcp-session-id, yielding a new auto-name even on the same magic link).
+// Reuses AMS_PERMISSIVE_TOKEN_PEPPER with the "auto-stream-name|" domain
+// separator — no new secret. Matching deriveAnonId / deriveStreamId pattern.
 async function deriveAutoStreamName(
+  env: Env,
   identity: PeerIdentity,
   discriminator: string,
 ): Promise<string> {
@@ -1171,18 +1175,13 @@ async function deriveAutoStreamName(
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 24) || "peer";
-  // Crockford-base32-ish: SHA-256 hex → 4 chars is plenty for in-conversation
-  // discrimination (16^4 = 65536 values per slug). Reuse pepperedHash with a
-  // distinct domain separator; no new secret introduced.
-  const enc = new TextEncoder();
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    enc.encode("auto-stream-name|" + discriminator),
+  // 16^4 = 65536 distinct values per slug — sufficient for in-conversation
+  // discrimination of simultaneous consumers under the same magic link.
+  const raw = await pepperedHash(
+    env.AMS_PERMISSIVE_TOKEN_PEPPER,
+    "auto-stream-name|" + discriminator,
   );
-  const bytes = new Uint8Array(digest);
-  let hex = "";
-  for (let i = 0; i < 2; i++) hex += bytes[i]!.toString(16).padStart(2, "0");
-  return `${slug}-${hex}`;
+  return `${slug}-${raw.slice(0, 4)}`;
 }
 
 // --- Tool result helpers -------------------------------------------------
