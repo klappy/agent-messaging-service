@@ -64,6 +64,18 @@ POLL_INTERVAL_S = 6     # poll events every 6s
 MAX_WAIT_S      = 600   # 10-minute ceiling
 SETTLE_S        = 12    # require event count stable for this long after a final agent.message
 
+# session.error types that map to the "ERROR" surface verdict (account/infra
+# failures the operator must act on), as opposed to "FAIL" (every other
+# session.error). Defined once so the "agent never ran" and "agent ran but
+# JSON unparseable" branches of watch_for_terminal_sentinel cannot drift.
+ERROR_VERDICT_ERROR_TYPES = (
+    "billing_error",
+    "rate_limit_error",
+    "authentication_error",
+    "permission_error",
+    "overloaded_error",
+)
+
 # ------------------------------------------------------------- system prompt --
 
 SYSTEM_PROMPT = """\
@@ -548,11 +560,7 @@ def watch_for_terminal_sentinel(api_key: str, session_id: str) -> dict:
                 err_type = str(err.get("type") or "session_error")
                 err_msg  = str(err.get("message") or "(no message)")
                 surface_verdict = (
-                    "ERROR" if err_type in ("billing_error", "rate_limit_error",
-                                            "authentication_error",
-                                            "permission_error",
-                                            "overloaded_error")
-                    else "FAIL"
+                    "ERROR" if err_type in ERROR_VERDICT_ERROR_TYPES else "FAIL"
                 )
                 return {
                     "verdict": surface_verdict,
@@ -589,11 +597,7 @@ def watch_for_terminal_sentinel(api_key: str, session_id: str) -> dict:
                     err_type = str(err.get("type") or "session_error")
                     err_msg  = str(err.get("message") or "(no message)")
                     surface_verdict = (
-                        "ERROR" if err_type in ("billing_error", "rate_limit_error",
-                                                "authentication_error",
-                                                "permission_error",
-                                                "overloaded_error")
-                        else "FAIL"
+                        "ERROR" if err_type in ERROR_VERDICT_ERROR_TYPES else "FAIL"
                     )
                     return {
                         "verdict": surface_verdict,
