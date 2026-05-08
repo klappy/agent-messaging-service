@@ -63,6 +63,14 @@ It does not claim that other surfaces are unimportant. Audit, mentorship, and st
 
 ---
 
+## Confidence
+
+**Hypothesis under test.** Zero production validations. The flagship designation is derived from analysis of voice-constraint demands across four identified surfaces — the claim that the most demanding surface produces constraints that transfer well to less demanding surfaces has not been tested in production. The observation is consistent with upstream principles ([voice as cognitive load shedding](klappy://canon/principles/voice-as-cognitive-load-shedding)) but remains pre-production reasoning.
+
+**Retraction:** If production evidence shows that voice constraints tuned for real-time stream interpretation degrade Oddie's effectiveness on other surfaces — if brevity calibrated for machine-speed density makes audit findings too terse or mentorship too cold — the flagship-sharpens-all claim is retracted. The individual surface specifications survive independently; only the claim that one surface's constraints transfer beneficially to all others is at risk.
+
+---
+
 ## See Also
 
 - [Oddie the River Guide — Voice Canon](klappy://canon/voice/oddie-the-river-guide) — the upstream voice specification
