@@ -336,12 +336,14 @@ def _last_agent_message_text(events: list[dict]) -> str | None:
     return None
 
 
-def _last_event_index_after_user(events: list[dict]) -> int:
-    """Index of the most recent event AFTER the latest user.message.
+def _last_user_message_index(events: list[dict]) -> int:
+    """Index of the latest user.message in the event list, or -1 if none.
 
-    The agent has 'finished' a turn when, since our user.message, an
-    agent.message has appeared and the event count holds steady (i.e. no
-    further tool_use / message events for SETTLE_S).
+    Callers slice ``events[index + 1:]`` to inspect everything that
+    happened AFTER the latest user.message. The agent has 'finished' a
+    turn when, since our user.message, an agent.message has appeared and
+    the event count holds steady (i.e. no further tool_use / message
+    events for SETTLE_S).
     """
     last_user = -1
     for i, e in enumerate(events):
@@ -478,7 +480,7 @@ def watch_for_terminal_sentinel(api_key: str, session_id: str) -> dict:
                   file=sys.stderr)
             last_status_log = time.time()
 
-        last_user_idx = _last_event_index_after_user(events)
+        last_user_idx = _last_user_message_index(events)
         has_agent_after_user = last_user_idx >= 0 and any(
             e.get("type") == "agent.message"
             for e in events[last_user_idx + 1:]

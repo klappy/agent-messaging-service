@@ -103,8 +103,10 @@ jobs:
           fi
 
       - name: Exit on verdict
+        env:
+          VERDICT: ${{ steps.dispatch.outputs.verdict }}
         run: |
-          case "${{ steps.dispatch.outputs.verdict }}" in
+          case "$VERDICT" in
             PASS)
               echo "::notice::Canon-code sync audit: PASS"
               exit 0 ;;
