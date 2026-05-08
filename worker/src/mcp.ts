@@ -1043,8 +1043,9 @@ async function buildAuthProps(
   // account_id undefined so unauthenticated MCP calls (initialize,
   // prompts/list, resources/list, resources/read) still work and tool calls
   // that need it surface a clean isError result. An explicitly-presented but
-  // invalid bearer is surfaced as a transport-level auth error rather than
-  // silently downgraded — see the Door-1 fallback below.
+  // invalid bearer is surfaced as a transport-level auth error only on the
+  // magic-link route (so it isn't silently downgraded to a transient
+  // account) — see the Door-1 fallback below.
   const account = await authenticate(req, env);
   if (!(account instanceof Response)) {
     return {
@@ -1057,15 +1058,21 @@ async function buildAuthProps(
 
   // Distinguish "no bearer presented" from "bearer presented but invalid".
   // authenticate() returns a Response in both cases, but only the former is
-  // eligible for the Door-1 transient fallback or the no-account path. An
-  // explicit-but-invalid bearer must not be silently downgraded — the caller
-  // intended to act under their persistent identity, and a fresh transient
-  // account would attribute their actions to a different identity without
-  // any signal that their credential was rejected.
+  // eligible for the Door-1 transient fallback. An explicit-but-invalid
+  // bearer on the magic-link route must not be silently downgraded — the
+  // caller intended to act under their persistent identity, and a fresh
+  // transient account would attribute their actions to a different identity
+  // without any signal that their credential was rejected.
+  //
+  // On the bare /mcp route (no prebind) we deliberately fall through to
+  // `return base` so the MCP session still starts and tool calls that need an
+  // account surface invalid_credential at the MCP level — preserving prior
+  // behavior. Returning a transport-level 401 here would bypass MCP framing
+  // (and the SDK's CORS handling) for clients hitting /mcp directly.
   const bearerPresented = /^Bearer\s+\S/i.test(
     req.headers.get("authorization") ?? "",
   );
-  if (bearerPresented) {
+  if (bearerPresented && base.prebind_ns && base.prebind_alias) {
     return account;
   }
 
@@ -1086,9 +1093,10 @@ async function buildAuthProps(
     };
   }
 
-  // No bearer, no prebind. Tools that need an account will surface
-  // invalid_credential; tools that do not (initialize, prompts/list,
-  // resources/list, resources/read) continue to work.
+  // No bearer (or invalid bearer on the bare /mcp route), no prebind. Tools
+  // that need an account will surface invalid_credential; tools that do not
+  // (initialize, prompts/list, resources/list, resources/read) continue to
+  // work.
   return base;
 }
 
