@@ -407,7 +407,7 @@ def _normalize_result(parsed: dict) -> dict:
     value; missing/unrecognized verdicts fail closed to FAIL.
     """
     verdict = str(parsed.get("verdict", "")).upper().strip()
-    if verdict not in ("PASS", "FAIL"):
+    if verdict not in ("PASS", "FAIL", "ERROR"):
         verdict = "FAIL"
 
     comment_body = ""
@@ -452,6 +452,25 @@ def _has_session_idle(events: list[dict]) -> bool:
             continue
         return True
     return False
+
+
+def _first_session_error(events: list[dict]) -> dict | None:
+    """First session.error event in the stream, or None.
+
+    Used by the fallback path to distinguish account/API failures (billing
+    exhausted, rate-limited, model unavailable, etc.) from cases where the
+    agent simply emitted malformed output. The two failure modes have
+    different operator remedies — one is "top up credits / fix auth", the
+    other is "fix the agent's output contract" — so they warrant distinct
+    surfacing.
+    """
+    for e in events:
+        if e.get("type") != "session.error":
+            continue
+        err = e.get("error")
+        if isinstance(err, dict):
+            return err
+    return None
 
 
 def watch_for_terminal_sentinel(api_key: str, session_id: str) -> dict:
@@ -512,9 +531,36 @@ def watch_for_terminal_sentinel(api_key: str, session_id: str) -> dict:
                     return obj
 
             # Fallback sentinel: session is idle, settled, and we cannot
-            # parse JSON. Surface what we have so the caller can fail-closed
-            # with a useful comment for the operator.
+            # parse JSON. Two distinct cases — each gets its own surface so
+            # the operator can act on the right remedy.
             if idle_seen:
+                err = _first_session_error(events)
+                if err:
+                    err_type = str(err.get("type") or "session_error")
+                    err_msg  = str(err.get("message") or "(no message)")
+                    surface_verdict = (
+                        "ERROR" if err_type in ("billing_error", "rate_limit_error",
+                                                "authentication_error",
+                                                "permission_error",
+                                                "overloaded_error")
+                        else "FAIL"
+                    )
+                    return {
+                        "verdict": surface_verdict,
+                        "summary": f"session.error ({err_type}): {err_msg[:120]}",
+                        "comment_body": (
+                            "## Canon-Code Sync Audit (Managed Agent)\n\n"
+                            f"**Verdict:** {surface_verdict} — `session.error` "
+                            f"of type `{err_type}`\n\n"
+                            "The auditor agent did not finish because the "
+                            "Anthropic API returned an account/infra error "
+                            "during the session. The audit did not run to "
+                            "completion; this verdict reflects a dispatcher "
+                            "failure, not a finding against the PR.\n\n"
+                            f"**Error message:** {err_msg}\n\n"
+                            f"Session for manual inspection: `{session_id}`."
+                        ),
+                    }
                 return {
                     "verdict": "FAIL",
                     "summary": "agent finished but emitted no parseable JSON verdict",
