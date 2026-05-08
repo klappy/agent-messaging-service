@@ -58,6 +58,8 @@ Keying the Session DO by `(account_id, conversation_id)` makes the state's lifet
 
 The keying is invisible to the wire. The Conversation DO sees the Session DO as a single subscriber regardless of how many MCP transport sessions are attached to it. `D0006`'s wrapper boundary holds.
 
+> **Transient-account correctness via `D0028`.** This keying assumes `account_id` is stable across requests for a given identity. For Door-2 (persistent bearer) accounts, that has always been true — the bearer hashes to the same `account_id` deterministically. For Door-1-only (transient anonymous) accounts synthesized per `D0023`, the original implementation minted a fresh ULID per request, which silently broke this keying for the entire transient case — every request keyed a new SessionDO and the buffer-continuity property was unreachable. `D0028` corrects this by deriving the transient `account_id` from a peppered hash of the magic link's permissive token, making `acc_anon_*` stable across all requests holding the same link. The keying contract documented here therefore applies to both door classes uniformly.
+
 ## Concurrent Sessions Within One Account
 
 Multiple MCP transport sessions may attach to a single Session DO concurrently. The Session DO operates as a multi-tenant component within a single account: each transport session is tracked by its `mcp_session_id` as a tenant, sees the same buffer state (read coherence), and may emit independently (write isolation per `D0018`).
