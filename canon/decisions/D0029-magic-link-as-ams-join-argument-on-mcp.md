@@ -11,6 +11,7 @@ epoch: E0008.4
 date: 2026-05-08
 derives_from: "D0004-two-door-registration (the auth model this extends with a third valid path); D0023-magic-link-as-mcp-transport-endpoint (Path C as shipped — URL-route synthesis — which this completes); D0028-deterministic-identity-and-stream-resumability (the deterministic anon account_id derivation this reuses); operator↔Claude planning conversation 2026-05-08 (the ChatGPT consumer flow that motivated the work; the half-fix recognition that Path C as shipped solved curl/script flows but not the consumer that triggered it)"
 complements: "D0023-magic-link-as-mcp-transport-endpoint, D0028-deterministic-identity-and-stream-resumability"
+extended_by: "D0030-extend-magic-link-auth-to-send-recv-and-self-rehydration (extends the magic-link-as-argument auth path to ams_send and ams_recv after this decision's non-extension rationale was empirically falsified by the operator verification 2026-05-08; the URL-route Path C and the tool_ams_join reorder remain correct and operational)"
 governs: "How the `/mcp` endpoint accepts magic-link-as-credential authentication when the consumer cannot configure the magic link as the MCP server URL. The order of checks in `tool_ams_join` when an `Authorization` bearer is absent. The auth-path shape ChatGPT-class MCP consumers are expected to use."
 status: active
 ---
