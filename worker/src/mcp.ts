@@ -42,6 +42,7 @@ import {
   pepperedHash,
   randomToken,
   timingSafeEqualHex,
+  ulid,
   utf8ToBase64,
 } from "./util";
 
@@ -69,6 +70,14 @@ export interface AmsProps extends Record<string, unknown> {
   prebind_record_json?: string;
   account_id?: string;
   account_namespace?: string;
+  // Set when account_id was synthesized from the magic-link route's permissive
+  // token (Door 1) rather than read from a persisted account record via the
+  // Authorization bearer (Door 2). Transient accounts exist only for the
+  // duration of the MCP session and are not in KV. ams_create_conversation
+  // rejects them; ams_join / ams_send / ams_recv accept them. The capability
+  // to hold the magic link is the authorization to participate in the single
+  // conversation it names; persistent identity remains opt-in via Door 2.
+  account_is_transient?: boolean;
   outer_host?: string;
 }
 
@@ -107,7 +116,7 @@ const STATIC_INSTRUCTIONS = [
   "Wire model (canon-derived):",
   "  • Tokens, not messages: payloads are opaque bytes (D0001). Use ams_send to emit; peer tokens arrive via notifications/ams/token (push) or ams_recv (poll).",
   "  • Streams own themselves: by default a stream does not see its own emissions (D0009). Pass self_subscribe: true at ams_join to opt in.",
-  "  • Two-door auth: door 1 is the magic link (capability to attach a stream). Door 2 is the Bearer in Authorization (account ownership). Both are required for ams_send. Mint an account at POST /v1/accounts if you do not have one.",
+  "  • Two-door auth: door 1 is the magic link (capability to attach a stream). Door 2 is the Bearer in Authorization (persistent account identity). On the magic-link route, ams_join / ams_send / ams_recv accept Door 1 alone — the wrapper synthesizes a transient session-scoped account from the magic link's permissive token. ams_create_conversation always requires Door 2 (mint at POST /v1/accounts). On the /mcp endpoint, all four tools require Door 2.",
   "  • Polling fallback: ams_recv is the long-poll degradation path for runtimes that cannot consume the SSE leg of the Streamable HTTP transport. Pass wait_ms to wait for frames.",
   "  • Convention manifest: 'ams.convention.v1' is the application-level namespace inside stream_metadata.capabilities (role / function / posture / scope / attestation). Round-trips opaquely through the wrapper.",
   "",
@@ -474,6 +483,18 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
   }): Promise<AmsToolResult> {
     const account = await this.requireAccount();
     if (!account) return mcpToolError({ error: "invalid_credential", message: "Authorization bearer required for ams_create_conversation." });
+    // ams_create_conversation creates a NEW conversation owned by an account.
+    // The transient Door-1-only account is scoped to a single existing
+    // conversation (the one the magic link names) and is not persisted to KV;
+    // ownership of a new conversation requires a persistent Door-2 account.
+    // ams_join, ams_send, and ams_recv accept transient accounts.
+    if (this.props?.account_is_transient) {
+      return mcpToolError({
+        error: "invalid_credential",
+        message:
+          "ams_create_conversation requires a persistent account (Authorization bearer / Door 2). The transient account synthesized from the magic-link route's permissive token is scoped to the bound conversation only. Mint an account at POST /v1/accounts and present the bearer to create new conversations.",
+      });
+    }
 
     const outerHost = this.props?.outer_host ?? "ams.klappy.dev";
     // Reuse the existing control-plane handler so mint behavior is single-sourced.
@@ -1016,19 +1037,67 @@ async function buildAuthProps(
   req: Request,
   env: Env,
   base: AmsProps,
-): Promise<AmsProps> {
+): Promise<AmsProps | Response> {
   // authenticate() returns either an AccountRecord or a Response. We only set
-  // account_id when the bearer is present and valid; absent/invalid auth just
-  // leaves account_id undefined so unauthenticated MCP calls (initialize,
+  // account_id when the bearer is present and valid; absent auth just leaves
+  // account_id undefined so unauthenticated MCP calls (initialize,
   // prompts/list, resources/list, resources/read) still work and tool calls
-  // that need it surface a clean isError result.
+  // that need it surface a clean isError result. An explicitly-presented but
+  // invalid bearer is surfaced as a transport-level auth error only on the
+  // magic-link route (so it isn't silently downgraded to a transient
+  // account) — see the Door-1 fallback below.
   const account = await authenticate(req, env);
-  if (account instanceof Response) return base;
-  return {
-    ...base,
-    account_id: account.account_id,
-    account_namespace: account.namespace,
-  };
+  if (!(account instanceof Response)) {
+    return {
+      ...base,
+      account_id: account.account_id,
+      account_namespace: account.namespace,
+      account_is_transient: false,
+    };
+  }
+
+  // Distinguish "no bearer presented" from "bearer presented but invalid".
+  // authenticate() returns a Response in both cases, but only the former is
+  // eligible for the Door-1 transient fallback. An explicit-but-invalid
+  // bearer on the magic-link route must not be silently downgraded — the
+  // caller intended to act under their persistent identity, and a fresh
+  // transient account would attribute their actions to a different identity
+  // without any signal that their credential was rejected.
+  //
+  // On the bare /mcp route (no prebind) we deliberately fall through to
+  // `return base` so the MCP session still starts and tool calls that need an
+  // account surface invalid_credential at the MCP level — preserving prior
+  // behavior. Returning a transport-level 401 here would bypass MCP framing
+  // (and the SDK's CORS handling) for clients hitting /mcp directly.
+  const bearerPresented = /^Bearer\s+\S/i.test(
+    req.headers.get("authorization") ?? "",
+  );
+  if (bearerPresented && base.prebind_ns && base.prebind_alias) {
+    return account;
+  }
+
+  // Door-1-only path. If we have a resolved prebind (the request arrived on
+  // the magic-link route per D0023) and no Door-2 bearer was presented,
+  // synthesize a transient account scoped to this MCP session. The capability
+  // of holding the magic link is sufficient authorization to participate in
+  // the single conversation it names. The transient account is not persisted
+  // to KV; it exists only for the lifetime of this MCP session. See D0004
+  // for the two-door model and D0023 §The Routing Contract for the route
+  // shape this attaches to.
+  if (base.prebind_ns && base.prebind_alias) {
+    return {
+      ...base,
+      account_id: `acc_anon_${ulid()}`,
+      account_namespace: base.prebind_ns,
+      account_is_transient: true,
+    };
+  }
+
+  // No bearer (or invalid bearer on the bare /mcp route), no prebind. Tools
+  // that need an account will surface invalid_credential; tools that do not
+  // (initialize, prompts/list, resources/list, resources/read) continue to
+  // work.
+  return base;
 }
 
 async function resolvePrebindRecord(
@@ -1108,6 +1177,9 @@ export async function handleMcp(
   }
 
   const props = await buildAuthProps(req, env, baseProps);
+  if (props instanceof Response) {
+    return props;
+  }
 
   // The SDK's URLPattern is anchored at "/mcp"; rewrite the incoming URL so
   // both /mcp and /{ns}/conversations/{alias} hit the same handler.
