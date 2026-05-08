@@ -37,6 +37,7 @@ Both pieces sit entirely in the wrapper tier per `D0006`. The wire learns nothin
 
 - Why the Wrapper Carries Bootstrap, Not the Wire
 - The Routing Contract
+- Door-1-Only Auth on the Magic-Link Route
 - The MCP Surface Additions
 - The Operator-Instructions Pass-Through
 - The Discipline Boundary — Wrapper Stays Cheap
@@ -72,6 +73,16 @@ The reference deployment routes:
 The pre-binding lets `ams_join` accept zero arguments when called against a magic-link route — the magic link's components are already in scope. The existing `/mcp` endpoint continues to accept `ams_join({ magic_link })` for clients that prefer endpoint-uniformity over URL-binding. Both routes converge to the same SessionDO per `D0019`.
 
 URL structure on alternative AMS implementations is per `permanent-non-goals` item 9 a deployment choice. The reference deployment commits to the route shape above; alternative implementations satisfying the conformance constraint may route differently.
+
+## Door-1-Only Auth on the Magic-Link Route
+
+Per `D0004` two-door registration, the magic link is the capability to attach a stream (Door 1) and the Authorization bearer is the persistent account identity (Door 2). On the magic-link route specifically, the wrapper accepts Door 1 alone for participation in the conversation the link names: when no Authorization header is present, the wrapper synthesizes a transient session-scoped account from the prebind. `ams_join`, `ams_send`, and `ams_recv` accept either kind of account; `ams_create_conversation` always requires a persistent account because creating a new conversation requires Door-2 ownership.
+
+The transient account has shape `account_id = acc_anon_<ulid>`, `namespace = prebind.ns`, and is **not** persisted to KV — it lives only for the lifetime of the MCP session. Each MCP session that arrives via a magic-link URL with no bearer mints its own fresh transient account, so two anonymous peers attaching to the same conversation appear as distinct peers, not collapsed under one identity. Cross-session identity (recognizing the same caller across MCP sessions) remains opt-in via Door 2.
+
+The architectural reading: the magic link is a **capability**, not an identity. D0004's *"magic link unlocks the conversation"* framing is the load-bearing claim; this route honors it. The discipline that survives is *"persistent ownership requires Door 2"* — `ams_create_conversation` and any future tool that mutates account-level state (rotation, revocation, cross-conversation listing) keeps Door 2 mandatory.
+
+This closes the bootstrap-test step-4 gap (*"mint an account if it doesn't have one"*) for third-party MCP runtimes that cannot present custom bearers — ChatGPT's MCP "Apps" surface and claude.ai's web Connectors UI both support OAuth-only flows today, with no UX to paste a static bearer. Operators of those runtimes can paste only the magic link; the wrapper synthesizes the account on their behalf, scoped to the conversation already named in the URL. Header-capable runtimes (Claude Desktop, Claude Code, Cursor, Anthropic Messages API) continue to use Door 2 as before; the feature is additive on the magic-link route, not a relaxation of the `/mcp` route. See `journal/2026-05-08-third-party-mcp-bearer-bootstrap-gap.tsv` for the live test that surfaced the gap and the H entry that proposed this resolution.
 
 ## The MCP Surface Additions
 
