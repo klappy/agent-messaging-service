@@ -32,7 +32,7 @@ import type { ServerNotification, ServerRequest } from "@modelcontextprotocol/sd
 import { z } from "zod";
 
 import { authenticate } from "./auth";
-import type { JoinPayload } from "./conversation";
+import type { JoinPayload, PeerIdentity } from "./conversation";
 import { wrapWithSseHeartbeat } from "./sse-heartbeat";
 import { ALIAS_KEY, CONVERSATION_KEY, createConversation } from "./conversations";
 import type { AccountRecord, ConversationRecord, Env } from "./types";
@@ -59,12 +59,9 @@ export interface McpPrebind {
 // Optional peer-identity metadata supplied at ams_join time per D0028. Carried
 // in participant frames so subscribers see human-readable identity (kind,
 // model, client) alongside the opaque account_id / stream_id values. Set once
-// at join; not mutable mid-session.
-export interface PeerIdentity {
-  kind: "agent" | "human";
-  model?: string;
-  client?: string;
-}
+// at join; not mutable mid-session. Re-exported from ./conversation so callers
+// importing from mcp.ts keep the prior surface.
+export type { PeerIdentity };
 
 // Props passed to the McpAgent at request dispatch time via ctx.props. Carries
 // the resolved prebind, the conversation record, the authenticated account
@@ -87,6 +84,13 @@ export interface AmsProps extends Record<string, unknown> {
   // to hold the magic link is the authorization to participate in the single
   // conversation it names; persistent identity remains opt-in via Door 2.
   account_is_transient?: boolean;
+  // Set when an Authorization bearer was present on the request but failed
+  // validation, AND we did not return a transport-level 401 (i.e. the bare
+  // /mcp route, where MCP framing must still apply). Tools that would
+  // otherwise synthesize a transient identity (D0029 magic-link path in
+  // ams_join) must refuse when this is set, so an invalid bearer is never
+  // silently downgraded to a different (transient) identity.
+  bearer_invalid?: boolean;
   outer_host?: string;
   // MCP transport session id, threaded through props so tool handlers can use
   // it for derivations (e.g. auto-generated stream_name suffix per D0028). The
@@ -583,10 +587,21 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
     // The reorder: try requireAccount first; if no account AND no prebind AND
     // args.magic_link is supplied, attempt the D0029 synthesis path. Only then
     // fall through to the no-credential error. The bearer-presented-but-invalid
-    // case is already handled by buildAuthProps (it does NOT silently downgrade
-    // to transient on /mcp; an invalid bearer leaves account_id unset and we
-    // surface invalid_credential here at the tool level).
+    // case is signaled via this.props.bearer_invalid (set by buildAuthProps on
+    // the bare /mcp route, where MCP framing must still apply); we refuse the
+    // D0029 synthesis in that case so an invalid bearer is never silently
+    // downgraded to a transient account that would attribute the caller's
+    // actions to a different identity.
     let account = await this.requireAccount();
+    const bearerInvalid = (this.props as AmsProps | undefined)?.bearer_invalid === true;
+
+    if (bearerInvalid && !account) {
+      return mcpToolError({
+        error: "invalid_credential",
+        message:
+          "Authorization bearer was presented but is invalid; refusing to fall back to magic-link synthesis to avoid silent identity downgrade. Retry without the Authorization header to authenticate via magic_link, or supply a valid bearer.",
+      });
+    }
 
     if (!account && !prebind && typeof args.magic_link === "string") {
       const synthesized = await synthesizeFromMagicLink(this.env, args.magic_link);
@@ -1318,7 +1333,13 @@ async function buildAuthProps(
   // No bearer (or invalid bearer on the bare /mcp route), no prebind. Tools
   // that need an account will surface invalid_credential; tools that do not
   // (initialize, prompts/list, resources/list, resources/read) continue to
-  // work.
+  // work. We carry a `bearer_invalid` signal through props so the D0029
+  // magic-link synthesis path in ams_join can distinguish "no bearer
+  // presented" from "bearer presented but invalid" and refuse to silently
+  // downgrade the latter to a transient account.
+  if (bearerPresented) {
+    return { ...base, bearer_invalid: true };
+  }
   return base;
 }
 
