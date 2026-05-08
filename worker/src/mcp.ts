@@ -32,7 +32,7 @@ import type { ServerNotification, ServerRequest } from "@modelcontextprotocol/sd
 import { z } from "zod";
 
 import { authenticate } from "./auth";
-import type { JoinPayload } from "./conversation";
+import type { JoinPayload, PeerIdentity } from "./conversation";
 import { wrapWithSseHeartbeat } from "./sse-heartbeat";
 import { ALIAS_KEY, CONVERSATION_KEY, createConversation } from "./conversations";
 import type { AccountRecord, ConversationRecord, Env } from "./types";
@@ -42,7 +42,6 @@ import {
   pepperedHash,
   randomToken,
   timingSafeEqualHex,
-  ulid,
   utf8ToBase64,
 } from "./util";
 
@@ -56,6 +55,13 @@ export interface McpPrebind {
   alias: string;
   permissive: string;
 }
+
+// Optional peer-identity metadata supplied at ams_join time per D0028. Carried
+// in participant frames so subscribers see human-readable identity (kind,
+// model, client) alongside the opaque account_id / stream_id values. Set once
+// at join; not mutable mid-session. Re-exported from ./conversation so callers
+// importing from mcp.ts keep the prior surface.
+export type { PeerIdentity };
 
 // Props passed to the McpAgent at request dispatch time via ctx.props. Carries
 // the resolved prebind, the conversation record, the authenticated account
@@ -78,7 +84,20 @@ export interface AmsProps extends Record<string, unknown> {
   // to hold the magic link is the authorization to participate in the single
   // conversation it names; persistent identity remains opt-in via Door 2.
   account_is_transient?: boolean;
+  // Set when an Authorization bearer was present on the request but failed
+  // validation, AND we did not return a transport-level 401 (i.e. the bare
+  // /mcp route, where MCP framing must still apply). Tools that would
+  // otherwise synthesize a transient identity (D0029 magic-link path in
+  // ams_join) must refuse when this is set, so an invalid bearer is never
+  // silently downgraded to a different (transient) identity.
+  bearer_invalid?: boolean;
   outer_host?: string;
+  // MCP transport session id, threaded through props so tool handlers can use
+  // it for derivations (e.g. auto-generated stream_name suffix per D0028). The
+  // SDK persists this in DO storage at session-init alongside the rest of the
+  // props per the comment above; subsequent requests on the same MCP session
+  // see the same value.
+  mcp_session_id?: string;
 }
 
 interface ResolvedPrebind {
@@ -116,7 +135,7 @@ const STATIC_INSTRUCTIONS = [
   "Wire model (canon-derived):",
   "  • Tokens, not messages: payloads are opaque bytes (D0001). Use ams_send to emit; peer tokens arrive via notifications/ams/token (push) or ams_recv (poll).",
   "  • Streams own themselves: by default a stream does not see its own emissions (D0009). Pass self_subscribe: true at ams_join to opt in.",
-  "  • Two-door auth: door 1 is the magic link (capability to attach a stream). Door 2 is the Bearer in Authorization (persistent account identity). On the magic-link route, ams_join / ams_send / ams_recv accept Door 1 alone — the wrapper synthesizes a transient session-scoped account from the magic link's permissive token. ams_create_conversation always requires Door 2 (mint at POST /v1/accounts). On the /mcp endpoint, all four tools require Door 2.",
+  "  • Two-door auth: door 1 is the magic link (capability to attach a stream). Door 2 is the Bearer in Authorization (persistent account identity). On the magic-link route (POST to a magic-link URL), ams_join / ams_send / ams_recv accept Door 1 alone — the wrapper synthesizes a transient session-scoped account from the magic link's permissive token. On the /mcp endpoint, ams_join also accepts Door 1 when 'magic_link' is supplied as a tool argument (D0029 — the path for ChatGPT-class consumers that configure a stable connector URL and pass magic links as tool arguments). ams_create_conversation always requires Door 2 (mint at POST /v1/accounts) regardless of route.",
   "  • Polling fallback: ams_recv is the long-poll degradation path for runtimes that cannot consume the SSE leg of the Streamable HTTP transport. Pass wait_ms to wait for frames.",
   "  • Convention manifest: 'ams.convention.v1' is the application-level namespace inside stream_metadata.capabilities (role / function / posture / scope / attestation). Round-trips opaquely through the wrapper.",
   "",
@@ -190,11 +209,19 @@ interface JoinedSnapshot {
   stream_name: string;
   metadata: Record<string, unknown>;
   self_subscribe: boolean;
+  // Set by the Conversation DO when this attach displaced and resumed an
+  // existing stream per D0028. Absent / false on a fresh join.
+  resumed?: boolean;
+  // Optional human-readable peer metadata supplied at join time per D0028.
+  // Echoed back on the joined frame so the tool result can surface it
+  // alongside the opaque stream_id.
+  peer_identity?: PeerIdentity;
   peers: Array<{
     stream_id: string;
     stream_name: string;
     owner_account_id: string;
     metadata: Record<string, unknown>;
+    peer_identity?: PeerIdentity;
   }>;
 }
 
@@ -433,9 +460,43 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
             .describe(
               "Opt into receiving own emissions on the SSE leg. Default false per D0009 (structural self-exclusion).",
             ),
+          peer_identity: z
+            .object({
+              kind: z
+                .enum(["agent", "human"])
+                .describe("Top-level discriminator: agent or human peer."),
+              model: z
+                .string()
+                .optional()
+                .describe(
+                  "Model identifier when kind=agent (e.g. 'claude-opus-4-7', 'gpt-4o'). Optional but recommended for observability.",
+                ),
+              client: z
+                .string()
+                .optional()
+                .describe(
+                  "Client/runtime identifier (e.g. 'ChatGPT Apps', 'Claude Code', 'TinCan UI', 'curl'). Used by the wrapper to derive stream_name when one is not supplied.",
+                ),
+            })
+            .optional()
+            .describe(
+              "Optional human-readable peer metadata per D0028. Carried in participant frames so subscribers see typed identity alongside opaque IDs. Set once at join; not mutable mid-session.",
+            ),
         },
       },
-      this.withRideAlong(async (args) => this.tool_ams_join(args, prebind)),
+      // Read the prebind fresh from this.props on every call, not the value
+      // captured at registration time. The D0029 magic-link synthesis path in
+      // tool_ams_join mutates this.props mid-session to record a new prebind;
+      // a closure-captured `prebind` value would still be null on a
+      // subsequent ams_join({}) (no magic_link argument) within the same DO
+      // lifetime, breaking the comment's guarantee that re-join works after
+      // synthesis without re-passing magic_link. Audit fix.
+      this.withRideAlong(async (args) =>
+        this.tool_ams_join(
+          args,
+          readPrebindFromProps(this.props as AmsProps | undefined),
+        ),
+      ),
     );
 
     this.server.registerTool(
@@ -531,18 +592,82 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
       stream_name?: string;
       stream_metadata?: Record<string, unknown>;
       self_subscribe?: boolean;
+      peer_identity?: PeerIdentity;
     },
     prebind: ResolvedPrebind | null,
   ): Promise<AmsToolResult> {
-    const account = await this.requireAccount();
-    if (!account)
+    // Auth resolution per D0029. Three valid auth paths:
+    //   1. Door 2 (Authorization bearer present and valid) — already populated
+    //      this.props at session-init via buildAuthProps.
+    //   2. Door 1 via URL route (D0023) — prebind populated; transient account
+    //      already synthesized at session-init via buildAuthProps.
+    //   3. Door 1 via magic_link argument on /mcp (D0029) — synthesize on
+    //      first ams_join, mutate this.props for the session.
+    //
+    // The reorder: try requireAccount first; if no account AND no prebind AND
+    // args.magic_link is supplied, attempt the D0029 synthesis path. Only then
+    // fall through to the no-credential error. The bearer-presented-but-invalid
+    // case is signaled via this.props.bearer_invalid (set by buildAuthProps on
+    // the bare /mcp route, where MCP framing must still apply); we refuse the
+    // D0029 synthesis in that case so an invalid bearer is never silently
+    // downgraded to a transient account that would attribute the caller's
+    // actions to a different identity.
+    let account = await this.requireAccount();
+    const bearerInvalid = (this.props as AmsProps | undefined)?.bearer_invalid === true;
+
+    if (bearerInvalid && !account) {
       return mcpToolError({
         error: "invalid_credential",
-        message: "Authorization bearer required for ams_join.",
+        message:
+          "Authorization bearer was presented but is invalid; refusing to fall back to magic-link synthesis to avoid silent identity downgrade. Retry without the Authorization header to authenticate via magic_link, or supply a valid bearer.",
       });
+    }
+
+    if (!account && !prebind && typeof args.magic_link === "string") {
+      const synthesized = await synthesizeFromMagicLink(this.env, args.magic_link);
+      if ("error" in synthesized) {
+        return mcpToolError(synthesized.error);
+      }
+      // Mutate this.props so subsequent ams_send / ams_recv calls in this
+      // session pass requireAccount() via the same mechanism. The agent
+      // instance survives across requests within an MCP session per the SDK
+      // (this.wireWs at line ~690 is the existing precedent). Includes
+      // prebind_record_json so a subsequent ams_join({}) (without re-passing
+      // magic_link) in the same session — e.g. after a wire drop where the
+      // consumer uses D0028 resume-by-stream_name semantics — finds a valid
+      // prebind via readPrebindFromProps. Audit M-2 fix.
+      this.props = {
+        ...(this.props ?? {}),
+        account_id: synthesized.account_id,
+        account_namespace: synthesized.namespace,
+        account_is_transient: true,
+        prebind_ns: synthesized.prebind.ns,
+        prebind_alias: synthesized.prebind.alias,
+        prebind_permissive: synthesized.prebind.permissive,
+        prebind_conversation_id: synthesized.prebind.conversation_id,
+        prebind_record_json: JSON.stringify(synthesized.prebind.record),
+      };
+      account = await this.requireAccount();
+      // The validated magic link also acts as the prebind for this call so
+      // the rest of the function can flow through the existing prebind path.
+      prebind = synthesized.prebind;
+    }
+
+    if (!account) {
+      return mcpToolError({
+        error: "invalid_credential",
+        message:
+          "Authorization bearer required for ams_join, OR pass a valid magic_link argument (D0029) to authenticate via the magic link's permissive token.",
+      });
+    }
 
     let resolved: ResolvedPrebind;
     if (prebind && typeof args.magic_link !== "string") {
+      resolved = prebind;
+    } else if (prebind && typeof args.magic_link === "string") {
+      // Account was already established (bearer or URL-route prebind), but the
+      // caller supplied a magic_link argument too. Trust the prebind we
+      // already validated; ignore the argument unless it disagrees.
       resolved = prebind;
     } else {
       if (typeof args.magic_link !== "string") {
@@ -551,44 +676,44 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
           message: "ams_join requires magic_link as a string.",
         });
       }
-      let parsed: { ns: string; alias: string; permissive: string };
-      try {
-        parsed = parseMagicLink(args.magic_link);
-      } catch (err) {
-        return mcpToolError({
-          error: "invalid_magic_link",
-          message: (err as Error).message,
-        });
-      }
-      const id = await this.env.AMS_KV.get(ALIAS_KEY(parsed.ns, parsed.alias));
-      if (!id)
-        return mcpToolError({
-          error: "conversation_not_found",
-          message: "No conversation with that namespace+alias.",
-        });
-      const recordRaw = await this.env.AMS_KV.get(CONVERSATION_KEY(id));
-      if (!recordRaw)
-        return mcpToolError({
-          error: "conversation_not_found",
-          message: "Conversation record missing.",
-        });
-      const record = JSON.parse(recordRaw) as ConversationRecord;
-      const tokenHash = await pepperedHash(
-        this.env.AMS_PERMISSIVE_TOKEN_PEPPER,
-        parsed.permissive,
-      );
-      if (!timingSafeEqualHex(tokenHash, record.permissive_token_hash))
-        return mcpToolError({
-          error: "invalid_magic_link",
-          message: "Permissive token did not match.",
-        });
+      const validated = await validateMagicLinkArgument(this.env, args.magic_link);
+      if ("error" in validated) return mcpToolError(validated.error);
       resolved = {
-        ns: parsed.ns,
-        alias: parsed.alias,
-        permissive: parsed.permissive,
-        conversation_id: id,
-        record,
+        ns: validated.parsed.ns,
+        alias: validated.parsed.alias,
+        permissive: validated.parsed.permissive,
+        conversation_id: validated.conversation_id,
+        record: validated.record,
       };
+    }
+
+    // Compute effective stream_name per D0028. Order of preference:
+    //   1. Explicit args.stream_name (operator-typed; cross-session-stable
+    //      escape hatch).
+    //   2. Auto-derived from peer_identity + mcp_session_id when peer_identity
+    //      is supplied and stream_name is not.
+    //   3. Existing random fallback (stream-NNNNNN) when neither is supplied.
+    let effectiveStreamName: string | undefined = args.stream_name;
+    if (
+      (effectiveStreamName === undefined || effectiveStreamName.length === 0) &&
+      args.peer_identity
+    ) {
+      // Use the SDK-managed transport session id directly. The earlier path
+      // of reading mcp-session-id off the request header into props does not
+      // work for the auto-name discriminator: the initial `initialize` request
+      // carries no `mcp-session-id` header (the SDK generates one and returns
+      // it in the response), so the value never lands in props on first hit
+      // and the fallback to account_id collapses simultaneous consumers on
+      // the same magic link onto the same auto stream_name — contradicting
+      // D0028's distinct-streams consequence. McpAgent.getSessionId() returns
+      // the SDK's session id derived from the DO instance name, which is
+      // populated for every request after init().
+      const sessionDiscriminator = this.getSessionId() || account.account_id;
+      effectiveStreamName = await deriveAutoStreamName(
+        this.env,
+        args.peer_identity,
+        sessionDiscriminator,
+      );
     }
 
     const dial = await this.dialWire({
@@ -597,9 +722,10 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
       namespace: resolved.record.namespace,
       alias: resolved.alias,
       conversation_metadata: resolved.record.metadata,
-      stream_name: args.stream_name,
+      stream_name: effectiveStreamName,
       stream_metadata: args.stream_metadata,
       self_subscribe: args.self_subscribe === true,
+      peer_identity: args.peer_identity,
     });
     if ("error" in dial) return mcpToolError(dial.error);
 
@@ -611,6 +737,10 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
       metadata: dial.joined.metadata,
       self_subscribe: dial.joined.self_subscribe,
       peers: dial.joined.peers,
+      // Surface D0028 displace-and-resume to the consumer so a reconnect that
+      // resumed an existing stream is distinguishable from a fresh join.
+      ...(dial.joined.resumed ? { resumed: true } : {}),
+      ...(args.peer_identity ? { peer_identity: args.peer_identity } : {}),
     });
   }
 
@@ -683,6 +813,7 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
     stream_name?: string;
     stream_metadata?: Record<string, unknown>;
     self_subscribe: boolean;
+    peer_identity?: PeerIdentity;
   }): Promise<
     | { joined: JoinedSnapshot }
     | { error: { error: string; message: string } }
@@ -704,6 +835,7 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
       stream_name: streamName,
       self_subscribe: opts.self_subscribe,
       stream_metadata: streamMetadata,
+      ...(opts.peer_identity ? { peer_identity: opts.peer_identity } : {}),
     };
 
     const stub = this.env.CONVERSATION_DO.get(
@@ -944,6 +1076,139 @@ function parseMagicLink(link: string): {
   return { ns: m[1]!, alias: m[2]!, permissive };
 }
 
+// --- Identity derivation per D0028 --------------------------------------
+
+// Deterministic anon-account_id derivation per D0028. Same magic link →
+// same acc_anon_* identity, every request, every session. Replaces the
+// previous fresh-`ulid()`-per-request behavior in buildAuthProps. Reuses
+// AMS_PERMISSIVE_TOKEN_PEPPER with a domain separator so the same secret
+// can underwrite multiple derivations without cross-contamination.
+async function deriveAnonId(env: Env, permissive: string): Promise<string> {
+  const hex = await pepperedHash(
+    env.AMS_PERMISSIVE_TOKEN_PEPPER,
+    "anon-account|" + permissive,
+  );
+  return `acc_anon_${hex.slice(0, 26)}`;
+}
+
+// Validate a magic_link string supplied as a tool argument. Performs the
+// four-step check (parse, KV alias lookup, KV record lookup, peppered-hash
+// token comparison) and returns the parsed link, the resolved
+// conversation_id, and the conversation record. Shared by the D0029
+// synthesizeFromMagicLink path and the inline magic_link branch in
+// tool_ams_join so both validate identically.
+async function validateMagicLinkArgument(
+  env: Env,
+  link: string,
+): Promise<
+  | {
+      parsed: { ns: string; alias: string; permissive: string };
+      conversation_id: string;
+      record: ConversationRecord;
+    }
+  | { error: { error: string; message: string } }
+> {
+  let parsed: { ns: string; alias: string; permissive: string };
+  try {
+    parsed = parseMagicLink(link);
+  } catch (err) {
+    return {
+      error: { error: "invalid_magic_link", message: (err as Error).message },
+    };
+  }
+  const id = await env.AMS_KV.get(ALIAS_KEY(parsed.ns, parsed.alias));
+  if (!id) {
+    return {
+      error: {
+        error: "conversation_not_found",
+        message: "No conversation with that namespace+alias.",
+      },
+    };
+  }
+  const recordRaw = await env.AMS_KV.get(CONVERSATION_KEY(id));
+  if (!recordRaw) {
+    return {
+      error: {
+        error: "conversation_not_found",
+        message: "Conversation record missing.",
+      },
+    };
+  }
+  const record = JSON.parse(recordRaw) as ConversationRecord;
+  const tokenHash = await pepperedHash(
+    env.AMS_PERMISSIVE_TOKEN_PEPPER,
+    parsed.permissive,
+  );
+  if (!timingSafeEqualHex(tokenHash, record.permissive_token_hash)) {
+    return {
+      error: {
+        error: "invalid_magic_link",
+        message: "Permissive token did not match.",
+      },
+    };
+  }
+  return { parsed, conversation_id: id, record };
+}
+
+// Synthesize a transient account from a magic_link argument on /mcp per
+// D0029. Validates the link, derives the anon account_id deterministically
+// per D0028, and returns both the synthesized identity and the resolved
+// prebind so tool_ams_join can flow through its existing prebind path.
+async function synthesizeFromMagicLink(
+  env: Env,
+  link: string,
+): Promise<
+  | {
+      account_id: string;
+      namespace: string;
+      prebind: ResolvedPrebind;
+    }
+  | { error: { error: string; message: string } }
+> {
+  const validated = await validateMagicLinkArgument(env, link);
+  if ("error" in validated) return validated;
+  const account_id = await deriveAnonId(env, validated.parsed.permissive);
+  return {
+    account_id,
+    namespace: validated.parsed.ns,
+    prebind: {
+      ns: validated.parsed.ns,
+      alias: validated.parsed.alias,
+      permissive: validated.parsed.permissive,
+      conversation_id: validated.conversation_id,
+      record: validated.record,
+    },
+  };
+}
+
+// Auto-derive a stream_name from peer_identity + an MCP-session discriminator
+// per D0028 §5. Format: <client-slug>-<first-4-hex-chars-of-pepperedHash>.
+// Examples: chatgpt-7f3a, claude-code-9c2e, tincan-1d8b. Stable within an MCP
+// session (same discriminator → same suffix → same stream resumes on
+// reconnect) and distinct across sessions (each fresh initialize mints a new
+// mcp-session-id, yielding a new auto-name even on the same magic link).
+// Reuses AMS_PERMISSIVE_TOKEN_PEPPER with the "auto-stream-name|" domain
+// separator — no new secret. Matching deriveAnonId / deriveStreamId pattern.
+async function deriveAutoStreamName(
+  env: Env,
+  identity: PeerIdentity,
+  discriminator: string,
+): Promise<string> {
+  const slugSource = identity.client ?? identity.kind;
+  const slug = slugSource
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 24) || "peer";
+  // 16^4 = 65536 distinct values per slug — sufficient for in-conversation
+  // discrimination of simultaneous consumers under the same magic link.
+  const raw = await pepperedHash(
+    env.AMS_PERMISSIVE_TOKEN_PEPPER,
+    "auto-stream-name|" + discriminator,
+  );
+  return `${slug}-${raw.slice(0, 4)}`;
+}
+
 // --- Tool result helpers -------------------------------------------------
 
 // Tool result helpers. Per MCP, a tool that completed but reported a domain
@@ -1077,17 +1342,18 @@ async function buildAuthProps(
   }
 
   // Door-1-only path. If we have a resolved prebind (the request arrived on
-  // the magic-link route per D0023) and no Door-2 bearer was presented,
-  // synthesize a transient account scoped to this MCP session. The capability
-  // of holding the magic link is sufficient authorization to participate in
-  // the single conversation it names. The transient account is not persisted
-  // to KV; it exists only for the lifetime of this MCP session. See D0004
-  // for the two-door model and D0023 §The Routing Contract for the route
-  // shape this attaches to.
-  if (base.prebind_ns && base.prebind_alias) {
+  // The transient Door-1-only account is scoped to a single existing
+  // conversation (the one the magic-link route's URL identifies). Per D0028,
+  // its account_id is now deterministically derived from the permissive token
+  // (peppered hash, ULID-shaped opaque string) instead of fresh-per-request
+  // ulid() — so the same magic link yields the same acc_anon_* identity
+  // across all requests, all reconnects, and all MCP transport sessions. This
+  // makes D0019's (account_id, conversation_id) SessionDO keying actually
+  // work for the transient case.
+  if (base.prebind_ns && base.prebind_alias && base.prebind_permissive) {
     return {
       ...base,
-      account_id: `acc_anon_${ulid()}`,
+      account_id: await deriveAnonId(env, base.prebind_permissive),
       account_namespace: base.prebind_ns,
       account_is_transient: true,
     };
@@ -1096,7 +1362,13 @@ async function buildAuthProps(
   // No bearer (or invalid bearer on the bare /mcp route), no prebind. Tools
   // that need an account will surface invalid_credential; tools that do not
   // (initialize, prompts/list, resources/list, resources/read) continue to
-  // work.
+  // work. We carry a `bearer_invalid` signal through props so the D0029
+  // magic-link synthesis path in ams_join can distinguish "no bearer
+  // presented" from "bearer presented but invalid" and refuse to silently
+  // downgrade the latter to a transient account.
+  if (bearerPresented) {
+    return { ...base, bearer_invalid: true };
+  }
   return base;
 }
 
@@ -1135,8 +1407,12 @@ export async function handleMcp(
   prebind?: McpPrebind,
 ): Promise<Response> {
   const outerHost = req.headers.get("host") ?? "ams.klappy.dev";
+  const mcpSessionIdHeader = req.headers.get("mcp-session-id");
 
-  let baseProps: AmsProps = { outer_host: outerHost };
+  let baseProps: AmsProps = {
+    outer_host: outerHost,
+    ...(mcpSessionIdHeader ? { mcp_session_id: mcpSessionIdHeader } : {}),
+  };
 
   // Only POST carries a JSON-RPC body that needs the resolved conversation
   // record threaded into props; the other verbs on the magic-link route are
