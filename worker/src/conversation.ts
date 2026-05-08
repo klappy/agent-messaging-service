@@ -206,7 +206,7 @@ export class ConversationDO {
 
     this.streams.set(stream_id, conn);
 
-    server.addEventListener("message", (event) => this.handleMessage(stream_id, event));
+    server.addEventListener("message", (event) => this.handleMessage(stream_id, conn, event));
     // Bind teardown to a closure that captures the conn reference so a
     // displaced ws's later close event no-ops instead of removing the
     // resuming connection. Per D0028.
@@ -217,9 +217,13 @@ export class ConversationDO {
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  private handleMessage(stream_id: string, event: MessageEvent) {
+  private handleMessage(stream_id: string, expectedConn: ConnectionState, event: MessageEvent) {
+    // Identity-aware dispatch per D0028: only act if the stream_id is still
+    // bound to this exact connection. A displaced ws's later message event
+    // must not be processed against the resuming connection — otherwise a
+    // malformed/unknown frame from the old socket would close the new one.
     const conn = this.streams.get(stream_id);
-    if (!conn) return;
+    if (conn !== expectedConn) return;
     try {
       this.dispatchMessage(stream_id, conn, event);
     } catch {
