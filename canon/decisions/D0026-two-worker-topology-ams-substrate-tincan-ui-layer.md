@@ -26,12 +26,16 @@ status: active
 - `GET /v1/{ns}/conversations/{alias}` — conversation metadata (new, needed by TinCan JS)
 - `GET /{ns}/conversations/{alias}/connect` — WebSocket wire
 - `POST|GET|DELETE|OPTIONS /mcp` — MCP endpoint
+- `POST|GET|DELETE|OPTIONS /{ns}/conversations/{alias}` — magic-link MCP transport (D0023)
 - `GET /healthz` — liveness
+- `GET /` — protocol-substrate landing page on the AMS subdomain. An "epic landing page" that doubles as a live demo of the protocol — runs `/healthz` polling, exercises `POST /v1/accounts` and `POST /v1/{ns}/conversations`, surfaces oddkit telemetry, and links to spec, canon, and GitHub. Distinct from the TinCan portal homepage. Implemented in `worker/src/homepage.ts`.
 
 **TinCan Worker** — UI surfaces only:
-- `GET /` — homepage (intro, link to /tincan)
+- `GET /` — TinCan portal homepage on the TinCan subdomain (intro, link to /tincan)
 - `GET /tincan` — mint + configure page (set instructions, mint conversation, copy link)
 - `GET /{ns}/conversations/{alias}` — conversation portal (browser: full UI; AI: governance-derived join instructions)
+
+Both Workers serve `GET /` — but on different subdomains, with different content. AMS at `ams.{klappy.dev,truthkit.ai}/` is the protocol-substrate intro page; TinCan at `tincan.{klappy.dev,truthkit.ai}/` is the portal entry. The two pages serve different audiences (developers reading about the protocol vs. operators minting conversations) and could not be collapsed without conflating those audiences — both are part of "the protocol substrate" and "the human-facing UI" respectively, and the subdomain split keeps that boundary structural.
 
 Route-based split via Cloudflare route patterns in each wrangler.toml. AMS substrate routes declared first (more specific); TinCan portal route is the broad pattern. The reference deployment runs the two Workers on **different subdomains** under each apex — `ams.{klappy.dev,truthkit.ai}` and `tincan.{klappy.dev,truthkit.ai}` — rather than sharing one host. Cloudflare routes still first-win on specificity within each subdomain.
 
@@ -53,23 +57,25 @@ Any team can build their own UI on top of AMS. The TinCan source is the referenc
 
 ```
 agent-messaging-service/
-  worker/          ← AMS Worker (existing)
+  worker/                    ← AMS Worker
     wrangler.toml
     src/
-      index.ts
-      conversation.ts
-      mcp.ts
+      index.ts               ← routing
+      conversation.ts        ← conversation Durable Object
+      mcp.ts                 ← MCP edge wrapper
+      homepage.ts            ← AMS protocol-substrate landing page (ams.*/)
       ...
-  tincan/          ← TinCan Worker (new)
-    wrangler.toml
-    src/
-      index.ts     ← routing
-      homepage.ts  ← / intro
-      mint.ts      ← /tincan mint + configure
-      portal.ts    ← /{ns}/conversations/{alias} portal
+  packages/
+    tincan/                  ← TinCan Worker
+      wrangler.toml          ← service binding to AMS for magic-link MCP proxy
+      src/
+        index.ts             ← routing
+        homepage.ts          ← TinCan portal landing page (tincan.*/)
+        mint.ts              ← /tincan mint + configure
+        portal.ts            ← /{ns}/conversations/{alias} portal
 ```
 
-`worker/src/homepage.ts` is deleted (or stripped to nothing — the route moves to TinCan).
+Both Workers ship a `src/homepage.ts` because both Workers serve `GET /` on their respective subdomain — one for the AMS protocol substrate, one for the TinCan portal. See §Route Ownership for the audience split. The TinCan Worker's `wrangler.toml` declares a `[[services]] binding = "AMS"` for same-process MCP-transport proxying per §Dependency Direction.
 
 ## Magic Link Shape
 
