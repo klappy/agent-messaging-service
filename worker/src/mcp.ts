@@ -646,70 +646,16 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
     },
     prebind: ResolvedPrebind | null,
   ): Promise<AmsToolResult> {
-    // Auth resolution per D0029. Three valid auth paths:
-    //   1. Door 2 (Authorization bearer present and valid) — already populated
-    //      this.props at session-init via buildAuthProps.
-    //   2. Door 1 via URL route (D0023) — prebind populated; transient account
-    //      already synthesized at session-init via buildAuthProps.
-    //   3. Door 1 via magic_link argument on /mcp (D0029) — synthesize on
-    //      first ams_join, mutate this.props for the session.
-    //
-    // The reorder: try requireAccount first; if no account AND no prebind AND
-    // args.magic_link is supplied, attempt the D0029 synthesis path. Only then
-    // fall through to the no-credential error. The bearer-presented-but-invalid
-    // case is signaled via this.props.bearer_invalid (set by buildAuthProps on
-    // the bare /mcp route, where MCP framing must still apply); we refuse the
-    // D0029 synthesis in that case so an invalid bearer is never silently
-    // downgraded to a transient account that would attribute the caller's
-    // actions to a different identity.
-    let account = await this.requireAccount();
-    const bearerInvalid = (this.props as AmsProps | undefined)?.bearer_invalid === true;
-
-    if (bearerInvalid && !account) {
-      return mcpToolError({
-        error: "invalid_credential",
-        message:
-          "Authorization bearer was presented but is invalid; refusing to fall back to magic-link synthesis to avoid silent identity downgrade. Retry without the Authorization header to authenticate via magic_link, or supply a valid bearer.",
-      });
-    }
-
-    if (!account && !prebind && typeof args.magic_link === "string") {
-      const synthesized = await synthesizeFromMagicLink(this.env, args.magic_link);
-      if ("error" in synthesized) {
-        return mcpToolError(synthesized.error);
-      }
-      // Mutate this.props so subsequent ams_send / ams_recv calls in this
-      // session pass requireAccount() via the same mechanism. The agent
-      // instance survives across requests within an MCP session per the SDK
-      // (this.wireWs at line ~690 is the existing precedent). Includes
-      // prebind_record_json so a subsequent ams_join({}) (without re-passing
-      // magic_link) in the same session — e.g. after a wire drop where the
-      // consumer uses D0028 resume-by-stream_name semantics — finds a valid
-      // prebind via readPrebindFromProps. Audit M-2 fix.
-      this.props = {
-        ...(this.props ?? {}),
-        account_id: synthesized.account_id,
-        account_namespace: synthesized.namespace,
-        account_is_transient: true,
-        prebind_ns: synthesized.prebind.ns,
-        prebind_alias: synthesized.prebind.alias,
-        prebind_permissive: synthesized.prebind.permissive,
-        prebind_conversation_id: synthesized.prebind.conversation_id,
-        prebind_record_json: JSON.stringify(synthesized.prebind.record),
-      };
-      account = await this.requireAccount();
-      // The validated magic link also acts as the prebind for this call so
-      // the rest of the function can flow through the existing prebind path.
-      prebind = synthesized.prebind;
-    }
-
-    if (!account) {
-      return mcpToolError({
-        error: "invalid_credential",
-        message:
-          "Authorization bearer required for ams_join, OR pass a valid magic_link argument (D0029) to authenticate via the magic link's permissive token.",
-      });
-    }
+    // Auth resolution per D0029 — see resolveAccountWithMagicLink for the
+    // shared three-path logic (Door 2, URL-route prebind, magic_link arg).
+    const resolvedAuth = await this.resolveAccountWithMagicLink(
+      args,
+      prebind,
+      "Authorization bearer required for ams_join, OR pass a valid magic_link argument (D0029) to authenticate via the magic link's permissive token.",
+    );
+    if ("error" in resolvedAuth) return resolvedAuth.error;
+    const account = resolvedAuth.account;
+    prebind = resolvedAuth.prebind;
 
     let resolved: ResolvedPrebind;
     if (prebind && typeof args.magic_link !== "string") {
@@ -808,52 +754,16 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
     },
     prebind: ResolvedPrebind | null,
   ): Promise<AmsToolResult> {
-    // --- D0030 Part 1: auth reorder, mirroring D0029's tool_ams_join shape ---
-    let account = await this.requireAccount();
-    const bearerInvalid =
-      (this.props as AmsProps | undefined)?.bearer_invalid === true;
-
-    if (bearerInvalid && !account) {
-      return mcpToolError({
-        error: "invalid_credential",
-        message:
-          "Authorization bearer was presented but is invalid; refusing to fall back to magic-link synthesis to avoid silent identity downgrade. Retry without the Authorization header to authenticate via magic_link, or supply a valid bearer.",
-      });
-    }
-
-    if (!account && !prebind && typeof args.magic_link === "string") {
-      const synthesized = await synthesizeFromMagicLink(
-        this.env,
-        args.magic_link,
-      );
-      if ("error" in synthesized) {
-        return mcpToolError(synthesized.error);
-      }
-      // Mutate this.props so subsequent calls in this session pass
-      // requireAccount(). Store prebind fields so readPrebindFromProps works
-      // for ensureWire. Same shape as D0029's synthesis in tool_ams_join.
-      this.props = {
-        ...(this.props ?? {}),
-        account_id: synthesized.account_id,
-        account_namespace: synthesized.namespace,
-        account_is_transient: true,
-        prebind_ns: synthesized.prebind.ns,
-        prebind_alias: synthesized.prebind.alias,
-        prebind_permissive: synthesized.prebind.permissive,
-        prebind_conversation_id: synthesized.prebind.conversation_id,
-        prebind_record_json: JSON.stringify(synthesized.prebind.record),
-      };
-      account = await this.requireAccount();
-      prebind = synthesized.prebind;
-    }
-
-    if (!account) {
-      return mcpToolError({
-        error: "invalid_credential",
-        message:
-          "Authorization bearer required for ams_send, OR pass a valid magic_link argument (D0030) to authenticate via the magic link's permissive token.",
-      });
-    }
+    // --- D0030 Part 1: auth reorder, mirroring D0029's tool_ams_join shape.
+    // Shared with tool_ams_join / tool_ams_recv via resolveAccountWithMagicLink.
+    const resolvedAuth = await this.resolveAccountWithMagicLink(
+      args,
+      prebind,
+      "Authorization bearer required for ams_send, OR pass a valid magic_link argument (D0030) to authenticate via the magic link's permissive token.",
+    );
+    if ("error" in resolvedAuth) return resolvedAuth.error;
+    const account = resolvedAuth.account;
+    prebind = resolvedAuth.prebind;
 
     // --- D0030 Part 2: self-rehydration ---
     if (!this.wireWs || !this.joined) {
@@ -896,50 +806,16 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
     },
     prebind: ResolvedPrebind | null,
   ): Promise<AmsToolResult> {
-    // --- D0030 Part 1: auth reorder, mirroring D0029's tool_ams_join shape ---
-    let account = await this.requireAccount();
-    const bearerInvalid =
-      (this.props as AmsProps | undefined)?.bearer_invalid === true;
-
-    if (bearerInvalid && !account) {
-      return mcpToolError({
-        error: "invalid_credential",
-        message:
-          "Authorization bearer was presented but is invalid; refusing to fall back to magic-link synthesis to avoid silent identity downgrade. Retry without the Authorization header to authenticate via magic_link, or supply a valid bearer.",
-      });
-    }
-
-    if (!account && !prebind && typeof args.magic_link === "string") {
-      const synthesized = await synthesizeFromMagicLink(
-        this.env,
-        args.magic_link,
-      );
-      if ("error" in synthesized) {
-        return mcpToolError(synthesized.error);
-      }
-      // Same props mutation as tool_ams_send / tool_ams_join (D0029/D0030).
-      this.props = {
-        ...(this.props ?? {}),
-        account_id: synthesized.account_id,
-        account_namespace: synthesized.namespace,
-        account_is_transient: true,
-        prebind_ns: synthesized.prebind.ns,
-        prebind_alias: synthesized.prebind.alias,
-        prebind_permissive: synthesized.prebind.permissive,
-        prebind_conversation_id: synthesized.prebind.conversation_id,
-        prebind_record_json: JSON.stringify(synthesized.prebind.record),
-      };
-      account = await this.requireAccount();
-      prebind = synthesized.prebind;
-    }
-
-    if (!account) {
-      return mcpToolError({
-        error: "invalid_credential",
-        message:
-          "Authorization bearer required for ams_recv, OR pass a valid magic_link argument (D0030) to authenticate via the magic link's permissive token.",
-      });
-    }
+    // --- D0030 Part 1: auth reorder, mirroring D0029's tool_ams_join shape.
+    // Shared with tool_ams_join / tool_ams_send via resolveAccountWithMagicLink.
+    const resolvedAuth = await this.resolveAccountWithMagicLink(
+      args,
+      prebind,
+      "Authorization bearer required for ams_recv, OR pass a valid magic_link argument (D0030) to authenticate via the magic link's permissive token.",
+    );
+    if ("error" in resolvedAuth) return resolvedAuth.error;
+    const account = resolvedAuth.account;
+    prebind = resolvedAuth.prebind;
 
     // --- D0030 Part 2: self-rehydration ---
     // Ensure the wire is up so wait_ms can actually receive frames.
@@ -1302,6 +1178,86 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
       credential_hash: "",
       created_at: "",
     };
+  }
+
+  // Auth resolution shared by ams_join (D0029), ams_send, and ams_recv (D0030).
+  // Three valid auth paths:
+  //   1. Door 2 (Authorization bearer) — already populated this.props at
+  //      session-init via buildAuthProps.
+  //   2. Door 1 via URL route (D0023) — prebind populated; transient account
+  //      already synthesized at session-init via buildAuthProps.
+  //   3. Door 1 via magic_link argument on /mcp (D0029/D0030) — synthesize on
+  //      first tool call, mutate this.props for the session.
+  //
+  // The reorder: try requireAccount first; if no account AND no prebind AND
+  // args.magic_link is supplied, attempt the synthesis path. Only then fall
+  // through to the no-credential error. The bearer-presented-but-invalid case
+  // is signaled via this.props.bearer_invalid (set by buildAuthProps on the
+  // bare /mcp route, where MCP framing must still apply); we refuse the
+  // synthesis in that case so an invalid bearer is never silently downgraded
+  // to a transient account that would attribute the caller's actions to a
+  // different identity.
+  private async resolveAccountWithMagicLink(
+    args: { magic_link?: string },
+    prebind: ResolvedPrebind | null,
+    noCredentialMessage: string,
+  ): Promise<
+    | { error: AmsToolResult }
+    | { account: AccountRecord; prebind: ResolvedPrebind | null }
+  > {
+    let account = await this.requireAccount();
+    const bearerInvalid =
+      (this.props as AmsProps | undefined)?.bearer_invalid === true;
+
+    if (bearerInvalid && !account) {
+      return {
+        error: mcpToolError({
+          error: "invalid_credential",
+          message:
+            "Authorization bearer was presented but is invalid; refusing to fall back to magic-link synthesis to avoid silent identity downgrade. Retry without the Authorization header to authenticate via magic_link, or supply a valid bearer.",
+        }),
+      };
+    }
+
+    if (!account && !prebind && typeof args.magic_link === "string") {
+      const synthesized = await synthesizeFromMagicLink(
+        this.env,
+        args.magic_link,
+      );
+      if ("error" in synthesized) {
+        return { error: mcpToolError(synthesized.error) };
+      }
+      // Mutate this.props so subsequent calls in this session pass
+      // requireAccount(). Store prebind fields so readPrebindFromProps works
+      // for ensureWire and so a subsequent ams_join({}) (without re-passing
+      // magic_link) in the same session — e.g. after a wire drop where the
+      // consumer uses D0028 resume-by-stream_name semantics — finds a valid
+      // prebind via readPrebindFromProps. Audit M-2 fix.
+      this.props = {
+        ...(this.props ?? {}),
+        account_id: synthesized.account_id,
+        account_namespace: synthesized.namespace,
+        account_is_transient: true,
+        prebind_ns: synthesized.prebind.ns,
+        prebind_alias: synthesized.prebind.alias,
+        prebind_permissive: synthesized.prebind.permissive,
+        prebind_conversation_id: synthesized.prebind.conversation_id,
+        prebind_record_json: JSON.stringify(synthesized.prebind.record),
+      };
+      account = await this.requireAccount();
+      prebind = synthesized.prebind;
+    }
+
+    if (!account) {
+      return {
+        error: mcpToolError({
+          error: "invalid_credential",
+          message: noCredentialMessage,
+        }),
+      };
+    }
+
+    return { account, prebind };
   }
 }
 
