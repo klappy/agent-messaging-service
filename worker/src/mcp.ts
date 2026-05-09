@@ -135,7 +135,7 @@ const STATIC_INSTRUCTIONS = [
   "Wire model (canon-derived):",
   "  • Tokens, not messages: payloads are opaque bytes (D0001). Use ams_send to emit; peer tokens arrive via notifications/ams/token (push) or ams_recv (poll).",
   "  • Streams own themselves: by default a stream does not see its own emissions (D0009). Pass self_subscribe: true at ams_join to opt in.",
-  "  • Two-door auth: door 1 is the magic link (capability to attach a stream). Door 2 is the Bearer in Authorization (persistent account identity). On the magic-link route (POST to a magic-link URL), ams_join / ams_send / ams_recv accept Door 1 alone — the wrapper synthesizes a transient session-scoped account from the magic link's permissive token. On the /mcp endpoint, ams_join also accepts Door 1 when 'magic_link' is supplied as a tool argument (D0029 — the path for ChatGPT-class consumers that configure a stable connector URL and pass magic links as tool arguments). ams_create_conversation always requires Door 2 (mint at POST /v1/accounts) regardless of route.",
+  "  • Two-door auth: door 1 is the magic link (capability to attach a stream). Door 2 is the Bearer in Authorization (persistent account identity). On the magic-link route (POST to a magic-link URL), ams_join / ams_send / ams_recv accept Door 1 alone — the wrapper synthesizes a transient session-scoped account from the magic link's permissive token. On the /mcp endpoint, ams_join, ams_send, and ams_recv accept Door 1 when 'magic_link' is supplied as a tool argument (D0029/D0030 — the path for ChatGPT-class consumers that configure a stable connector URL and pass magic links as tool arguments). The SessionDO self-rehydrates the wire connection when ams_send/ams_recv arrive without one (D0030). ams_create_conversation always requires Door 2 (mint at POST /v1/accounts) regardless of route.",
   "  • Polling fallback: ams_recv is the long-poll degradation path for runtimes that cannot consume the SSE leg of the Streamable HTTP transport. Pass wait_ms to wait for frames.",
   "  • Convention manifest: 'ams.convention.v1' is the application-level namespace inside stream_metadata.capabilities (role / function / posture / scope / attestation). Round-trips opaquely through the wrapper.",
   "",
@@ -145,7 +145,7 @@ const STATIC_INSTRUCTIONS = [
   "  • Conversation conventions: canon/constraints/two-agent-conversation-conventions",
   "  • Bootstrap rationale: canon/decisions/D0023-magic-link-as-mcp-transport-endpoint",
   "",
-  "Call sequence: initialize → (optional) prompts/list, prompts/get, resources/list, resources/read → ams_join → ams_send / ams_recv. On the magic-link route, ams_join accepts zero arguments because the conversation is pre-bound from the URL.",
+  "Call sequence: initialize → (optional) prompts/list, prompts/get, resources/list, resources/read → ams_join → ams_send / ams_recv. On the magic-link route, ams_join accepts zero arguments because the conversation is pre-bound from the URL. Per D0030, ams_join is recommended but not required: ams_send({ magic_link, stream_name, data }) self-rehydrates.",
 ].join("\n");
 
 function readPrebindFromProps(props: AmsProps | undefined): ResolvedPrebind | null {
@@ -257,6 +257,19 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
   // stays in the buffer for the next drain (next tool call, ams_recv, or push).
   private static readonly RIDE_ALONG_BUDGET = 64;
   private waiters: Array<() => void> = [];
+
+  // D0030: left-state suppression. Set when the consumer explicitly leaves the
+  // conversation. Self-rehydration is suppressed; the consumer must call
+  // ams_join again to re-participate. Currently no ams_leave tool exists; the
+  // field is wired for when it does.
+  private hasLeft = false;
+  // D0030: concurrent rehydration coalescing. When multiple send/recv calls
+  // arrive while the wire is down, they share a single in-flight dial promise
+  // so no duplicate wire dials occur.
+  private rehydrationInFlight: Promise<
+    | { joined: JoinedSnapshot }
+    | { error: { error: string; message: string } }
+  > | null = null;
 
   override async init(): Promise<void> {
     const prebind = readPrebindFromProps(this.props);
@@ -503,21 +516,40 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
       "ams_send",
       {
         description:
-          "Emit a token on the bound stream. Fire-and-forget at the wire layer; returns once the wrapper accepts the frame. Token data is opaque — the wrapper does not parse, log, or schema-check.",
+          "Emit a token on the bound stream. Fire-and-forget at the wire layer; returns once the wrapper accepts the frame. Token data is opaque — the wrapper does not parse, log, or schema-check. Accepts optional magic_link per D0030 — required for runtimes without per-session Bearer continuity (e.g. ChatGPT). The SessionDO self-rehydrates the wire when needed.",
         inputSchema: {
           data: z
             .string()
             .describe("Opaque UTF-8 token payload (up to 64 KiB)."),
+          magic_link: z
+            .string()
+            .optional()
+            .describe(
+              "Magic link URL per D0030. Required for runtimes without per-session Bearer continuity. When present and no bearer is provided, the wrapper validates the link and synthesizes a transient account.",
+            ),
+          stream_name: z
+            .string()
+            .optional()
+            .describe(
+              "Stream name for self-rehydration when no prior ams_join established the wire (D0030). Falls back to the prior join's stream name when available.",
+            ),
         },
       },
-      this.withRideAlong(async (args) => this.tool_ams_send(args)),
+      // Read prebind fresh from props on every call (same pattern as ams_join)
+      // so the D0030 magic-link synthesis path's props mutation is visible.
+      this.withRideAlong(async (args) =>
+        this.tool_ams_send(
+          args,
+          readPrebindFromProps(this.props as AmsProps | undefined),
+        ),
+      ),
     );
 
     this.server.registerTool(
       "ams_recv",
       {
         description:
-          "Long-poll degradation path: drain buffered peer frames since the last ams_recv. Runtimes that take MCP notifications via the SSE leg (GET /mcp) do not need this. Returns immediately if the buffer is empty unless wait_ms is provided.",
+          "Long-poll degradation path: drain buffered peer frames since the last ams_recv. Runtimes that take MCP notifications via the SSE leg (GET /mcp) do not need this. Returns immediately if the buffer is empty unless wait_ms is provided. Accepts optional magic_link per D0030 — required for runtimes without per-session Bearer continuity (e.g. ChatGPT). The SessionDO self-rehydrates the wire when needed.",
         inputSchema: {
           wait_ms: z
             .number()
@@ -528,9 +560,27 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
             .describe(
               "If buffer empty, wait up to this many ms for a frame. Default 0.",
             ),
+          magic_link: z
+            .string()
+            .optional()
+            .describe(
+              "Magic link URL per D0030. Required for runtimes without per-session Bearer continuity. When present and no bearer is provided, the wrapper validates the link and synthesizes a transient account.",
+            ),
+          stream_name: z
+            .string()
+            .optional()
+            .describe(
+              "Stream name for self-rehydration when no prior ams_join established the wire (D0030). Falls back to the prior join's stream name when available.",
+            ),
         },
       },
-      async (args) => this.tool_ams_recv(args),
+      // ams_recv is NOT wrapped with withRideAlong — it owns the buffer
+      // explicitly; double-drain would lose frames. D0030 does not change this.
+      async (args) =>
+        this.tool_ams_recv(
+          args,
+          readPrebindFromProps(this.props as AmsProps | undefined),
+        ),
     );
   }
 
@@ -729,6 +779,10 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
     });
     if ("error" in dial) return mcpToolError(dial.error);
 
+    // D0030: explicit join clears the left state so self-rehydration works
+    // again for subsequent ams_send / ams_recv calls.
+    this.hasLeft = false;
+
     return mcpToolOk({
       ok: true,
       conversation_id: dial.joined.conversation_id,
@@ -746,22 +800,83 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
 
   // --- tool: ams_send ------------------------------------------------------
 
-  private async tool_ams_send(args: {
-    data: string;
-  }): Promise<AmsToolResult> {
-    const account = await this.requireAccount();
-    if (!account)
+  private async tool_ams_send(
+    args: {
+      data: string;
+      magic_link?: string;
+      stream_name?: string;
+    },
+    prebind: ResolvedPrebind | null,
+  ): Promise<AmsToolResult> {
+    // --- D0030 Part 1: auth reorder, mirroring D0029's tool_ams_join shape ---
+    let account = await this.requireAccount();
+    const bearerInvalid =
+      (this.props as AmsProps | undefined)?.bearer_invalid === true;
+
+    if (bearerInvalid && !account) {
       return mcpToolError({
         error: "invalid_credential",
-        message: "Authorization bearer required for ams_send.",
+        message:
+          "Authorization bearer was presented but is invalid; refusing to fall back to magic-link synthesis to avoid silent identity downgrade. Retry without the Authorization header to authenticate via magic_link, or supply a valid bearer.",
       });
-    if (!this.wireWs)
+    }
+
+    if (!account && !prebind && typeof args.magic_link === "string") {
+      const synthesized = await synthesizeFromMagicLink(
+        this.env,
+        args.magic_link,
+      );
+      if ("error" in synthesized) {
+        return mcpToolError(synthesized.error);
+      }
+      // Mutate this.props so subsequent calls in this session pass
+      // requireAccount(). Store prebind fields so readPrebindFromProps works
+      // for ensureWire. Same shape as D0029's synthesis in tool_ams_join.
+      this.props = {
+        ...(this.props ?? {}),
+        account_id: synthesized.account_id,
+        account_namespace: synthesized.namespace,
+        account_is_transient: true,
+        prebind_ns: synthesized.prebind.ns,
+        prebind_alias: synthesized.prebind.alias,
+        prebind_permissive: synthesized.prebind.permissive,
+        prebind_conversation_id: synthesized.prebind.conversation_id,
+        prebind_record_json: JSON.stringify(synthesized.prebind.record),
+      };
+      account = await this.requireAccount();
+      prebind = synthesized.prebind;
+    }
+
+    if (!account) {
       return mcpToolError({
-        error: "not_joined",
-        message: "Call ams_join before ams_send.",
+        error: "invalid_credential",
+        message:
+          "Authorization bearer required for ams_send, OR pass a valid magic_link argument (D0030) to authenticate via the magic link's permissive token.",
       });
+    }
+
+    // --- D0030 Part 2: self-rehydration ---
+    if (!this.wireWs || !this.joined) {
+      const wirePrebind =
+        prebind ??
+        readPrebindFromProps(this.props as AmsProps | undefined);
+      if (!wirePrebind) {
+        return mcpToolError({
+          error: "not_joined",
+          message:
+            "Call ams_join before ams_send, or supply magic_link for self-rehydration (D0030).",
+        });
+      }
+      const wire = await this.ensureWire({
+        account_id: account.account_id,
+        prebind: wirePrebind,
+        stream_name: args.stream_name,
+      });
+      if ("error" in wire) return mcpToolError(wire.error);
+    }
+
     try {
-      this.wireWs.send(JSON.stringify({ type: "token", data: args.data }));
+      this.wireWs!.send(JSON.stringify({ type: "token", data: args.data }));
     } catch (err) {
       return mcpToolError({
         error: "wire_send_failed",
@@ -773,15 +888,78 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
 
   // --- tool: ams_recv ------------------------------------------------------
 
-  private async tool_ams_recv(args: {
-    wait_ms?: number;
-  }): Promise<AmsToolResult> {
-    const account = await this.requireAccount();
-    if (!account)
+  private async tool_ams_recv(
+    args: {
+      wait_ms?: number;
+      magic_link?: string;
+      stream_name?: string;
+    },
+    prebind: ResolvedPrebind | null,
+  ): Promise<AmsToolResult> {
+    // --- D0030 Part 1: auth reorder, mirroring D0029's tool_ams_join shape ---
+    let account = await this.requireAccount();
+    const bearerInvalid =
+      (this.props as AmsProps | undefined)?.bearer_invalid === true;
+
+    if (bearerInvalid && !account) {
       return mcpToolError({
         error: "invalid_credential",
-        message: "Authorization bearer required for ams_recv.",
+        message:
+          "Authorization bearer was presented but is invalid; refusing to fall back to magic-link synthesis to avoid silent identity downgrade. Retry without the Authorization header to authenticate via magic_link, or supply a valid bearer.",
       });
+    }
+
+    if (!account && !prebind && typeof args.magic_link === "string") {
+      const synthesized = await synthesizeFromMagicLink(
+        this.env,
+        args.magic_link,
+      );
+      if ("error" in synthesized) {
+        return mcpToolError(synthesized.error);
+      }
+      // Same props mutation as tool_ams_send / tool_ams_join (D0029/D0030).
+      this.props = {
+        ...(this.props ?? {}),
+        account_id: synthesized.account_id,
+        account_namespace: synthesized.namespace,
+        account_is_transient: true,
+        prebind_ns: synthesized.prebind.ns,
+        prebind_alias: synthesized.prebind.alias,
+        prebind_permissive: synthesized.prebind.permissive,
+        prebind_conversation_id: synthesized.prebind.conversation_id,
+        prebind_record_json: JSON.stringify(synthesized.prebind.record),
+      };
+      account = await this.requireAccount();
+      prebind = synthesized.prebind;
+    }
+
+    if (!account) {
+      return mcpToolError({
+        error: "invalid_credential",
+        message:
+          "Authorization bearer required for ams_recv, OR pass a valid magic_link argument (D0030) to authenticate via the magic link's permissive token.",
+      });
+    }
+
+    // --- D0030 Part 2: self-rehydration ---
+    // Ensure the wire is up so wait_ms can actually receive frames.
+    if (!this.wireWs || !this.joined) {
+      const wirePrebind =
+        prebind ??
+        readPrebindFromProps(this.props as AmsProps | undefined);
+      if (wirePrebind) {
+        const wire = await this.ensureWire({
+          account_id: account.account_id,
+          prebind: wirePrebind,
+          stream_name: args.stream_name,
+        });
+        if ("error" in wire) return mcpToolError(wire.error);
+      }
+      // If no prebind and no wire, drain the buffer (will be empty on a
+      // fresh DO). Not an error — the consumer may be probing.
+    }
+
+    // --- Existing recv logic ---
     let wait = 0;
     if (typeof args.wait_ms === "number" && Number.isFinite(args.wait_ms)) {
       wait = Math.max(0, Math.min(25000, Math.floor(args.wait_ms)));
@@ -1034,6 +1212,81 @@ export class AmsMcpAgent extends McpAgent<Env, AmsState, AmsProps> {
       if (drainedTruncated) this.recvTruncated = false;
       return result;
     };
+  }
+
+  // --- D0030 Part 2: wire self-rehydration ---------------------------------
+  //
+  // When an authenticated ams_send / ams_recv arrives at a SessionDO that has
+  // identity but no active wire (joined === null or wireWs closed), the DO
+  // transparently re-dials before serving the call. Re-bind uses D0028's
+  // deterministic stream_id derivation (via the Conversation DO's
+  // deriveStreamId) so the Conversation DO sees one subscriber across the
+  // disconnect. Concurrent calls coalesce on a single in-flight promise.
+  // Left-state suppresses rehydration.
+
+  private async ensureWire(opts: {
+    account_id: string;
+    prebind: ResolvedPrebind;
+    stream_name?: string;
+  }): Promise<
+    | { joined: JoinedSnapshot }
+    | { error: { error: string; message: string } }
+  > {
+    // Left-state suppression (D0030 §SessionDO Self-Rehydration Contract).
+    if (this.hasLeft) {
+      return {
+        error: {
+          error: "left",
+          message:
+            "This session has left the conversation. Call ams_join to re-participate.",
+        },
+      };
+    }
+
+    // Already connected — no rehydration needed.
+    if (this.wireWs && this.joined) return { joined: this.joined };
+
+    // Concurrent rehydration coalescing (D0030 Part 2): multiple send/recv
+    // calls that arrive while a dial is in flight share one promise. No
+    // duplicate wire dials; no partial-success states surfaced as success.
+    if (this.rehydrationInFlight) return this.rehydrationInFlight;
+
+    // Track whether this is a reconnect (buffer gap) or a first connect.
+    const hadPriorJoin = this.joined !== null;
+
+    // Prefer the prior join's stream_name for stable subscriber identity
+    // across reconnects. Fall back to the caller's stream_name, then to
+    // undefined (dialWire will generate a random one).
+    const effectiveStreamName =
+      this.joined?.stream_name ?? opts.stream_name;
+
+    const promise = this.dialWire({
+      account_id: opts.account_id,
+      conversation_id: opts.prebind.conversation_id,
+      namespace: opts.prebind.record.namespace,
+      alias: opts.prebind.alias,
+      conversation_metadata: opts.prebind.record.metadata,
+      stream_name: effectiveStreamName,
+      self_subscribe: this.joined?.self_subscribe ?? false,
+      ...(this.joined?.peer_identity
+        ? { peer_identity: this.joined.peer_identity }
+        : {}),
+    });
+
+    this.rehydrationInFlight = promise;
+    try {
+      const result = await promise;
+      // Buffer gap detection: if the wire was previously connected and we
+      // re-dialed, frames may have been lost while the wire was down. Set
+      // recvTruncated so the next drain surfaces notifications/ams/truncated
+      // per D0030 and mcp-wrapper-conformance-for-conversational-ai.
+      if (!("error" in result) && hadPriorJoin) {
+        this.recvTruncated = true;
+      }
+      return result;
+    } finally {
+      this.rehydrationInFlight = null;
+    }
   }
 
   // --- auth helper ---------------------------------------------------------
