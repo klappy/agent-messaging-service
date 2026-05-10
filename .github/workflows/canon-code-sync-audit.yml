@@ -4,8 +4,8 @@ name: Canon-Code Sync Audit (Managed Agent)
 # This workflow is a TRIGGER and a comment-poster, not a gate. The agent's
 # verdict is the gate. Architecture per:
 #
-#   klappy://canon/constraints/audit-gates-are-managed-agents (Tier-1, klappy.dev)
-#   ams://canon/constraints/canon-code-sync-via-managed-agent (AMS adoption)
+#   klappy://canon/constraints/audit-gates-are-spawned-agent-sessions (Tier-1, klappy.dev)
+#   ams://canon/constraints/canon-code-sync-via-spawned-agent-session (AMS adoption)
 #
 # Required repo secret:
 #   ANTHROPIC_API_KEY — for the Managed Agents API
