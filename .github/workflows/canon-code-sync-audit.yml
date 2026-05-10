@@ -5,7 +5,7 @@ name: Canon-Code Sync Audit (Managed Agent)
 # verdict is the gate. Architecture per:
 #
 #   klappy://canon/constraints/audit-gates-are-managed-agents (Tier-1, klappy.dev)
-#   ams://canon/constraints/canon-code-sync-via-managed-agent (AMS adoption)
+#   ams://canon/constraints/canon-code-sync-via-spawned-agent-session (AMS adoption)
 #
 # Required repo secret:
 #   ANTHROPIC_API_KEY — for the Managed Agents API

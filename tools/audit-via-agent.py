@@ -4,7 +4,7 @@ audit-via-agent.py — Dispatch a Managed Agent for the AMS canon-code-sync audi
 
 Conformance:
   klappy://canon/constraints/audit-gates-are-managed-agents   (Tier-1, klappy.dev)
-  ams://canon/constraints/canon-code-sync-via-managed-agent   (AMS adoption)
+  ams://canon/constraints/canon-code-sync-via-spawned-agent-session   (AMS adoption)
 
 Inputs (env):
   ANTHROPIC_API_KEY  — required, for the Managed Agents API
@@ -104,7 +104,7 @@ merge gate for governance audits in this repo is a Managed Agent — that is
 you — per:
 
   klappy://canon/constraints/audit-gates-are-managed-agents (your charter)
-  ams://canon/constraints/canon-code-sync-via-managed-agent (project adoption)
+  ams://canon/constraints/canon-code-sync-via-spawned-agent-session (project adoption)
 
 Your charter forbids the alternative architecture (a hand-rolled regex script
 as the merge gate). You replace that script. You exercise LLM-grade judgment
