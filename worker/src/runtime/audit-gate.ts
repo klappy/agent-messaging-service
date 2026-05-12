@@ -19,7 +19,10 @@
 // eventually dies — session_type=one_shot per
 // klappy://canon/methods/spawned-agent-session-runtime-contract §Composition Rules.
 
+import { DurableObject } from "cloudflare:workers";
+
 import type { Env } from "../types";
+import { base64ToUtf8, utf8ToBase64 } from "../util";
 
 // --- Persona-profile schema ----------------------------------------------
 // Per klappy://canon/methods/persona-shaped-agent-runtime §The Persona Profile.
@@ -88,14 +91,12 @@ const SYSTEM_PROMPT_RAW_URL =
 
 // --- The DO --------------------------------------------------------------
 
-export class AuditGateDO {
-  private env: Env;
-
-  constructor(_state: DurableObjectState, env: Env) {
-    this.env = env;
+export class AuditGateDO extends DurableObject<Env> {
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
   }
 
-  async fetch(req: Request): Promise<Response> {
+  override async fetch(req: Request): Promise<Response> {
     if (req.method !== "POST") {
       return errorResponse(405, "method_not_allowed", "audit-gate DO accepts POST only");
     }
@@ -343,15 +344,6 @@ function isValidVerdict(v: unknown): v is AuditVerdict {
     typeof x.summary === "string" &&
     typeof x.comment_body_b64 === "string"
   );
-}
-
-function utf8ToBase64(s: string): string {
-  // Workers global. Equivalent to: Buffer.from(s, "utf-8").toString("base64").
-  return btoa(unescape(encodeURIComponent(s)));
-}
-
-function base64ToUtf8(b64: string): string {
-  return decodeURIComponent(escape(atob(b64)));
 }
 
 // --- Persona-profile parser --------------------------------------------
