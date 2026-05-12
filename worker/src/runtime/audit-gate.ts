@@ -33,7 +33,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { parse as parseYaml } from "yaml";
 import type { Env } from "../types";
-import { base64ToUtf8, errorResponse, utf8ToBase64 } from "../util";
+import { base64ToUtf8, errorResponse } from "../util";
 
 // --- Persona-profile schema ----------------------------------------------
 // Per klappy://canon/methods/persona-shaped-agent-runtime §The Persona Profile.
@@ -343,57 +343,127 @@ export class AuditGateDO extends DurableObject<Env> {
   // --- Responsibility 5: Run one-shot session ---------------------------
   // Responsibility 4 (agent engagement): no clarifying questions, fail closed.
   //
-  // PHASE 2 STUB. Phase 3 replaces this with the real Anthropic Messages API
-  // call carrying:
-  //   - system: ctx.systemPrompt
-  //   - messages: the audit task (PR coordinates + the diff against main)
-  //   - mcp_servers: profile.mcp_servers.operational → [{name: "oddkit",
-  //     url: ODDKIT_MCP_URL}] (the AGENT's MCP wiring, separate from the
-  //     RUNTIME's oddkit client used above for profile resolution)
-  //   - tools: GitHub read-only tools per task_relevant config (added by
-  //     the dispatcher/route layer, not by the persona — see migration
-  //     plan §A trigger wiring)
-  // The response is streamed; the final fenced JSON block is the verdict.
+  // Phase 3: real Anthropic Messages API call. The persona profile declares
+  // mcp_servers.operational: [oddkit]; we wire it via the Anthropic native
+  // MCP connector (anthropic-beta: mcp-client-2025-11-20). The agent session
+  // gets oddkit as a tool surface; the runtime's separate oddkit client
+  // (used above for profile resolution) is decoupled from the agent's.
+  //
+  // GitHub diff is fetched by the runtime and passed inline in the user
+  // message — for the PoC, no agent-side GitHub MCP. Phase 4+ may move
+  // GitHub access to an agent tool.
 
   private async runAuditSession(ctx: {
     invocation: AuditInvocation;
     profile: PersonaProfile;
     systemPrompt: string;
   }): Promise<string> {
-    // Synthetic response that exercises the post-processing code path. The
-    // shape is the real output contract so parseAndValidateVerdict() runs
-    // unchanged when Phase 3 swaps in real inference.
-    const stubVerdict: AuditVerdict = {
-      verdict: "PASS",
-      summary: `Phase 2 substrate stub — persona '${ctx.profile.persona}' v${ctx.profile.version} resolved via oddkit_get, prompt assembled (${ctx.systemPrompt.length} chars), no inference yet. PR ${ctx.invocation.pr_owner}/${ctx.invocation.pr_repo}#${ctx.invocation.pr_number} at ${ctx.invocation.head_sha.slice(0, 8)}.`,
-      comment_body_b64: utf8ToBase64(
-        [
-          `## Canon-Code Sync Audit — Substrate Scaffold (Phase 2 Stub)`,
-          ``,
-          `**Verdict:** PASS *(stub — agent inference deferred to Phase 3)*`,
-          ``,
-          `**Persona:** \`${ctx.profile.persona}\` v${ctx.profile.version}`,
-          `**Role:** ${ctx.profile.role}`,
-          `**System prompt URI:** \`${ctx.profile.system_prompt_uri}\``,
-          `**System prompt length:** ${ctx.systemPrompt.length} chars`,
-          ``,
-          `**PR:** ${ctx.invocation.pr_owner}/${ctx.invocation.pr_repo} #${ctx.invocation.pr_number}`,
-          `**Head SHA:** \`${ctx.invocation.head_sha}\``,
-          ``,
-          `---`,
-          ``,
-          `This response exercises the substrate path: oddkit MCP client ` +
-            `connection, persona resolution via \`oddkit_get\` against ` +
-            `\`${PERSONA_URI}\`, system-prompt assembly via \`oddkit_get\` ` +
-            `against the system_prompt_uri, role enforcement, output-contract ` +
-            `validation, one-shot DO lifecycle, content-hash-keyed parse ` +
-            `caching per \`klappy://canon/principles/cache-fetches-and-parses\`. ` +
-            `Real Anthropic + agent-side oddkit MCP inference lands in Phase 3.`,
-        ].join("\n"),
-      ),
+    if (!this.env.ANTHROPIC_API_KEY) {
+      throw new Error("anthropic_api_key_not_configured");
+    }
+
+    // Fetch the PR diff. Public repos don't need auth; for private repos
+    // a GITHUB_TOKEN env would be threaded here. PoC uses public.
+    const diffUrl = `https://github.com/${ctx.invocation.pr_owner}/${ctx.invocation.pr_repo}/pull/${ctx.invocation.pr_number}.diff`;
+    const diffRes = await fetch(diffUrl, {
+      headers: { accept: "text/plain" },
+      redirect: "follow",
+    });
+    if (!diffRes.ok) {
+      throw new Error(`diff_fetch_failed: ${diffRes.status} ${diffRes.statusText} for ${diffUrl}`);
+    }
+    const diff = await diffRes.text();
+    // Cap diff size to keep the token bill bounded on huge PRs. Phase 4+
+    // could chunk + iterate; for the PoC, truncate with a marker.
+    const MAX_DIFF_CHARS = 60000;
+    const truncatedDiff =
+      diff.length > MAX_DIFF_CHARS
+        ? diff.slice(0, MAX_DIFF_CHARS) + `\n\n[... diff truncated at ${MAX_DIFF_CHARS} chars; full diff is ${diff.length} chars ...]`
+        : diff;
+
+    // Compose the agent's user message: PR coordinates + the diff + an
+    // explicit reminder of the output contract.
+    const userMessage = [
+      `Audit the following pull request for canon-code drift per the AMS canon-code-sync constraint loaded as your system prompt.`,
+      ``,
+      `PR coordinates:`,
+      `  owner:  ${ctx.invocation.pr_owner}`,
+      `  repo:   ${ctx.invocation.pr_repo}`,
+      `  number: ${ctx.invocation.pr_number}`,
+      `  head_sha: ${ctx.invocation.head_sha}`,
+      ``,
+      `You have the oddkit MCP server available. Use oddkit_get and oddkit_search to resolve any \`ams://\` or \`klappy://\` URIs you need to ground your analysis. Pass knowledge_base_url=https://github.com/${ctx.invocation.pr_owner}/${ctx.invocation.pr_repo} when resolving ams:// URIs.`,
+      ``,
+      `Output contract: your final emission MUST be a single fenced JSON block matching:`,
+      "```json",
+      `{"verdict": "PASS" | "FAIL", "summary": "<one-line summary>", "comment_body_b64": "<base64-encoded UTF-8 markdown comment body>"}`,
+      "```",
+      ``,
+      `--- BEGIN DIFF ---`,
+      truncatedDiff,
+      `--- END DIFF ---`,
+    ].join("\n");
+
+    // Resolve the operational MCP servers from the persona profile.
+    // Currently the profile names "oddkit" by short name; map to the URL
+    // canonically. Phase 4+ may move the URL into the profile itself or
+    // resolve via an MCP registry.
+    const mcpServers = ctx.profile.mcp_servers.operational
+      .filter((name) => name === "oddkit")
+      .map((name) => ({
+        type: "url" as const,
+        url: ODDKIT_MCP_URL,
+        name,
+      }));
+
+    const requestBody = {
+      model: "claude-sonnet-4-6",
+      max_tokens: 8000,
+      system: ctx.systemPrompt,
+      messages: [{ role: "user", content: userMessage }],
+      mcp_servers: mcpServers,
+      tools: mcpServers.map((s) => ({
+        type: "mcp_toolset" as const,
+        mcp_server_name: s.name,
+      })),
     };
-    return "```json\n" + JSON.stringify(stubVerdict, null, 2) + "\n```";
+
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": this.env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "anthropic-beta": "mcp-client-2025-11-20",
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    if (!res.ok) {
+      const errBody = await res.text();
+      throw new Error(`anthropic_api_failed: ${res.status} ${res.statusText} body=${errBody.slice(0, 500)}`);
+    }
+    const respJson = (await res.json()) as {
+      content?: Array<{ type: string; text?: string }>;
+      stop_reason?: string;
+      usage?: Record<string, number>;
+    };
+
+    // Concatenate all text-type content blocks. MCP tool_use / mcp_tool_use
+    // / mcp_tool_result blocks are not included — they're the agent's
+    // intermediate work, not the verdict. The verdict lives in the final
+    // text block per the output contract.
+    const textBlocks = (respJson.content ?? [])
+      .filter((c) => c.type === "text" && typeof c.text === "string")
+      .map((c) => c.text as string);
+
+    if (textBlocks.length === 0) {
+      throw new Error(`anthropic_no_text_content: stop_reason=${respJson.stop_reason ?? "?"}`);
+    }
+
+    return textBlocks.join("\n\n");
   }
+
 
   // --- Responsibility 3: Apply surface post-processing ------------------
 

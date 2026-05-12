@@ -19,6 +19,13 @@ export interface Env {
   // oddkit.klappy.dev and from spawning DO instances keyed by attacker-
   // chosen names. Production-grade auth (allow-list / HMAC) lands in Phase 3.
   AMS_AUDIT_GATE_TEST_SECRET?: string;
+  // Anthropic API key for the audit-gate agent session. Phase 3 of the
+  // audit-gate runtime migration: the AuditGateDO calls the Anthropic
+  // Messages API with the persona's mcp_servers.operational wired in via
+  // the native MCP connector (anthropic-beta: mcp-client-2025-11-20).
+  // Set via `wrangler secret put ANTHROPIC_API_KEY`. If unset, the audit
+  // session fails fast with anthropic_api_key_not_configured.
+  ANTHROPIC_API_KEY?: string;
 }
 
 export interface AccountRecord {

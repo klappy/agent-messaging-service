@@ -84,6 +84,11 @@ new_sqlite_classes = ["AuditGateDO"]
 #                                  if unset the Phase 2 endpoint returns 503
 #                                  so the deploy can't be used as an open
 #                                  amplification proxy to oddkit.klappy.dev)
+#   ANTHROPIC_API_KEY              (Phase 3 — Anthropic API key for the
+#                                  AuditGateDO's agent session. Wired into
+#                                  the persona's mcp_servers.operational set
+#                                  via the native MCP connector beta. If
+#                                  unset the audit session fails fast.)
 
 # Workers Logs — dashboard-toggled, synced here so deploys do not regress the
 # setting. Captures broker-internal request shape (outcome, method, path,
