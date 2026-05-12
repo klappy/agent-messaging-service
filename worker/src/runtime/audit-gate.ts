@@ -370,12 +370,19 @@ function parsePersonaYaml(yaml: string): PersonaProfile {
 function stripComment(line: string): string {
   // Strip trailing # comments. Does not handle # inside quoted strings —
   // sufficient for the persona-profile shape, which has no such cases.
-  const i = line.indexOf("#");
-  if (i === -1) return line.trimEnd();
-  // Allow ams://...# and klappy://...# anchor fragments
-  const before = line.slice(0, i);
-  if (/[a-z]:\/\/[^\s]*$/.test(before)) return line.trimEnd();
-  return before.trimEnd();
+  let searchFrom = 0;
+  while (true) {
+    const i = line.indexOf("#", searchFrom);
+    if (i === -1) return line.trimEnd();
+    // Allow ams://...# and klappy://...# anchor fragments — keep scanning
+    // for a later # that is an actual trailing comment.
+    const before = line.slice(0, i);
+    if (/[a-z]:\/\/[^\s]*$/.test(before)) {
+      searchFrom = i + 1;
+      continue;
+    }
+    return before.trimEnd();
+  }
 }
 
 // Parse a block of YAML at a given indent level. Returns the parsed value and
