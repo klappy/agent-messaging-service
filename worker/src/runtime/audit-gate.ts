@@ -422,6 +422,10 @@ export class AuditGateDO extends DurableObject<Env> {
       system: ctx.systemPrompt,
       messages: [{ role: "user", content: userMessage }],
       mcp_servers: mcpServers,
+      tools: mcpServers.map((s) => ({
+        type: "mcp_toolset" as const,
+        mcp_server_name: s.name,
+      })),
     };
 
     const res = await fetch("https://api.anthropic.com/v1/messages", {
