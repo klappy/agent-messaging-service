@@ -22,7 +22,7 @@
 import { DurableObject } from "cloudflare:workers";
 
 import type { Env } from "../types";
-import { base64ToUtf8, utf8ToBase64 } from "../util";
+import { base64ToUtf8, errorResponse, utf8ToBase64 } from "../util";
 
 // --- Persona-profile schema ----------------------------------------------
 // Per klappy://canon/methods/persona-shaped-agent-runtime §The Persona Profile.
@@ -312,13 +312,6 @@ export class AuditGateDO extends DurableObject<Env> {
 }
 
 // --- Helpers ------------------------------------------------------------
-
-function errorResponse(status: number, code: string, message: string): Response {
-  return new Response(JSON.stringify({ error: code, message }), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-}
 
 function isValidInvocation(v: unknown): v is AuditInvocation {
   if (!v || typeof v !== "object") return false;
