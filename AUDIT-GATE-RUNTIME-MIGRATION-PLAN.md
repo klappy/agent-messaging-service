@@ -77,21 +77,25 @@ Per `klappy://canon/methods/dispatch-paths`, this is the **autonomous-trigger** 
 ### Retirement candidates (kept but unwired)
 
 - `tools/audit-via-agent.py` — kept in the repo as historical artifact + emergency fallback during migration. Marked deprecated in a `STATUS` header.
-- Anthropic Managed Agents API access — kept active until the runtime path has accumulated two weeks of green audits on production PRs. Then the secret is rotated and the Managed Agents subscription is reviewed.
+- Anthropic Managed Agents API access — kept active until the runtime path has run side-by-side against 2-3 real PRs with matching verdicts. Then the secret is rotated and the Managed Agents subscription is reviewed.
 
 ## Migration Sequence
 
 Five phases, each producing a merge-ready PR. Each phase is independently revertable.
 
-**Phase 1 — Persona profile authored.** Write `canon/personas/ams-canon-code-auditor.md` referencing the existing canon constraint as the system_prompt_uri. No code changes. PR is canon-only. ~half a day.
+The phases are sized for *operator review attention*, not engineering hours. Agent-runtime tooling does the typing; the bottleneck is operator decisions between phases. Where elapsed time is named, it's external (PR cadence for side-by-side comparison), not work.
 
-**Phase 2 — Runtime DO scaffolded.** Implement `worker/src/runtime/audit-gate.ts` as a Durable Object with the five responsibilities sketched above. Wire it to a local-only test endpoint. No production traffic yet. Includes a wrangler.toml DO binding and durable-object migration. ~2-3 days.
+**Phase 1 — Persona profile authored.** Write `canon/personas/ams-canon-code-auditor.md` referencing the existing canon constraint as the system_prompt_uri. No code changes. PR is canon-only. **One session, ~1 hour.**
 
-**Phase 3 — Side-by-side validation.** Add an HTTP endpoint `/audit-gate-canary` (separate from `/audit-gate`) that runs the new runtime in parallel with the Managed Agents path. Workflow runs both, compares verdicts, posts only the Managed Agents verdict but logs the canary outcome to a structured table. Run for two weeks across all PRs. ~1 day to wire, two weeks elapsed time.
+**Phase 2 — Runtime DO scaffolded.** Implement `worker/src/runtime/audit-gate.ts` as a Durable Object with the five responsibilities sketched above. Wire it to a local-only test endpoint. No production traffic yet. Includes a wrangler.toml DO binding and durable-object migration. `worker/src/mcp.ts` is the existing pattern to crib from. **One session, ~2-3 hours.**
 
-**Phase 4 — Cutover.** Workflow swaps the dispatch path: `/audit-gate` becomes the runtime endpoint, the Python dispatcher is unwired (but kept). Managed Agents secret stays warm for one more week. ~half a day.
+**Phase 3 — Side-by-side validation.** Add an HTTP endpoint `/audit-gate-canary` (separate from `/audit-gate`) that runs the new runtime in parallel with the Managed Agents path. Workflow runs both, compares verdicts, posts only the Managed Agents verdict but logs the canary outcome. **Wiring: ~1 hour. Validation: 2-3 real PRs through the gate** — operator-paced, not calendar-paced. Could be same day if PRs are queued, could be a few days if PR cadence is slow.
 
-**Phase 5 — Cleanup.** After one week of green runtime audits post-cutover: deprecate `tools/audit-via-agent.py` with a STATUS header, retire the Managed Agents secret, retire the cloud environment. ~half a day. Total elapsed time: ~3-4 weeks; total engineering effort: ~5 days.
+**Phase 4 — Cutover.** Workflow swaps the dispatch path: `/audit-gate` becomes the runtime endpoint, the Python dispatcher is unwired (but kept). **Minutes.**
+
+**Phase 5 — Cleanup.** After one or two clean post-cutover audits: deprecate `tools/audit-via-agent.py` with a STATUS header, retire the Managed Agents secret. **Minutes.**
+
+**Total realistic time**: an afternoon of operator-reviewed agent-runtime sessions for the code (Phases 1, 2, 4, 5), plus however long it takes 2-3 real PRs to come through the gate for Phase 3. The "weeks" framing earlier in this plan's draft history was a human-team artifact and was wrong-shaped.
 
 ## What This Plan Exercises
 
