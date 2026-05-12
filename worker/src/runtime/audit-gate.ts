@@ -28,6 +28,7 @@
 // klappy://canon/methods/spawned-agent-session-runtime-contract §Composition
 // Rules.
 
+import { DurableObject } from "cloudflare:workers";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { parse as parseYaml } from "yaml";
@@ -109,20 +110,17 @@ interface CachedParsedProfile {
 
 // --- The DO --------------------------------------------------------------
 
-export class AuditGateDO {
-  private env: Env;
-  private state: DurableObjectState;
+export class AuditGateDO extends DurableObject<Env> {
   // Lazy oddkit MCP client; reused across calls within a single fetch().
   // Each DO invocation builds its own client; the DO hibernates between
   // invocations so there's no cross-request client reuse anyway.
   private oddkit: Client | null = null;
 
-  constructor(state: DurableObjectState, env: Env) {
-    this.env = env;
-    this.state = state;
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
   }
 
-  async fetch(req: Request): Promise<Response> {
+  override async fetch(req: Request): Promise<Response> {
     if (req.method !== "POST") {
       return errorResponse(405, "method_not_allowed", "audit-gate DO accepts POST only");
     }
@@ -268,7 +266,7 @@ export class AuditGateDO {
     });
 
     // Step 2: check parsed-profile cache
-    const cached = await this.state.storage.get<CachedParsedProfile>(
+    const cached = await this.ctx.storage.get<CachedParsedProfile>(
       `parsed-profile:${PERSONA_URI}`,
     );
     if (cached && cached.content_hash === doc.content_hash) {
@@ -287,7 +285,7 @@ export class AuditGateDO {
     }
 
     // Step 5: cache the parsed result keyed by content_hash
-    await this.state.storage.put<CachedParsedProfile>(
+    await this.ctx.storage.put<CachedParsedProfile>(
       `parsed-profile:${PERSONA_URI}`,
       {
         content_hash: doc.content_hash,
