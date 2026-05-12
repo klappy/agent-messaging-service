@@ -417,7 +417,7 @@ export class AuditGateDO extends DurableObject<Env> {
       }));
 
     const requestBody = {
-      model: "claude-sonnet-4-5",
+      model: "claude-sonnet-4-6",
       max_tokens: 8000,
       system: ctx.systemPrompt,
       messages: [{ role: "user", content: userMessage }],
