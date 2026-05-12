@@ -32,6 +32,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { parse as parseYaml } from "yaml";
 import type { Env } from "../types";
+import { base64ToUtf8, errorResponse, utf8ToBase64 } from "../util";
 
 // --- Persona-profile schema ----------------------------------------------
 // Per klappy://canon/methods/persona-shaped-agent-runtime §The Persona Profile.
@@ -99,14 +100,6 @@ const ODDKIT_MCP_URL = "https://oddkit.klappy.dev/mcp";
 // means the canon doc changed and the parse must be redone; same hash means
 // reuse. The DO storage hosts the cache; eviction is implicit (each DO
 // instance is keyed per head_sha and dies after one-shot).
-
-interface CachedDoc {
-  uri: string;
-  knowledge_base_url?: string;
-  content_hash: string;
-  content: string;
-  fetched_at: string; // ISO 8601
-}
 
 interface CachedParsedProfile {
   content_hash: string;
@@ -453,13 +446,6 @@ export class AuditGateDO {
 
 // --- Helpers ------------------------------------------------------------
 
-function errorResponse(status: number, code: string, message: string): Response {
-  return new Response(JSON.stringify({ error: code, message }), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-}
-
 function isValidInvocation(v: unknown): v is AuditInvocation {
   if (!v || typeof v !== "object") return false;
   const i = v as Record<string, unknown>;
@@ -484,14 +470,6 @@ function isValidVerdict(v: unknown): v is AuditVerdict {
     typeof x.summary === "string" &&
     typeof x.comment_body_b64 === "string"
   );
-}
-
-function utf8ToBase64(s: string): string {
-  return btoa(unescape(encodeURIComponent(s)));
-}
-
-function base64ToUtf8(b64: string): string {
-  return decodeURIComponent(escape(atob(b64)));
 }
 
 // --- Persona-profile extraction from markdown ---------------------------

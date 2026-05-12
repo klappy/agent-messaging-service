@@ -11,16 +11,12 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250501.0",
     "typescript": "^5.5.0",
-    "wrangler": "^3.80.0"
+    "wrangler": "^4.90.1"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "agents": "^0.12.3",
     "yaml": "^2.9.0",
     "zod": "^4.4.3"
-  },
-  "main": "test-yaml-parser.js",
-  "keywords": [],
-  "author": "",
-  "license": "ISC"
+  }
 }
