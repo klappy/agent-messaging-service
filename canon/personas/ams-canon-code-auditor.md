@@ -61,7 +61,7 @@ The schema follows `klappy://canon/methods/persona-shaped-agent-runtime` §The P
 
 The session reads canon and code; it does not edit them. Findings hand off to a human reviewer or to a separate resolver session, never to a same-session fix.
 
-**`mcp_servers.operational: [oddkit]`** is non-negotiable. The AMS constraint explicitly requires the session to fetch canon at runtime via `oddkit_get` rather than reading hardcoded copies. Without oddkit always-on, the session degrades to scanning stale snapshots and the gate becomes the script-shaped anti-pattern it exists to forbid. Per `klappy://canon/methods/persona-shaped-agent-runtime` §Operational vs task-relevant MCP servers, the runtime MUST NOT strip oddkit as "unrelated to the task."
+**`mcp_servers.operational: [oddkit]`** is non-negotiable. The AMS constraint explicitly requires the session to fetch canon at runtime via `oddkit_get` rather than reading hardcoded copies. Without oddkit always-on, the session degrades to scanning stale snapshots and the gate becomes the script-shaped anti-pattern it exists to forbid. Per `klappy://canon/methods/persona-shaped-agent-runtime` §The Persona Profile (the `mcp_servers.operational` / `mcp_servers.task_relevant` table), the runtime MUST NOT strip oddkit as "unrelated to the task."
 
 **`mcp_servers.task_relevant: []`** declares no task-relevant MCPs at the persona level. The dispatcher (`tools/audit-via-agent.py`) may add GitHub access per invocation — the PR diff, branch contents — but those bindings are dispatch-time, not persona-level. The persona's operational identity does not include GitHub.
 
@@ -101,7 +101,7 @@ The runtime contract pins four of five session dimensions for any sensible invoc
 
 Three alternative profile shapes were considered and rejected during drafting:
 
-- **`mcp_servers.operational: [oddkit, github]`** — adding GitHub at the persona level. Rejected because GitHub access is task-relevant (per-PR diff, branch contents) rather than operational (always-on for self-hygiene). Per `klappy://canon/methods/persona-shaped-agent-runtime` §Operational vs task-relevant MCP servers, the split exists precisely to keep operational identity stable across invocations. The dispatcher adds GitHub per task.
+- **`mcp_servers.operational: [oddkit, github]`** — adding GitHub at the persona level. Rejected because GitHub access is task-relevant (per-PR diff, branch contents) rather than operational (always-on for self-hygiene). Per `klappy://canon/methods/persona-shaped-agent-runtime` §The Persona Profile (the `mcp_servers.operational` / `mcp_servers.task_relevant` table), the split exists precisely to keep operational identity stable across invocations. The dispatcher adds GitHub per task.
 - **`knowledge_bases: [ams://]`** only — single-knowledge-base scope. Rejected because the AMS constraint's "Cross-canon coherence" drift surface (item 3 in §The Drift Surfaces in AMS) requires reading the upstream `klappy://` principles those AMS surfaces derive from. A single-KB profile would fail that surface.
 - **`brand_discipline: klappy://canon/voice/neutral-validator`** — declaring an explicit neutral-voice pointer. Rejected because no such canon doc exists and inventing one is the pattern-coinage anti-pattern the canon-tier-2 challenge type guards against. `null` reads as "absence of voice canon" cleanly; if a future audit-gate variant earns its own voice, that profile sets `brand_discipline` to a URI that exists.
 
