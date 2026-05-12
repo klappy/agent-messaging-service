@@ -52,11 +52,27 @@ The session's task scope and reporting shape are specified in the dispatcher's s
 
 This section records AMS's current substrate choice and dispatcher configuration. It is **not** governance; it is an operating note. Substrate switches do not require canon edits to this constraint — only updates to this section.
 
+The audit gate is in transition between two substrates as of 2026-05-12. Both currently run; the workflow dispatches the Managed Agents path, and the runtime path is callable as a side-by-side probe via `/audit-gate-test` on `ams.klappy.dev`. The transition is staged per `AUDIT-GATE-RUNTIME-MIGRATION-PLAN.md`; this section will collapse to the runtime path once parity is observed across 2–3 real PRs.
+
+### Production gate (currently dispatched by the workflow)
+
 - **Substrate**: Anthropic Managed Agents (public beta, `managed-agents-2026-04-01` beta header).
 - **Model**: `claude-sonnet-4-6` for the audit task (review-shaped per `klappy://canon/methods/governance-validation-via-agents`).
 - **Toolset**: `agent_toolset_20260401` (bash, file ops, web fetch).
 - **MCP**: oddkit at `https://oddkit.klappy.dev/mcp` with `permission_policy.always_allow` for canon read access.
 - **Environment**: reusable cloud environment per the managed-agents skill.
+- **Dispatcher**: `tools/audit-via-agent.py`.
+
+### Runtime gate under side-by-side test (Phase 3 of the migration plan)
+
+- **Substrate**: Cloudflare Durable Object (`AuditGateDO` in `worker/src/runtime/audit-gate.ts`) calling the Anthropic Messages API at `https://api.anthropic.com/v1/messages` directly.
+- **Beta header**: `anthropic-beta: mcp-client-2025-11-20` (native MCP connector; previous version `mcp-client-2025-04-04` is deprecated).
+- **Model**: `claude-sonnet-4-6` for the audit task (matches the production gate's model; the substrate is what's changing, not the model).
+- **Toolset**: tools surface comes through the native MCP connector — `mcp_servers` and `tools: [{type: mcp_toolset, mcp_server_name: oddkit}]` together expose oddkit's tools to the agent. No separate substrate toolset.
+- **MCP**: oddkit at `https://oddkit.klappy.dev/mcp` wired via the persona's `mcp_servers.operational: [oddkit]` declaration. The runtime resolves the short name `oddkit` to the URL through a substrate-side allow-list.
+- **Persona profile**: `ams://canon/personas/ams-canon-code-auditor`. Resolved at runtime via `oddkit_get` per `klappy://canon/principles/cache-fetches-and-parses` (content-hash-keyed cache in DO storage).
+- **Environment**: one DO instance per audit invocation, keyed by PR `head_sha` for the fresh-context guarantee per `klappy://canon/methods/spawned-agent-session-runtime-contract` §Composition Rules (`session_type=one_shot`). DO hibernates after the verdict returns.
+- **Trigger surface**: `POST /audit-gate-test` on `ams.klappy.dev`, guarded by `Authorization: Bearer $AMS_AUDIT_GATE_TEST_SECRET`. The endpoint is the Phase 2/3 PoC surface; the Phase 4 cutover collapses to `/audit-gate` and the workflow swaps dispatchers in one place.
 
 A substrate switch (for example to Cloudflare Sandboxes with a Claude Code or OpenCode harness, motivated by cost shape, multi-vendor portability, or security posture) is a project-level decision recorded in an AMS D-decision. The substrate change updates this section; it does not require amending the upstream Tier-1 constraint or the AMS-side governance.
 
