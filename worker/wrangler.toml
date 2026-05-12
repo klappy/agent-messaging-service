@@ -34,6 +34,18 @@ class_name = "ConversationDO"
 name = "AMS_MCP"
 class_name = "AmsMcpAgent"
 
+# AuditGateDO — Phase 2 of AUDIT-GATE-RUNTIME-MIGRATION-PLAN.md. Hosts one
+# canon-code-sync audit session per PR head_sha; instantiates the persona-
+# shaped-agent-runtime contract for the ams-canon-code-auditor persona. Per
+# klappy://canon/methods/spawned-agent-session-runtime-contract §Composition
+# Rules, this is session_type=one_shot with role=validator and
+# engagement=agent. Fresh-context guarantee is satisfied by route-layer
+# keying — a new head_sha produces a new DO instance with no inherited state.
+# See worker/src/runtime/audit-gate.ts.
+[[durable_objects.bindings]]
+name = "AUDIT_GATE"
+class_name = "AuditGateDO"
+
 # First DO migration on this Worker. Required the first time DO classes are
 # introduced; tag is the migration identifier (Cloudflare records it on the
 # Worker so future migrations can rename / transfer / delete classes).
@@ -57,6 +69,13 @@ new_classes = ["SessionDO"]
 tag = "v3"
 deleted_classes = ["SessionDO"]
 new_sqlite_classes = ["AmsMcpAgent"]
+
+# Fourth migration: introduce AuditGateDO (Phase 2 of the audit-gate runtime
+# migration). SQLite-backed for forward compatibility — Phase 3 may persist
+# per-invocation session state when the real agent loop lands. No deletions.
+[[migrations]]
+tag = "v4"
+new_sqlite_classes = ["AuditGateDO"]
 
 # Secrets set via `wrangler secret put`:
 #   AMS_CREDENTIAL_PEPPER         (random 32-byte hex; mixed into bearer hash)

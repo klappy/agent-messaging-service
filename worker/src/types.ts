@@ -8,6 +8,10 @@ export interface Env {
   // session; (account_id, conversation_id) is threaded as construction props
   // per D0019, kept opaque to the SDK's session id.
   AMS_MCP: DurableObjectNamespace;
+  // AuditGateDO — Phase 2 of AUDIT-GATE-RUNTIME-MIGRATION-PLAN.md. One DO
+  // instance per audit invocation, keyed by PR head_sha at the route layer.
+  // See worker/src/runtime/audit-gate.ts.
+  AUDIT_GATE: DurableObjectNamespace;
 }
 
 export interface AccountRecord {
