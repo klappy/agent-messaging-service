@@ -6,7 +6,7 @@
 
 ## The Hackathon
 
-We were sitting in the back row of a hackathon presentation hall, waiting our turn. Two laptops open. Two agents running. Each of us had built a piece of a larger system we wanted to demo. The pieces needed to coordinate. The agents needed to talk.
+We were in the back row of a medium-sized meeting room two weeks ago, waiting our turn. A global hackathon — our location was on Zoom with the other sites, every location observing the same presentations. Two laptops open. Two agents running. Each of us had built a piece of a larger system we wanted to demo. The pieces needed to coordinate. The agents needed to talk.
 
 So I copied a message out of my agent's chat window. I pasted it into Signal. I sent it to Ian. He copied it out of Signal. He pasted it into his agent. His agent did some work. He copied the result out. He pasted it into Signal. He sent it back. I copied it out. I pasted it into mine.
 
@@ -54,7 +54,7 @@ If you squint at the agent ecosystem right now, you can see the shape of a stack
 - Another sells **orchestration**.
 - A few are building **end-to-end frameworks** that try to ship the whole stack as one product.
 
-What is missing — what nobody is bothering to build — is the **dial tone**. The thing under all of those, the thin layer that does nothing except move tokens between agents who have agreed to talk. Everyone has skipped past it because it is too boring to be a venture story on its own. So everyone reinvents it badly inside their vertical product, and the verticals do not interoperate, and we end up with a Tower of Babel where every agent stack speaks a slightly different dialect of the same protocol that should have been settled at the bottom.
+What is missing — what nobody is bothering to build — is the **dial tone**. The thing under all of those, the thin layer that does nothing except move tokens between agents who have agreed to talk. Everyone has skipped past it because it is too boring to be a venture story on its own. So every vertical reinvents it badly inside its own stack, and the verticals do not interoperate. Every integration between two stacks becomes a special case that someone has to write from scratch, and that cost compounds quietly across the ecosystem.
 
 This is the same shape of mistake the early networking world made before TCP/IP. There were a dozen incompatible protocols, each owned by a vendor, each bundling addressing and routing and transport and authentication into one inseparable lump. TCP/IP won not because it was the cleverest, but because it was the *thinnest*. It said: here is how you address things, here is how you move bytes, and we will not have an opinion on what you do with them. Everything above that — the web, email, video calls, every API in existence — was built on top of that decision to be unopinionated.
 
@@ -126,3 +126,11 @@ If you are building agents, AMS is for you. If you are building one of the layer
 We were the wire for forty minutes. That was forty minutes too long. We are not building the wire to make ourselves obsolete; we are building it so the wire was never the interesting part.
 
 The interesting part is everything you can do once the wire is just there.
+
+---
+
+## A Note on This Attempt
+
+AMS is intentionally thin and intentionally swappable. The protocol is open. If a larger sponsor — a model provider, a standards body, a foundation, an open-source coalition — stands up an official version of this layer, you are welcome to borrow whatever we have built, and we hope you do. We will swap our implementation for theirs the day it stands up, and the layers above will not need to move. That is the point of keeping the bottom dumb: it can be replaced without breaking what stands on it.
+
+For the broader case — why the wire problem turns out to be bigger than agent-to-agent traffic, and what the substrate stack above AMS looks like — see [We Were the Wire](https://klappy.dev/writings/we-were-the-wire) at klappy.dev.
