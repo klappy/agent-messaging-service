@@ -8,6 +8,17 @@ export interface Env {
   // session; (account_id, conversation_id) is threaded as construction props
   // per D0019, kept opaque to the SDK's session id.
   AMS_MCP: DurableObjectNamespace;
+  // AuditGateDO — Phase 2 of AUDIT-GATE-RUNTIME-MIGRATION-PLAN.md. One DO
+  // instance per audit invocation, keyed by PR head_sha at the route layer.
+  // See worker/src/runtime/audit-gate.ts.
+  AUDIT_GATE: DurableObjectNamespace;
+  // Shared secret guarding the Phase 2 local-only /audit-gate-test endpoint.
+  // Optional: if unset, the endpoint is disabled (503). When set, callers
+  // must present `Authorization: Bearer <secret>` matching this value.
+  // Prevents unauthenticated traffic from amplifying real MCP calls out to
+  // oddkit.klappy.dev and from spawning DO instances keyed by attacker-
+  // chosen names. Production-grade auth (allow-list / HMAC) lands in Phase 3.
+  AMS_AUDIT_GATE_TEST_SECRET?: string;
 }
 
 export interface AccountRecord {

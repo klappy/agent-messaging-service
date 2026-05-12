@@ -6,6 +6,7 @@ import { homepageHeadResponse, homepageResponse } from "./homepage";
 // Homepage and portal surfaces will move to the TinCan Worker per
 // ams://canon/decisions/D0026 once tincan.klappy.dev is live.
 import { AmsMcpAgent, handleMcp } from "./mcp";
+import { AuditGateDO } from "./runtime/audit-gate";
 import type { ConversationRecord, Env } from "./types";
 import {
   base64ToUtf8,
@@ -20,7 +21,7 @@ import {
 
 // Re-export the DO classes so wrangler's [[migrations]] / [[durable_objects.bindings]]
 // can find them on the Worker module entrypoint.
-export { AmsMcpAgent, ConversationDO };
+export { AmsMcpAgent, ConversationDO, AuditGateDO };
 
 // CORS for the read-only liveness endpoint /healthz. The homepage embeds a
 // status-pill that polls both ams.klappy.dev and ams.truthkit.ai from a single
@@ -115,6 +116,17 @@ export default {
       return handleConnect(req, env, ns, alias, url);
     }
 
+    // Audit-gate runtime — Phase 2 local-only test endpoint per
+    // AUDIT-GATE-RUNTIME-MIGRATION-PLAN.md. Routes a POST
+    // {pr_owner, pr_repo, pr_number, head_sha} to AuditGateDO keyed by
+    // head_sha for the fresh-context guarantee. This endpoint is
+    // EXPLICITLY local-only for Phase 2 — no production traffic yet.
+    // Phase 3 adds /audit-gate-canary (side-by-side validation); Phase 4
+    // cuts /audit-gate over from the Managed Agents Python dispatcher.
+    if (method === "POST" && path === "/audit-gate-test") {
+      return handleAuditGateTest(req, env);
+    }
+
     // Magic-link route — MCP transport only per ams://canon/decisions/D0023.
     // Browser GETs are handled by the TinCan Worker (D0026) which proxies
     // MCP POST/SSE/DELETE/OPTIONS here via service binding. AMS serves no
@@ -182,6 +194,68 @@ async function getConversation(env: Env, ns: string, alias: string, permissive: 
 
 // Lazy import to avoid a circular dep (conversations.ts pulls util.ts which is fine).
 import { createConversation } from "./conversations";
+
+// Phase 2 local-only test handler for the audit-gate DO. Forwards a POST to
+// AuditGateDO keyed by head_sha so each PR head gets its own fresh DO
+// instance per klappy://canon/methods/spawned-agent-session-runtime-contract
+// §Composition Rules (session_type=one_shot, fresh-context guarantee).
+//
+// Auth is a shared-secret Bearer guard (AMS_AUDIT_GATE_TEST_SECRET). The
+// endpoint short-circuits to 503 when the secret is unset so an
+// unconfigured deploy can't be used as an open amplification proxy to the
+// upstream oddkit MCP server (the DO makes real https://oddkit.klappy.dev
+// calls even with inference stubbed). Production-grade auth (allow-list /
+// HMAC) lands in Phase 3 alongside /audit-gate-canary.
+//
+// head_sha is validated against the same `/^[0-9a-f]{40}$/i` shape the DO's
+// isValidInvocation enforces so obviously-invalid values are rejected
+// before idFromName allocates a DO instance.
+const HEAD_SHA_RE = /^[0-9a-f]{40}$/i;
+
+async function handleAuditGateTest(req: Request, env: Env): Promise<Response> {
+  const secret = env.AMS_AUDIT_GATE_TEST_SECRET;
+  if (typeof secret !== "string" || secret.length === 0) {
+    return errorResponse(
+      503,
+      "endpoint_disabled",
+      "/audit-gate-test is disabled: AMS_AUDIT_GATE_TEST_SECRET is not configured.",
+    );
+  }
+  const authHeader = req.headers.get("authorization") ?? "";
+  const m = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (!m) {
+    return errorResponse(
+      401,
+      "missing_credential",
+      "Authorization: Bearer <AMS_AUDIT_GATE_TEST_SECRET> required.",
+    );
+  }
+  const providedHash = await pepperedHash("audit-gate-test", m[1]!.trim());
+  const expectedHash = await pepperedHash("audit-gate-test", secret);
+  if (!timingSafeEqualHex(providedHash, expectedHash)) {
+    return errorResponse(401, "invalid_credential", "Shared secret mismatch.");
+  }
+
+  let body: Record<string, unknown>;
+  try {
+    body = await req.clone().json();
+  } catch {
+    return errorResponse(400, "invalid_json", "body must be JSON");
+  }
+  const headSha = body.head_sha;
+  if (typeof headSha !== "string" || !HEAD_SHA_RE.test(headSha)) {
+    return errorResponse(
+      400,
+      "invalid_head_sha",
+      "body.head_sha must be a 40-character hex string.",
+    );
+  }
+  // Key the DO by head_sha. Same head_sha → same DO instance → still fresh
+  // because the DO hibernates after the one-shot fetch returns and its
+  // SQLite is empty (no Phase 2 state to persist).
+  const stub = env.AUDIT_GATE.get(env.AUDIT_GATE.idFromName(headSha));
+  return stub.fetch(req);
+}
 
 async function handleConnect(
   req: Request,
