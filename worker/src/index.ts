@@ -200,11 +200,42 @@ import { createConversation } from "./conversations";
 // instance per klappy://canon/methods/spawned-agent-session-runtime-contract
 // §Composition Rules (session_type=one_shot, fresh-context guarantee).
 //
-// Deliberately permissive auth: this is the local-only test endpoint per
-// AUDIT-GATE-RUNTIME-MIGRATION-PLAN.md Phase 2; production-grade auth
-// (worker secret, allow-list, or HMAC) lands in Phase 3 alongside the
-// /audit-gate-canary endpoint and side-by-side validation.
+// Auth is a shared-secret Bearer guard (AMS_AUDIT_GATE_TEST_SECRET). The
+// endpoint short-circuits to 503 when the secret is unset so an
+// unconfigured deploy can't be used as an open amplification proxy to the
+// upstream oddkit MCP server (the DO makes real https://oddkit.klappy.dev
+// calls even with inference stubbed). Production-grade auth (allow-list /
+// HMAC) lands in Phase 3 alongside /audit-gate-canary.
+//
+// head_sha is validated against the same `/^[0-9a-f]{40}$/i` shape the DO's
+// isValidInvocation enforces so obviously-invalid values are rejected
+// before idFromName allocates a DO instance.
+const HEAD_SHA_RE = /^[0-9a-f]{40}$/i;
+
 async function handleAuditGateTest(req: Request, env: Env): Promise<Response> {
+  const secret = env.AMS_AUDIT_GATE_TEST_SECRET;
+  if (typeof secret !== "string" || secret.length === 0) {
+    return errorResponse(
+      503,
+      "endpoint_disabled",
+      "/audit-gate-test is disabled: AMS_AUDIT_GATE_TEST_SECRET is not configured.",
+    );
+  }
+  const authHeader = req.headers.get("authorization") ?? "";
+  const m = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (!m) {
+    return errorResponse(
+      401,
+      "missing_credential",
+      "Authorization: Bearer <AMS_AUDIT_GATE_TEST_SECRET> required.",
+    );
+  }
+  const providedHash = await pepperedHash("audit-gate-test", m[1]!.trim());
+  const expectedHash = await pepperedHash("audit-gate-test", secret);
+  if (!timingSafeEqualHex(providedHash, expectedHash)) {
+    return errorResponse(401, "invalid_credential", "Shared secret mismatch.");
+  }
+
   let body: Record<string, unknown>;
   try {
     body = await req.clone().json();
@@ -212,8 +243,12 @@ async function handleAuditGateTest(req: Request, env: Env): Promise<Response> {
     return errorResponse(400, "invalid_json", "body must be JSON");
   }
   const headSha = body.head_sha;
-  if (typeof headSha !== "string" || headSha.length === 0) {
-    return errorResponse(400, "missing_head_sha", "body.head_sha required");
+  if (typeof headSha !== "string" || !HEAD_SHA_RE.test(headSha)) {
+    return errorResponse(
+      400,
+      "invalid_head_sha",
+      "body.head_sha must be a 40-character hex string.",
+    );
   }
   // Key the DO by head_sha. Same head_sha → same DO instance → still fresh
   // because the DO hibernates after the one-shot fetch returns and its
