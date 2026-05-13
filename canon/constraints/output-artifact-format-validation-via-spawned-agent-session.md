@@ -42,7 +42,7 @@ The audit is invoked the same way every persona-shaped audit gate is invoked: a 
 For each PR:
 
 1. The runtime resolves `ams://canon/personas/ams-output-artifact-validator` via `oddkit_get`, parses the profile, and confirms `role: validator`.
-2. The runtime fetches the PR's diff (60 KiB head + tail per `ams://canon/constraints/canon-code-sync-via-spawned-agent-session §Current Implementation`).
+2. The runtime fetches the PR's diff (150 KiB total — 75 KiB head + 75 KiB tail — per `ams://canon/constraints/canon-code-sync-via-spawned-agent-session §Current Implementation`).
 3. The runtime assembles the system prompt by fetching this constraint via `oddkit_get` and prepending the persona identity header.
 4. The agent session is spawned with the assembled system prompt and the persona's `mcp_servers.operational: [oddkit]` wired through the Anthropic Messages API native MCP connector. The agent has `oddkit_get` and `oddkit_search` as tool surface.
 5. The agent identifies which paths in the diff match the allow-list patterns. For each matched file, the agent fetches the canonical format definition via `oddkit_get` and audits the file's content against it.
