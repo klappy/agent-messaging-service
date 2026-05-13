@@ -12,7 +12,7 @@ date: 2026-05-13
 derives_from: "klappy://canon/methods/persona-shaped-agent-runtime, klappy://canon/methods/spawned-agent-session-runtime-contract, klappy://canon/constraints/audit-gates-are-spawned-agent-sessions, ams://canon/constraints/oddkit-gauntlet-via-spawned-agent-session, klappy://canon/voice/oddie-the-river-guide"
 complements: "ams://canon/personas/ams-canon-code-auditor, ams://canon/personas/ams-output-artifact-validator, klappy://canon/methods/governance-validation-via-agents"
 governs: "The persona dispatched by the AMS oddkit-gauntlet audit gate. The persona's system-prompt source, MCP servers, knowledge-base access, voice profile, and per-surface output rules. The dispatcher resolves this profile when invoking the gate; the substrate that hosts the session is governed separately by ams://canon/constraints/oddkit-gauntlet-via-spawned-agent-session §Current Implementation."
-status: proposed
+status: active
 ---
 
 ## Summary — One Persona, One Gauntlet, Oddie's Voice

@@ -481,6 +481,17 @@ export class AuditGateDO extends DurableObject<Env> {
         type: "mcp_toolset" as const,
         mcp_server_name: s.name,
       })),
+      // Streaming is required. Non-streaming responses with multi-turn
+      // MCP tool use routinely exceed Cloudflare's ~100s upstream-origin
+      // timeout in front of api.anthropic.com and surface as HTTP 524.
+      // First observed against PR #87 (2026-05-13) when all three runtime
+      // probes returned `anthropic_api_failed: 524`. Streaming sidesteps
+      // by emitting the first SSE event in seconds and keeping the
+      // connection open across tool-call round-trips; the DO accumulates
+      // text content from `content_block_delta` events for text-type
+      // blocks only. mcp_tool_use / mcp_tool_result content blocks are
+      // intermediate work and are not included in the verdict text.
+      stream: true,
     };
 
     const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -498,22 +509,121 @@ export class AuditGateDO extends DurableObject<Env> {
       const errBody = await res.text();
       throw new Error(`anthropic_api_failed: ${res.status} ${res.statusText} body=${errBody.slice(0, 500)}`);
     }
-    const respJson = (await res.json()) as {
-      content?: Array<{ type: string; text?: string }>;
-      stop_reason?: string;
-      usage?: Record<string, number>;
-    };
+    if (!res.body) {
+      throw new Error("anthropic_no_response_body");
+    }
 
-    // Concatenate all text-type content blocks. MCP tool_use / mcp_tool_use
-    // / mcp_tool_result blocks are not included — they're the agent's
-    // intermediate work, not the verdict. The verdict lives in the final
-    // text block per the output contract.
-    const textBlocks = (respJson.content ?? [])
-      .filter((c) => c.type === "text" && typeof c.text === "string")
-      .map((c) => c.text as string);
+    // SSE event parser. Anthropic Messages streaming events:
+    //   message_start, content_block_start, content_block_delta,
+    //   content_block_stop, message_delta, message_stop, error, ping.
+    // We track each content block's type at content_block_start, accumulate
+    // text deltas for text-type blocks only, and flush them on
+    // content_block_stop. Tool-use blocks are dropped on the floor here
+    // (the Messages API runs MCP tool calls server-side and resumes the
+    // same stream — no client-side tool-use loop is required).
+    const textBlocks: string[] = [];
+    const currentBlocks = new Map<number, { type: string; buf: string }>();
+    let stopReason: string | undefined;
+    let streamError: string | undefined;
 
+    const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buffer = "";
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          // Per SSE spec, dispatch any pending buffered data as a final
+          // event when the stream ends without a trailing blank-line
+          // delimiter. Append the delimiter so the existing parser path
+          // handles it; malformed partial payloads are caught by the
+          // JSON.parse try/catch below.
+          if (buffer.length === 0) break;
+          buffer += "\n\n";
+        } else {
+          buffer += value;
+        }
+        // SSE events are separated by a blank line (\n\n).
+        let sepIdx: number;
+        while ((sepIdx = buffer.indexOf("\n\n")) !== -1) {
+          const rawEvent = buffer.slice(0, sepIdx);
+          buffer = buffer.slice(sepIdx + 2);
+          // Collect data: lines from this event (ignore event:, id:, retry:).
+          const dataPayload = rawEvent
+            .split("\n")
+            .filter((l) => l.startsWith("data:"))
+            .map((l) => l.slice(5).trimStart())
+            .join("");
+          if (!dataPayload || dataPayload === "[DONE]") continue;
+          let evt: {
+            type?: string;
+            index?: number;
+            content_block?: { type?: string; text?: string };
+            delta?: { type?: string; text?: string; stop_reason?: string };
+            error?: unknown;
+          };
+          try {
+            evt = JSON.parse(dataPayload);
+          } catch {
+            // Skip malformed SSE payloads rather than failing the whole audit.
+            continue;
+          }
+          switch (evt.type) {
+            case "content_block_start": {
+              const cb = evt.content_block;
+              if (cb && typeof evt.index === "number") {
+                currentBlocks.set(evt.index, {
+                  type: cb.type ?? "unknown",
+                  buf: cb.text ?? "",
+                });
+              }
+              break;
+            }
+            case "content_block_delta": {
+              if (typeof evt.index !== "number" || !evt.delta) break;
+              const cur = currentBlocks.get(evt.index);
+              if (cur && cur.type === "text" && evt.delta.type === "text_delta") {
+                cur.buf += evt.delta.text ?? "";
+              }
+              break;
+            }
+            case "content_block_stop": {
+              if (typeof evt.index !== "number") break;
+              const cur = currentBlocks.get(evt.index);
+              if (cur && cur.type === "text" && cur.buf) {
+                textBlocks.push(cur.buf);
+              }
+              currentBlocks.delete(evt.index);
+              break;
+            }
+            case "message_delta": {
+              if (evt.delta?.stop_reason) stopReason = evt.delta.stop_reason;
+              break;
+            }
+            case "error": {
+              streamError = JSON.stringify(evt.error ?? evt);
+              break;
+            }
+            // message_start, message_stop, ping: no-op.
+            default:
+              break;
+          }
+        }
+        if (done) break;
+      }
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch {
+        // best-effort
+      }
+    }
+
+    if (streamError) {
+      throw new Error(`anthropic_stream_error: ${streamError}`);
+    }
     if (textBlocks.length === 0) {
-      throw new Error(`anthropic_no_text_content: stop_reason=${respJson.stop_reason ?? "?"}`);
+      throw new Error(`anthropic_no_text_content: stop_reason=${stopReason ?? "?"}`);
     }
 
     return textBlocks.join("\n\n");
