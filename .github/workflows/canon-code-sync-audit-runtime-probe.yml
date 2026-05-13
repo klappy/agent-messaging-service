@@ -15,8 +15,13 @@ name: Canon-Code Sync Audit (runtime probe)
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review]
+  # Intentionally not triggering on pull_request_target: per GitHub's
+  # December 2025 change, pull_request_target sets github.sha (and thus
+  # the OIDC token's sha claim) to the default branch HEAD rather than
+  # the PR head commit. The Worker keys the AuditGateDO by claims.sha,
+  # so a pull_request_target run would route to a stale/shared DO
+  # instance and audit the wrong commit. The probe runs on pull_request
+  # only, where github.sha is the PR head's merge ref.
 
 # Cancel in-progress probes when new commits arrive on the same PR;
 # only the most recent commit's verdict matters.
