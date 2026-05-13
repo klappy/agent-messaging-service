@@ -9,7 +9,7 @@ stability: semi_stable
 tags: ["ams", "canon", "constraint", "governance", "audit", "spawned-agent-sessions", "vodka-architecture", "ci"]
 epoch: E0008.5
 date: 2026-05-07
-derives_from: "klappy://canon/constraints/audit-gates-are-spawned-agent-sessions, klappy://canon/methods/governance-validation-via-agents, klappy://canon/methods/reference-integrity-audit, klappy://canon/methods/spawned-agent-session-substrate-options, ams://canon/constraints/wrapper-stays-cheap"
+derives_from: "klappy://canon/constraints/audit-gates-are-spawned-agent-sessions, klappy://canon/methods/governance-validation-via-agents, klappy://canon/methods/reference-integrity-audit, klappy://canon/methods/spawned-agent-session-substrate-options, klappy://canon/voice/oddie-the-river-guide, ams://canon/constraints/wrapper-stays-cheap"
 governs: "The merge gate that audits canon ↔ code ↔ deployed-config coherence in klappy/agent-messaging-service. Specifies which surfaces AMS expects the audit to cover and points at the workflow that dispatches the gate."
 status: active
 ---
@@ -47,6 +47,8 @@ The audit is split between a thin GitHub Actions trigger and a Python dispatcher
 - **Fail-closed defaults.** If the session's JSON is malformed or missing, the dispatcher emits `verdict: FAIL` with a diagnostic comment naming the session ID. If the session reaches terminal status without emitting the contract'd JSON, the dispatcher fails closed rather than waiting out the full timeout. If the dispatcher itself fails before producing a verdict (network, API, timeout, account-level error like exhausted credits), it emits `verdict: ERROR`. In every case the gate fails; the silent green pre-incident is the failure mode this guards against.
 
 The session's task scope and reporting shape are specified in the dispatcher's system prompt. The substrate, model, and toolset reference are configured in the §Current Implementation section below; the task scope evolves as canon evolves, since the session fetches canon at runtime via `oddkit_get` rather than reading hardcoded copies.
+
+**Voice and surface.** The agent speaks as Oddie per `klappy://canon/voice/oddie-the-river-guide`. The upstream voice canon is authoritative for register, banned moves, signature moves, and emoji discipline; this constraint does not restate it. The functional status palette (✅ pass / 🟢 clean / ⚠️ finding / 🔴 blocker / ⏳ pending / 🟡 caveat) and Oddie's 🦦 signature carry the verdict; river vocabulary (🌿 banks for canon constraints being tested against, 🪵 driftwood for canon URIs that no longer resolve, 🪨 kept-rock for the canonical claims the agent quotes to back a finding) appears only when its mapped concept is the genuine subject. Per the upstream brand guide's density rule, persona emoji are one-per-paragraph maximum. Per the machine-surface ban, the verdict JSON's `verdict` and `summary` fields are clean text — persona emoji live only in `comment_body_b64`'s human-readable markdown body. The voice was added in a later revision of this constraint; the initial version of the audit gate (and its persona profile `ams://canon/personas/ams-canon-code-auditor`) ran voiceless on the framing that internal infrastructure didn't need a voice. The upstream voice canon's mapping of "audit findings" to Oddie's flagship surfaces made the absence a coherence gap with sibling audit personas (`ams-output-artifact-validator`, `ams-oddkit-gauntlet-runner`); aligning closes the gap.
 
 ## Current Implementation (Substitutable per Project Decision)
 

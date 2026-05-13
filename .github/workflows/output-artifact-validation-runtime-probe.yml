@@ -1,0 +1,39 @@
+name: Output-Artifact Validation (runtime probe)
+
+# Side-by-side probe of the output-artifact format validator persona on
+# the AMS audit-gate runtime substrate. Caller of the reusable workflow
+# .github/workflows/audit-gate-runtime-probe.yml.
+#
+# Per the canon constraint
+# ams://canon/constraints/output-artifact-format-validation-via-spawned-agent-session,
+# this audit watches PR diffs for files matching governed format patterns
+# and asks the persona ams-output-artifact-validator to validate them
+# against their canonical format definitions. Initial scope: journal TSV
+# files (Dolcheo+ format).
+#
+# The verdict is posted as a non-gating PR comment in Oddie's voice
+# (klappy://canon/voice/oddie-the-river-guide). Promotion to gating is
+# operator-decided after parity with operator expectations is established
+# across 2-3 real PRs.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: audit-gate-runtime-probe-output-validation-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  id-token: write
+  pull-requests: write
+  contents: read
+
+jobs:
+  output-validation-probe:
+    uses: ./.github/workflows/audit-gate-runtime-probe.yml
+    with:
+      persona_uri: ams://canon/personas/ams-output-artifact-validator
+      comment_header: Output-Artifact Validation (runtime probe)

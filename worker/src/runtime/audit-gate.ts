@@ -126,11 +126,19 @@ export interface AuditVerdict {
 // in this set. Adding a new persona to the runtime is a canon-PR-and-
 // allow-list-bump pair, not a free-form runtime config.
 //
-// Phase 4/5: only ams-canon-code-auditor exists. Future personas
-// (output/artifact validators, oddkit gauntlet runners) get added
-// here when their canon doc lands.
+// Three personas currently live on this substrate, all using Oddie's voice
+// per klappy://canon/voice/oddie-the-river-guide:
+//   - ams-canon-code-auditor       (code vs. canon drift)
+//   - ams-output-artifact-validator (output format compliance against canon)
+//   - ams-oddkit-gauntlet-runner    (oddkit_challenge + oddkit_audit on
+//                                     canon/writings/journal markdown)
+// Each persona's task definition lives in its own constraint canon doc
+// (system_prompt_uri); each runs through a thin caller workflow that
+// invokes the reusable .github/workflows/audit-gate-runtime-probe.yml.
 export const ALLOWED_PERSONA_URIS: ReadonlyArray<string> = [
   "ams://canon/personas/ams-canon-code-auditor",
+  "ams://canon/personas/ams-output-artifact-validator",
+  "ams://canon/personas/ams-oddkit-gauntlet-runner",
 ];
 
 const ODDKIT_MCP_URL = "https://oddkit.klappy.dev/mcp";
