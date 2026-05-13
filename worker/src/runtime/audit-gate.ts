@@ -532,8 +532,17 @@ export class AuditGateDO extends DurableObject<Env> {
     try {
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
-        buffer += value;
+        if (done) {
+          // Per SSE spec, dispatch any pending buffered data as a final
+          // event when the stream ends without a trailing blank-line
+          // delimiter. Append the delimiter so the existing parser path
+          // handles it; malformed partial payloads are caught by the
+          // JSON.parse try/catch below.
+          if (buffer.length === 0) break;
+          buffer += "\n\n";
+        } else {
+          buffer += value;
+        }
         // SSE events are separated by a blank line (\n\n).
         let sepIdx: number;
         while ((sepIdx = buffer.indexOf("\n\n")) !== -1) {
@@ -600,6 +609,7 @@ export class AuditGateDO extends DurableObject<Env> {
               break;
           }
         }
+        if (done) break;
       }
     } finally {
       try {
