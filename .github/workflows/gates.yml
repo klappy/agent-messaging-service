@@ -180,15 +180,15 @@ jobs:
         run: npx tsc --noEmit
 
       - name: Install pyyaml (for frontmatter validator)
-        if: steps.classify.outputs.canon_or_writings_or_journal == 'true'
+        if: ${{ !cancelled() && steps.classify.outputs.canon_or_writings_or_journal == 'true' }}
         run: pip install --quiet pyyaml
 
       - name: Validate YAML frontmatter on changed canon/writings docs
-        if: steps.classify.outputs.canon_or_writings_or_journal == 'true'
+        if: ${{ !cancelled() && steps.classify.outputs.canon_or_writings_or_journal == 'true' }}
         run: python3 .github/scripts/validate-frontmatter.py /tmp/changed.txt
 
       - name: Validate Dolcheo+ TSV shape on changed journal entries
-        if: steps.classify.outputs.journal_tsv == 'true'
+        if: ${{ !cancelled() && steps.classify.outputs.journal_tsv == 'true' }}
         run: python3 .github/scripts/validate-tsv-shape.py /tmp/changed.txt
 
       - name: Smoke summary
