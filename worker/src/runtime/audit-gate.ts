@@ -215,6 +215,19 @@ export class AuditGateDO extends DurableObject<Env> {
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : "unknown_error";
+      const stack = err instanceof Error ? err.stack ?? "" : "";
+      // Log structured diagnostic for Cloudflare Logpush / wrangler tail.
+      // Per ams://canon/constraints/validators-cannot-self-validate-their-own-fix-prs,
+      // this is the forensic surface for future audit-gate failures: the
+      // probe comment will show the wrapped error message, but the stack
+      // trace and the persona context live here.
+      console.error("audit_gate_session_failed", {
+        head_sha: invocation.head_sha,
+        persona_uri: invocation.persona_uri,
+        pr_number: invocation.pr_number,
+        message,
+        stack: stack.split("\n").slice(0, 8).join("\n"),
+      });
       return errorResponse(500, "audit_failed", message);
     } finally {
       // Close the MCP transport so the DO can hibernate cleanly.
@@ -611,6 +624,19 @@ export class AuditGateDO extends DurableObject<Env> {
         }
         if (done) break;
       }
+    } catch (err) {
+      // reader.read() rejections (TextDecoderStream UTF-8 errors, abrupt
+      // connection drops, upstream resets mid-stream) reach us here. Without
+      // this catch they propagate via the try/finally to the outer fetch
+      // try/catch in this DO, which DOES wrap them as `audit_failed`. This
+      // catch adds the streaming-specific context (how many text blocks we
+      // had buffered, what stop_reason we last saw) so the next 1101
+      // investigation has a sharper trail. The outer catch in fetch() will
+      // still log via console.error and return the structured envelope.
+      const message = err instanceof Error ? err.message : "unknown_stream_error";
+      throw new Error(
+        `anthropic_stream_reader_failed: ${message} text_blocks_accumulated=${textBlocks.length} buffered_chars=${buffer.length} stop_reason=${stopReason ?? "?"}`,
+      );
     } finally {
       try {
         reader.releaseLock();
