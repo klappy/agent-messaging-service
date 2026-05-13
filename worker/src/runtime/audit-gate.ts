@@ -439,7 +439,7 @@ export class AuditGateDO extends DurableObject<Env> {
     // Compose the agent's user message: PR coordinates + the diff + an
     // explicit reminder of the output contract.
     const userMessage = [
-      `Audit the following pull request for canon-code drift per the AMS canon-code-sync constraint loaded as your system prompt.`,
+      `Audit the following pull request per the task definition loaded as your system prompt (persona: ${ctx.profile.persona}, system_prompt_uri: ${ctx.profile.system_prompt_uri}).`,
       ``,
       `PR coordinates:`,
       `  owner:  ${ctx.invocation.pr_owner}`,
