@@ -1,32 +1,42 @@
-// Audit-gate runtime — Durable Object hosting the AMS canon-code-sync audit
-// session. Instantiates the persona-shaped-agent-runtime contract per
-// klappy://canon/methods/persona-shaped-agent-runtime for the persona
-// ams://canon/personas/ams-canon-code-auditor.
+// Audit-gate runtime — Durable Object hosting persona-shaped validator
+// sessions. Generalized substrate: each invocation specifies which
+// canon persona to instantiate (e.g. ams://canon/personas/ams-canon-
+// code-auditor), provided the URI is on ALLOWED_PERSONA_URIS below.
+// Implements the persona-shaped-agent-runtime contract per
+// klappy://canon/methods/persona-shaped-agent-runtime.
 //
-// Phase 2 of AUDIT-GATE-RUNTIME-MIGRATION-PLAN.md — substrate scaffold with
-// a local-only test endpoint. The five responsibilities (resolve profile,
-// enforce role, run one-shot session, honor agent engagement, apply surface
-// post-processing) are implemented with the runtime acting as an oddkit MCP
-// CLIENT — the persona profile declares mcp_servers.operational: [oddkit],
-// so the runtime resolves canon URIs via oddkit_get rather than bypassing
-// the URI scheme with raw GitHub fetches.
+// The five responsibilities (resolve profile, enforce role, run one-
+// shot session, honor agent engagement, apply surface post-processing)
+// are implemented with the runtime acting as an oddkit MCP CLIENT for
+// profile resolution — the runtime resolves canon URIs via oddkit_get
+// rather than bypassing the URI scheme with raw GitHub fetches.
 //
-// Agent inference is stubbed; Phase 3 wires the real Anthropic + oddkit MCP
-// integration on the *agent session's* side alongside side-by-side validation.
-// The Phase 2 oddkit client is used by the RUNTIME for profile resolution,
-// not by the agent session itself. The two MCP wirings are separate concerns:
-//   - Runtime → oddkit  (this file, Phase 2): resolve persona profile + system
-//     prompt URI to produce the session's bootstrap. Stateless tool calls.
-//   - Agent session → oddkit  (Phase 3): the agent has oddkit MCP wired into
-//     its operational tool surface for canon lookups DURING the audit.
+// Two distinct MCP wirings exist on the audit path and are kept
+// separate by design:
+//   - Runtime → oddkit  (this file): resolve persona profile + system
+//     prompt URI to bootstrap the session. Stateless tool calls. Uses
+//     the @modelcontextprotocol/sdk Client + StreamableHTTPClientTransport.
+//   - Agent session → oddkit  (this file, in runAuditSession): the agent
+//     invocation passes profile.mcp_servers.operational through to the
+//     Anthropic Messages API native MCP connector (anthropic-beta:
+//     mcp-client-2025-11-20), giving the agent oddkit_get/oddkit_search
+//     as tool surface DURING the audit.
 //
-// One DO instance per audit invocation, keyed by head_sha at the route layer.
-// Fresh-context guarantee per klappy://canon/principles/verification-requires-
-// fresh-context is satisfied by the keying: a new head_sha produces a new DO
-// instance with no inherited state. The DO hibernates after fetch() returns
-// and eventually dies — session_type=one_shot per
-// klappy://canon/methods/spawned-agent-session-runtime-contract §Composition
-// Rules.
+// One DO instance per audit invocation, keyed by head_sha at the route
+// layer. Fresh-context guarantee per klappy://canon/principles/
+// verification-requires-fresh-context is satisfied by the keying: a new
+// head_sha produces a new DO instance with no inherited state. The DO
+// hibernates after fetch() returns and eventually dies — session_type=
+// one_shot per klappy://canon/methods/spawned-agent-session-runtime-
+// contract §Composition Rules.
+//
+// Trigger surface and auth model are defined in worker/src/index.ts
+// (OIDC verification, repository allow-list, persona allow-list, body
+// validation). The DO sees a fully resolved AuditInvocation —
+// pr_owner/pr_repo/head_sha derived from the JWT's claims, persona_uri
+// already allow-list-checked, knowledge_base_url already constructed.
+// See ams://canon/constraints/canon-code-sync-via-spawned-agent-session
+// §Current Implementation for the canonical description.
 
 import { DurableObject } from "cloudflare:workers";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
