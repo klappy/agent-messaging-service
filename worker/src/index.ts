@@ -50,6 +50,49 @@ const HEALTHZ_CORS: Record<string, string> = {
 
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    // Global safety net. Without this, any uncaught throw in any sub-handler
+    // (route resolver, OIDC verifier, DO stub.fetch transport-layer rejection,
+    // etc.) escapes to Cloudflare and surfaces to the caller as a raw
+    // `error code: 1101` page rather than a structured JSON envelope.
+    //
+    // This was observed against PR #88's Oddkit Gauntlet runtime probe
+    // (2026-05-13): the workflow received HTTP 500 with body `error code:
+    // 1101`, indicating the worker threw without my own try/catch catching
+    // it. The structural cause is the absence of an outer envelope here;
+    // the route handlers each have local try/catch for their domain
+    // (handleAuditGateTest validates input, AuditGateDO wraps the audit
+    // session), but a throw between layers — for instance, `stub.fetch()`
+    // rejecting because the DO failed to hydrate on cold-start — has
+    // nowhere to land. This wrapper converts every such throw to a
+    // structured 500 with a diagnostic message, which Cloudflare Logpush
+    // and `wrangler tail` will also see via console.error.
+    //
+    // Per ams://canon/constraints/validators-cannot-self-validate-their-own-fix-prs,
+    // this fix cannot be exercised by the PR that contains it; the runtime
+    // probes call the production endpoint, which only deploys on merge to
+    // main. The next PR after merge is where the streaming dispatcher's
+    // 1101 behavior can be observed against the hardened envelope.
+    try {
+      return await routeRequest(req, env, ctx);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "unknown_error";
+      const stack = err instanceof Error ? err.stack ?? "" : "";
+      // Log structured diagnostic so future incidents leave a trail in
+      // Cloudflare Logpush / wrangler tail. Worker-side console output is
+      // the only forensic surface; without it, the next 1101 is just as
+      // opaque as this one was.
+      console.error("worker_unhandled_throw", {
+        url: req.url,
+        method: req.method,
+        message,
+        stack: stack.split("\n").slice(0, 8).join("\n"),
+      });
+      return errorResponse(500, "worker_unhandled_throw", message);
+    }
+  },
+};
+
+async function routeRequest(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
     const path = url.pathname;
     const method = req.method;
@@ -179,8 +222,7 @@ export default {
     }
 
     return errorResponse(404, "not_found", `No route for ${method} ${path}.`);
-  },
-};
+}
 
 // GET /v1/{ns}/conversations/{alias} — read conversation metadata.
 // Validates permissive token (same check as /connect). Returns public fields.
@@ -310,7 +352,32 @@ async function handleAuditGateTest(req: Request, env: Env): Promise<Response> {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(invocation),
   });
-  return stub.fetch(forwarded);
+  // Wrap stub.fetch in its own try/catch. The DO's own fetch handler has
+  // an internal try/catch that returns 500 with `{"error":"audit_failed",
+  // ...}` for everything that goes wrong INSIDE the DO. But that envelope
+  // can't catch rejections from the DO transport itself: cold-start
+  // hydration failures, DO storage faults, RPC-layer transport errors.
+  // Those rejections propagate up here as a `stub.fetch()` rejection. Per
+  // ams://canon/constraints/validators-cannot-self-validate-their-own-fix-prs,
+  // a transport-layer 1101 was first observed in PR #88's Oddkit Gauntlet
+  // probe (2026-05-13); the raw `error code: 1101` body (rather than the
+  // DO's JSON envelope) confirmed the throw escaped the DO and that
+  // there was no catch here. This wrapper converts any such rejection to
+  // a structured response and logs it for forensics.
+  try {
+    return await stub.fetch(forwarded);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown_error";
+    const stack = err instanceof Error ? err.stack ?? "" : "";
+    console.error("audit_gate_do_transport_throw", {
+      head_sha: headSha,
+      persona_uri: personaUri,
+      pr_number: prNumber,
+      message,
+      stack: stack.split("\n").slice(0, 8).join("\n"),
+    });
+    return errorResponse(500, "audit_gate_do_transport_failed", message);
+  }
 }
 
 async function handleConnect(
