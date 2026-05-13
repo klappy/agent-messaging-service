@@ -32,6 +32,9 @@ from pathlib import Path
 
 VALID_DOLCHEO_LETTERS: frozenset[str] = frozenset("DOLCHE")
 
+# Known first-field tokens that indicate a legacy header row (case-insensitive).
+HEADER_FIRST_FIELDS: frozenset[str] = frozenset({"type", "typename", "letter"})
+
 
 def validate_file(path: Path) -> list[str]:
     """Return a list of error strings; empty list means pass."""
@@ -58,12 +61,13 @@ def validate_file(path: Path) -> list[str]:
     # header — first row is a D artifact. Older journals have a
     # `type\tsummary\tdetail` header. The output-artifact-validator
     # probe flags header presence as a semantic finding; smoke doesn't
-    # block PRs on it. Skip a line 1 that looks like a header (first
-    # field is multiple letters and is not a Dolcheo letter).
+    # block PRs on it. Skip a line 1 only when its first field is a
+    # known header keyword; a malformed first data row (e.g. typo'd
+    # type letter, or a row with no tabs) must still be flagged.
     start_line_no = 1
     if lines:
         first_fields = lines[0].split("\t")
-        if first_fields and len(first_fields[0]) > 1 and first_fields[0] not in VALID_DOLCHEO_LETTERS:
+        if first_fields and first_fields[0].strip().lower() in HEADER_FIRST_FIELDS:
             # Treat line 1 as header; skip it for shape validation.
             lines = lines[1:]
             start_line_no = 2
