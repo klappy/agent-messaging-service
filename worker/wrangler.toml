@@ -80,15 +80,17 @@ new_sqlite_classes = ["AuditGateDO"]
 # Secrets set via `wrangler secret put`:
 #   AMS_CREDENTIAL_PEPPER         (random 32-byte hex; mixed into bearer hash)
 #   AMS_PERMISSIVE_TOKEN_PEPPER   (same idea, for permissive tokens)
-#   AMS_AUDIT_GATE_TEST_SECRET    (shared-secret guard for /audit-gate-test;
-#                                  if unset the Phase 2 endpoint returns 503
-#                                  so the deploy can't be used as an open
-#                                  amplification proxy to oddkit.klappy.dev)
-#   ANTHROPIC_API_KEY              (Phase 3 — Anthropic API key for the
-#                                  AuditGateDO's agent session. Wired into
-#                                  the persona's mcp_servers.operational set
-#                                  via the native MCP connector beta. If
-#                                  unset the audit session fails fast.)
+#   ANTHROPIC_API_KEY             (Anthropic API key for the AuditGateDO's
+#                                  agent session. The DO calls /v1/messages
+#                                  with the persona's mcp_servers.operational
+#                                  wired in via the native MCP connector beta.
+#                                  If unset, the audit session fails fast.)
+#
+# Audit-gate /audit-gate-test auth: GitHub Actions OIDC, no secret to set.
+# The Worker fetches https://token.actions.githubusercontent.com/.well-known/jwks
+# at runtime (cached) and verifies JWT signature + claims. The repository
+# allow-list lives in code (worker/src/index.ts) since adding a new repo
+# is intentional, reviewable, and goes through the audit gate itself.
 
 # Workers Logs — dashboard-toggled, synced here so deploys do not regress the
 # setting. Captures broker-internal request shape (outcome, method, path,

@@ -6,7 +6,8 @@ import { homepageHeadResponse, homepageResponse } from "./homepage";
 // Homepage and portal surfaces will move to the TinCan Worker per
 // ams://canon/decisions/D0026 once tincan.klappy.dev is live.
 import { AmsMcpAgent, handleMcp } from "./mcp";
-import { AuditGateDO } from "./runtime/audit-gate";
+import { ALLOWED_PERSONA_URIS, AuditGateDO } from "./runtime/audit-gate";
+import { verifyGitHubOidcJwt } from "./runtime/oidc";
 import type { ConversationRecord, Env } from "./types";
 import {
   base64ToUtf8,
@@ -18,6 +19,17 @@ import {
   timingSafeEqualHex,
   utf8ToBase64,
 } from "./util";
+
+// Audit-gate runtime config. OIDC audience is the string callers must
+// pass as `audience` when requesting an ID token from GitHub; the
+// allow-list closes the "any GitHub workflow could call us" hole per
+// the canon constraint canon-code-sync-via-spawned-agent-session
+// §Current Implementation.
+const AUDIT_GATE_OIDC_AUDIENCE = "ams-audit-gate";
+const REPOSITORY_ALLOW_LIST: ReadonlyArray<string> = [
+  "klappy/agent-messaging-service",
+  "klappy/klappy.dev",
+];
 
 // Re-export the DO classes so wrangler's [[migrations]] / [[durable_objects.bindings]]
 // can find them on the Worker module entrypoint.
@@ -116,13 +128,13 @@ export default {
       return handleConnect(req, env, ns, alias, url);
     }
 
-    // Audit-gate runtime — Phase 2 local-only test endpoint per
-    // AUDIT-GATE-RUNTIME-MIGRATION-PLAN.md. Routes a POST
-    // {pr_owner, pr_repo, pr_number, head_sha} to AuditGateDO keyed by
-    // head_sha for the fresh-context guarantee. This endpoint is
-    // EXPLICITLY local-only for Phase 2 — no production traffic yet.
-    // Phase 3 adds /audit-gate-canary (side-by-side validation); Phase 4
-    // cuts /audit-gate over from the Managed Agents Python dispatcher.
+    // Audit-gate runtime — generalized persona-shaped agent runtime
+    // endpoint per AUDIT-GATE-RUNTIME-MIGRATION-PLAN.md (Phase 4/5).
+    // OIDC-authenticated; persona_uri in the body picks which canon
+    // persona to instantiate. Forwards to AuditGateDO keyed by
+    // head_sha for the fresh-context guarantee. Endpoint name kept
+    // as /audit-gate-test for continuity with the Phase 2/3 PoC
+    // surface; the test- prefix becomes a misnomer as this stabilizes.
     if (method === "POST" && path === "/audit-gate-test") {
       return handleAuditGateTest(req, env);
     }
@@ -195,66 +207,110 @@ async function getConversation(env: Env, ns: string, alias: string, permissive: 
 // Lazy import to avoid a circular dep (conversations.ts pulls util.ts which is fine).
 import { createConversation } from "./conversations";
 
-// Phase 2 local-only test handler for the audit-gate DO. Forwards a POST to
-// AuditGateDO keyed by head_sha so each PR head gets its own fresh DO
-// instance per klappy://canon/methods/spawned-agent-session-runtime-contract
-// §Composition Rules (session_type=one_shot, fresh-context guarantee).
+// Audit-gate runtime handler — Phase 4/5 of the migration plan.
 //
-// Auth is a shared-secret Bearer guard (AMS_AUDIT_GATE_TEST_SECRET). The
-// endpoint short-circuits to 503 when the secret is unset so an
-// unconfigured deploy can't be used as an open amplification proxy to the
-// upstream oddkit MCP server (the DO makes real https://oddkit.klappy.dev
-// calls even with inference stubbed). Production-grade auth (allow-list /
-// HMAC) lands in Phase 3 alongside /audit-gate-canary.
+// Auth: GitHub Actions OIDC. The Authorization header carries a JWT
+// signed by https://token.actions.githubusercontent.com; the token's
+// claims (repository, sha, ref) are the audit context. Body carries
+// the persona_uri to instantiate and an optional github_token for
+// private-repo diff fetching.
 //
-// head_sha is validated against the same `/^[0-9a-f]{40}$/i` shape the DO's
-// isValidInvocation enforces so obviously-invalid values are rejected
-// before idFromName allocates a DO instance.
-const HEAD_SHA_RE = /^[0-9a-f]{40}$/i;
-
+// Per the canon constraint canon-code-sync-via-spawned-agent-session,
+// the route enforces:
+//   - JWT signature, iss, aud, exp validity
+//   - repository claim in REPOSITORY_ALLOW_LIST (closes the "any GH
+//     workflow can call us" hole)
+//   - persona_uri in ALLOWED_PERSONA_URIS (closes the "caller points
+//     at an attacker-controlled persona doc" hole)
+//
+// PR coordinates come from the JWT (repository, sha) — not from the
+// request body — so a workflow cannot audit a repo it doesn't
+// represent. The pr_number is the only PR-identity field passed in
+// the body, since the JWT doesn't carry it.
 async function handleAuditGateTest(req: Request, env: Env): Promise<Response> {
-  const secret = env.AMS_AUDIT_GATE_TEST_SECRET;
-  if (typeof secret !== "string" || secret.length === 0) {
-    return errorResponse(
-      503,
-      "endpoint_disabled",
-      "/audit-gate-test is disabled: AMS_AUDIT_GATE_TEST_SECRET is not configured.",
-    );
-  }
   const authHeader = req.headers.get("authorization") ?? "";
   const m = authHeader.match(/^Bearer\s+(.+)$/i);
   if (!m) {
     return errorResponse(
       401,
       "missing_credential",
-      "Authorization: Bearer <AMS_AUDIT_GATE_TEST_SECRET> required.",
+      "Authorization: Bearer <github-oidc-jwt> required.",
     );
   }
-  const providedHash = await pepperedHash("audit-gate-test", m[1]!.trim());
-  const expectedHash = await pepperedHash("audit-gate-test", secret);
-  if (!timingSafeEqualHex(providedHash, expectedHash)) {
-    return errorResponse(401, "invalid_credential", "Shared secret mismatch.");
+  const jwt = m[1]!.trim();
+
+  const verifyResult = await verifyGitHubOidcJwt(jwt, {
+    audience: AUDIT_GATE_OIDC_AUDIENCE,
+    allowedRepositories: REPOSITORY_ALLOW_LIST,
+  });
+  if (!verifyResult.ok) {
+    return errorResponse(401, verifyResult.code, verifyResult.message);
   }
+  const claims = verifyResult.claims;
 
   let body: Record<string, unknown>;
   try {
-    body = await req.clone().json();
+    body = await req.json();
   } catch {
     return errorResponse(400, "invalid_json", "body must be JSON");
   }
-  const headSha = body.head_sha;
-  if (typeof headSha !== "string" || !HEAD_SHA_RE.test(headSha)) {
+
+  const personaUri = body.persona_uri;
+  if (typeof personaUri !== "string" || !ALLOWED_PERSONA_URIS.includes(personaUri)) {
     return errorResponse(
       400,
-      "invalid_head_sha",
-      "body.head_sha must be a 40-character hex string.",
+      "persona_uri_not_allowed",
+      `body.persona_uri must be in the allow-list: ${ALLOWED_PERSONA_URIS.join(", ")}.`,
     );
   }
-  // Key the DO by head_sha. Same head_sha → same DO instance → still fresh
-  // because the DO hibernates after the one-shot fetch returns and its
-  // SQLite is empty (no Phase 2 state to persist).
+
+  const prNumberRaw = body.pr_number;
+  const prNumber =
+    typeof prNumberRaw === "number" && Number.isInteger(prNumberRaw) && prNumberRaw > 0
+      ? prNumberRaw
+      : null;
+  if (prNumber === null) {
+    return errorResponse(400, "missing_pr_number", "body.pr_number is required (positive integer).");
+  }
+
+  const githubToken =
+    typeof body.github_token === "string" && body.github_token.length > 0
+      ? body.github_token
+      : undefined;
+
+  // Derive owner/repo from the JWT's repository claim, sha from the
+  // JWT's sha claim. Body-supplied owner/repo/sha values are ignored
+  // on the OIDC path: the JWT is the source of truth.
+  const [prOwner, prRepo] = claims.repository.split("/");
+  if (!prOwner || !prRepo) {
+    return errorResponse(400, "repository_claim_malformed", `repository claim '${claims.repository}' is not owner/repo.`);
+  }
+  const headSha = claims.sha;
+  if (typeof headSha !== "string" || !/^[0-9a-f]{40}$/i.test(headSha)) {
+    return errorResponse(400, "sha_claim_invalid", "sha claim must be a 40-character hex string.");
+  }
+
+  // Forward the resolved invocation to the AuditGateDO. The DO is
+  // keyed by head_sha to satisfy the fresh-context guarantee per
+  // klappy://canon/methods/spawned-agent-session-runtime-contract.
+  const invocation = {
+    pr_owner: prOwner,
+    pr_repo: prRepo,
+    pr_number: prNumber,
+    head_sha: headSha,
+    persona_uri: personaUri,
+    knowledge_base_url: `https://github.com/${prOwner}/${prRepo}`,
+    ...(githubToken ? { github_token: githubToken } : {}),
+  };
   const stub = env.AUDIT_GATE.get(env.AUDIT_GATE.idFromName(headSha));
-  return stub.fetch(req);
+  // Re-marshal the invocation into a new Request so the DO sees the
+  // resolved shape (rather than the un-validated original body).
+  const forwarded = new Request(req.url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(invocation),
+  });
+  return stub.fetch(forwarded);
 }
 
 async function handleConnect(

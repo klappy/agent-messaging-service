@@ -80,6 +80,27 @@ export interface AuditInvocation {
   pr_repo: string;
   pr_number: number;
   head_sha: string;
+  /**
+   * Canon URI of the persona to instantiate. Phase 4/5 generalized
+   * the runtime: rather than hardcoding a single persona, every
+   * invocation specifies which persona to load. The route enforces
+   * that this URI is on an allow-list of canon-resident personas, so
+   * a caller cannot point at an attacker-controlled doc.
+   */
+  persona_uri: string;
+  /**
+   * GitHub repo URL whose canon should be used to resolve persona +
+   * system-prompt URIs (passed to oddkit_get as knowledge_base_url).
+   * Derived from the OIDC token's `repository` claim at the route.
+   */
+  knowledge_base_url: string;
+  /**
+   * Optional per-run GitHub token for private-repo diff fetching.
+   * Passed in the request body by the caller workflow (whose
+   * GITHUB_TOKEN is scoped to that run only). The DO uses it as the
+   * Authorization header on the diff fetch and does not persist it.
+   */
+  github_token?: string;
 }
 
 export interface AuditVerdict {
@@ -90,9 +111,18 @@ export interface AuditVerdict {
 
 // --- Canon URIs and config ----------------------------------------------
 
-const PERSONA_URI = "ams://canon/personas/ams-canon-code-auditor";
-const PERSONA_KNOWLEDGE_BASE_URL =
-  "https://github.com/klappy/agent-messaging-service";
+// Allow-list of persona URIs the runtime will instantiate. A caller
+// passes persona_uri in the request body; the route accepts only URIs
+// in this set. Adding a new persona to the runtime is a canon-PR-and-
+// allow-list-bump pair, not a free-form runtime config.
+//
+// Phase 4/5: only ams-canon-code-auditor exists. Future personas
+// (output/artifact validators, oddkit gauntlet runners) get added
+// here when their canon doc lands.
+export const ALLOWED_PERSONA_URIS: ReadonlyArray<string> = [
+  "ams://canon/personas/ams-canon-code-auditor",
+];
+
 const ODDKIT_MCP_URL = "https://oddkit.klappy.dev/mcp";
 
 // --- Cache shape (SQLite-backed via DO state) ---------------------------
@@ -130,7 +160,7 @@ export class AuditGateDO extends DurableObject<Env> {
       const body = await req.json();
       if (!isValidInvocation(body)) {
         return errorResponse(400, "invalid_invocation",
-          "body must be {pr_owner, pr_repo, pr_number, head_sha}");
+          "body must be {pr_owner, pr_repo, pr_number, head_sha, persona_uri, knowledge_base_url, github_token?}");
       }
       invocation = body;
     } catch {
@@ -139,7 +169,7 @@ export class AuditGateDO extends DurableObject<Env> {
 
     try {
       // Responsibility 1: resolve profile via oddkit MCP (NOT raw GitHub fetch)
-      const profile = await this.resolvePersonaProfile();
+      const profile = await this.resolvePersonaProfile(invocation);
 
       // Responsibility 2: enforce role
       this.enforceValidatorRole(profile);
@@ -147,7 +177,7 @@ export class AuditGateDO extends DurableObject<Env> {
       // Assemble the system prompt by fetching the system_prompt_uri canon
       // doc — also via oddkit, since the URI is canonical and oddkit owns
       // resolution. Same caching strategy.
-      const systemPrompt = await this.assembleSystemPrompt(profile);
+      const systemPrompt = await this.assembleSystemPrompt(profile, invocation);
 
       // Responsibility 5 (one-shot) + 4 (agent engagement, no clarification)
       // PHASE 2 STUB: real Anthropic + agent-side MCP invocation deferred to
@@ -258,17 +288,16 @@ export class AuditGateDO extends DurableObject<Env> {
   // the parse. Per klappy://canon/methods/persona-shaped-agent-runtime
   // §The Runtime's Job.
 
-  private async resolvePersonaProfile(): Promise<PersonaProfile> {
+  private async resolvePersonaProfile(invocation: AuditInvocation): Promise<PersonaProfile> {
     // Step 1: fetch via oddkit_get
     const doc = await this.oddkitGet({
-      uri: PERSONA_URI,
-      knowledge_base_url: PERSONA_KNOWLEDGE_BASE_URL,
+      uri: invocation.persona_uri,
+      knowledge_base_url: invocation.knowledge_base_url,
     });
 
     // Step 2: check parsed-profile cache
-    const cached = await this.ctx.storage.get<CachedParsedProfile>(
-      `parsed-profile:${PERSONA_URI}`,
-    );
+    const cacheKey = `parsed-profile:${invocation.persona_uri}`;
+    const cached = await this.ctx.storage.get<CachedParsedProfile>(cacheKey);
     if (cached && cached.content_hash === doc.content_hash) {
       return cached.profile;
     }
@@ -277,32 +306,32 @@ export class AuditGateDO extends DurableObject<Env> {
     const profile = parsePersonaFromMarkdown(doc.content);
 
     // Step 4: sanity check — URI we asked for should match the persona's
-    // self-declared identity.
-    if (profile.persona !== "ams-canon-code-auditor") {
+    // self-declared identity. The URI's last path segment is the expected
+    // persona name (e.g. ams://canon/personas/ams-canon-code-auditor →
+    // expected persona = "ams-canon-code-auditor").
+    const expectedName = invocation.persona_uri.split("/").pop() ?? "";
+    if (profile.persona !== expectedName) {
       throw new Error(
-        `persona_identity_mismatch: profile.persona='${profile.persona}', expected 'ams-canon-code-auditor' from ${PERSONA_URI}`,
+        `persona_identity_mismatch: profile.persona='${profile.persona}', expected '${expectedName}' from ${invocation.persona_uri}`,
       );
     }
 
     // Step 5: cache the parsed result keyed by content_hash
-    await this.ctx.storage.put<CachedParsedProfile>(
-      `parsed-profile:${PERSONA_URI}`,
-      {
-        content_hash: doc.content_hash,
-        profile,
-        parsed_at: new Date().toISOString(),
-      },
-    );
+    await this.ctx.storage.put<CachedParsedProfile>(cacheKey, {
+      content_hash: doc.content_hash,
+      profile,
+      parsed_at: new Date().toISOString(),
+    });
 
     return profile;
   }
 
-  private async assembleSystemPrompt(profile: PersonaProfile): Promise<string> {
+  private async assembleSystemPrompt(profile: PersonaProfile, invocation: AuditInvocation): Promise<string> {
     // Resolve the system_prompt_uri via oddkit. Same caching strategy as
     // the persona profile — cache the doc by content_hash.
     const doc = await this.oddkitGet({
       uri: profile.system_prompt_uri,
-      knowledge_base_url: PERSONA_KNOWLEDGE_BASE_URL,
+      knowledge_base_url: invocation.knowledge_base_url,
     });
 
     // The system prompt assembly is per-invocation since it composes
@@ -362,24 +391,32 @@ export class AuditGateDO extends DurableObject<Env> {
       throw new Error("anthropic_api_key_not_configured");
     }
 
-    // Fetch the PR diff. Public repos don't need auth; for private repos
-    // a GITHUB_TOKEN env would be threaded here. PoC uses public.
+    // Fetch the PR diff. Public repos work unauthenticated; for private
+    // repos the caller workflow passes its per-run GITHUB_TOKEN in the
+    // request body and we use it as the Authorization header here. The
+    // token is scoped to the workflow run that issued it and is not
+    // persisted by this DO.
     const diffUrl = `https://github.com/${ctx.invocation.pr_owner}/${ctx.invocation.pr_repo}/pull/${ctx.invocation.pr_number}.diff`;
+    const diffHeaders: Record<string, string> = { accept: "text/plain" };
+    if (ctx.invocation.github_token) {
+      diffHeaders.authorization = `token ${ctx.invocation.github_token}`;
+    }
     const diffRes = await fetch(diffUrl, {
-      headers: { accept: "text/plain" },
+      headers: diffHeaders,
       redirect: "follow",
     });
     if (!diffRes.ok) {
       throw new Error(`diff_fetch_failed: ${diffRes.status} ${diffRes.statusText} for ${diffUrl}`);
     }
     const diff = await diffRes.text();
-    // Cap diff size to keep the token bill bounded on huge PRs. Phase 4+
-    // could chunk + iterate; for the PoC, truncate with a marker.
-    const MAX_DIFF_CHARS = 60000;
-    const truncatedDiff =
-      diff.length > MAX_DIFF_CHARS
-        ? diff.slice(0, MAX_DIFF_CHARS) + `\n\n[... diff truncated at ${MAX_DIFF_CHARS} chars; full diff is ${diff.length} chars ...]`
-        : diff;
+    // Cap diff size to keep the token bill bounded on huge PRs.
+    // head+tail strategy: keep the first half-cap and the last half-cap
+    // of the diff with a marker between, so context lives in both
+    // boundaries rather than just the start. Full chunking + reducer is
+    // a future phase; this is the right cost/value trade for current
+    // PR sizes.
+    const MAX_DIFF_CHARS = 150_000; // 150 KiB
+    const truncatedDiff = capDiff(diff, MAX_DIFF_CHARS);
 
     // Compose the agent's user message: PR coordinates + the diff + an
     // explicit reminder of the output contract.
@@ -392,7 +429,7 @@ export class AuditGateDO extends DurableObject<Env> {
       `  number: ${ctx.invocation.pr_number}`,
       `  head_sha: ${ctx.invocation.head_sha}`,
       ``,
-      `You have the oddkit MCP server available. Use oddkit_get and oddkit_search to resolve any \`ams://\` or \`klappy://\` URIs you need to ground your analysis. Pass knowledge_base_url=https://github.com/${ctx.invocation.pr_owner}/${ctx.invocation.pr_repo} when resolving ams:// URIs.`,
+      `You have the oddkit MCP server available. Use oddkit_get and oddkit_search to resolve any \`ams://\` or \`klappy://\` URIs you need to ground your analysis. Pass knowledge_base_url=${ctx.invocation.knowledge_base_url} when resolving ams:// URIs.`,
       ``,
       `Output contract: your final emission MUST be a single fenced JSON block matching:`,
       "```json",
@@ -526,8 +563,33 @@ function isValidInvocation(v: unknown): v is AuditInvocation {
     Number.isInteger(i.pr_number) &&
     i.pr_number > 0 &&
     typeof i.head_sha === "string" &&
-    /^[0-9a-f]{40}$/i.test(i.head_sha)
+    /^[0-9a-f]{40}$/i.test(i.head_sha) &&
+    typeof i.persona_uri === "string" &&
+    ALLOWED_PERSONA_URIS.includes(i.persona_uri) &&
+    typeof i.knowledge_base_url === "string" &&
+    /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(i.knowledge_base_url) &&
+    (i.github_token === undefined || (typeof i.github_token === "string" && i.github_token.length > 0))
   );
+}
+
+/**
+ * Cap a diff to at most maxChars by keeping the head and tail with a
+ * middle-omission marker. Returns the diff unchanged if it already
+ * fits. The marker is part of the cap so the budget includes it.
+ */
+export function capDiff(diff: string, maxChars: number): string {
+  if (diff.length <= maxChars) return diff;
+  const marker = (omitted: number) =>
+    `\n\n[... ${omitted} chars omitted from middle of diff; full diff is ${diff.length} chars ...]\n\n`;
+  // Reserve marker space; split remaining budget between head and tail.
+  // Conservative marker estimate: 120 chars (handles 9-digit omitted counts).
+  const reservedForMarker = 120;
+  const usable = Math.max(maxChars - reservedForMarker, 1000);
+  const half = Math.floor(usable / 2);
+  const head = diff.slice(0, half);
+  const tail = diff.slice(diff.length - half);
+  const omitted = diff.length - head.length - tail.length;
+  return head + marker(omitted) + tail;
 }
 
 function isValidVerdict(v: unknown): v is AuditVerdict {

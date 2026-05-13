@@ -1,0 +1,158 @@
+name: Audit-Gate Runtime Probe (reusable)
+
+# Reusable workflow that calls the AMS audit-gate runtime
+# (POST /audit-gate-test on ams.klappy.dev) with an OIDC-authenticated
+# request and posts the verdict as a PR comment. The comment is
+# clearly labeled as a side-by-side probe and does not gate merge —
+# the existing canon-code-sync-audit workflow (Managed Agents path)
+# remains the gating check until parity is observed.
+#
+# Callers pass:
+#   - persona_uri: which canon persona to instantiate (must be on the
+#     Worker's ALLOWED_PERSONA_URIS list)
+#   - comment_header: human-readable label shown above the verdict
+#
+# Example caller:
+#
+#   jobs:
+#     probe:
+#       uses: ./.github/workflows/audit-gate-runtime-probe.yml
+#       with:
+#         persona_uri: ams://canon/personas/ams-canon-code-auditor
+#         comment_header: Canon-Code Sync Audit (runtime probe)
+#
+# Per the canon constraint canon-code-sync-via-spawned-agent-session
+# §Current Implementation, this workflow is the substrate-side
+# probe that accumulates parity evidence between the gating Managed
+# Agents path and the runtime path. Once parity is observed across
+# 2-3 real PRs, the operator decides whether to cut over.
+
+on:
+  workflow_call:
+    inputs:
+      persona_uri:
+        description: Canon URI of the persona to instantiate. Must be on the Worker's allow-list.
+        required: true
+        type: string
+      comment_header:
+        description: Label shown above the verdict comment on the PR.
+        required: true
+        type: string
+      audit_gate_url:
+        description: Full URL of the audit-gate endpoint. Override for staging if needed.
+        required: false
+        type: string
+        default: https://ams.klappy.dev/audit-gate-test
+      oidc_audience:
+        description: OIDC audience to request from GitHub. Must match the Worker's expected audience.
+        required: false
+        type: string
+        default: ams-audit-gate
+
+permissions:
+  id-token: write       # request OIDC token from GitHub
+  pull-requests: write  # post the verdict comment
+  contents: read        # checkout for any future caller-side work
+
+jobs:
+  probe:
+    name: Probe
+    runs-on: ubuntu-latest
+    # Only run on PR events. push/main events don't have a pr_number
+    # and the verdict is shaped as a PR comment.
+    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
+    steps:
+      - name: Mint OIDC token
+        id: oidc
+        env:
+          AUDIENCE: ${{ inputs.oidc_audience }}
+        run: |
+          set -euo pipefail
+          TOKEN=$(curl -fsSL \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}" \
+            | jq -r .value)
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+            echo "::error::Failed to mint OIDC token for audience=${AUDIENCE}"
+            exit 1
+          fi
+          # Use a job-step output to pass the token to subsequent steps;
+          # avoid logging the token itself. ::add-mask:: ensures it
+          # doesn't appear in any later step's logs.
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Call audit-gate runtime
+        id: audit
+        env:
+          OIDC_TOKEN: ${{ steps.oidc.outputs.token }}
+          PERSONA_URI: ${{ inputs.persona_uri }}
+          AUDIT_GATE_URL: ${{ inputs.audit_gate_url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          # Pass the workflow's per-run GITHUB_TOKEN so the Worker can
+          # fetch private-repo diffs. The token is scoped to this run;
+          # the Worker uses it for the diff fetch only and does not
+          # persist it.
+          GITHUB_RUN_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          BODY=$(jq -nc \
+            --arg persona "$PERSONA_URI" \
+            --argjson pr "$PR_NUMBER" \
+            --arg gh "$GITHUB_RUN_TOKEN" \
+            '{persona_uri: $persona, pr_number: $pr, github_token: $gh}')
+          # Capture status and body in one curl call; -w writes status
+          # on a marker line we strip below.
+          RESPONSE=$(curl -sS -X POST "$AUDIT_GATE_URL" \
+            -H "Authorization: Bearer ${OIDC_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "$BODY" \
+            -w $'\n__STATUS__%{http_code}')
+          STATUS=$(printf '%s' "$RESPONSE" | awk '/^__STATUS__/{print substr($0,11)}')
+          BODY_OUT=$(printf '%s' "$RESPONSE" | sed '/^__STATUS__/d')
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          # Write body to a file the next step reads; passing multi-line
+          # JSON through step outputs is fragile.
+          printf '%s' "$BODY_OUT" > /tmp/audit-response.json
+
+      - name: Post verdict comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STATUS: ${{ steps.audit.outputs.status }}
+          COMMENT_HEADER: ${{ inputs.comment_header }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Compose the comment body. The runtime returns
+          # {verdict, summary, comment_body_b64}; we decode the
+          # base64 markdown and frame it with the probe header.
+          if [ "$STATUS" = "200" ]; then
+            VERDICT=$(jq -r .verdict /tmp/audit-response.json)
+            SUMMARY=$(jq -r .summary /tmp/audit-response.json)
+            COMMENT_B64=$(jq -r .comment_body_b64 /tmp/audit-response.json)
+            COMMENT_BODY=$(printf '%s' "$COMMENT_B64" | base64 -d)
+            HEADER=$'> _Side-by-side probe — not gating. Compare to the Managed Agents verdict for parity tracking._\n'
+            TITLE="### ${COMMENT_HEADER} — ${VERDICT}"
+            {
+              printf '%s\n\n' "$HEADER"
+              printf '%s\n\n' "$TITLE"
+              printf '%s\n\n' "**Summary:** ${SUMMARY}"
+              printf '%s\n\n' "---"
+              printf '%s\n' "$COMMENT_BODY"
+            } > /tmp/comment.md
+          else
+            # Non-200: the runtime errored before producing a verdict.
+            # Surface the failure verbatim so the operator sees what
+            # broke. Still non-gating; this is a probe.
+            ERROR_BODY=$(cat /tmp/audit-response.json || echo "<no response body>")
+            HEADER=$'> _Side-by-side probe — not gating. Runtime probe errored; this does not affect merge._\n'
+            {
+              printf '%s\n\n' "$HEADER"
+              printf '%s\n\n' "### ${COMMENT_HEADER} — RUNTIME ERROR (HTTP ${STATUS})"
+              printf '%s\n\n' '```json'
+              printf '%s\n' "$ERROR_BODY"
+              printf '%s\n' '```'
+            } > /tmp/comment.md
+          fi
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file /tmp/comment.md
