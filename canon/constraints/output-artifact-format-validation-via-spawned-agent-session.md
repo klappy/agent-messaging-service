@@ -60,7 +60,7 @@ This section records the AMS substrate choice for this audit. It is an operating
 - **Beta header**: `anthropic-beta: mcp-client-2025-11-20`.
 - **Model**: `claude-sonnet-4-6`.
 - **Trigger surface**: `POST /audit-gate-test` on `ams.klappy.dev`, OIDC-authenticated, with `persona_uri: ams://canon/personas/ams-output-artifact-validator` in the request body.
-- **Caller workflow**: `.github/workflows/output-artifact-validation-runtime-probe.yml`. Fires on the same PR triggers as the canon-code-sync probe, runs alongside it, posts an independent verdict comment.
+- **Caller workflow**: `.github/workflows/gates.yml` (job `output-artifact-probe`). Fires on the same PR triggers as the canon-code-sync probe, runs alongside it, posts an independent verdict comment.
 - **Probe / not-gating**: this audit is in initial deployment. Like the canon-code-sync runtime probe, it posts a clearly-labeled non-gating comment until parity with operator expectations is established. Promotion to gating is a workflow edit, not a substrate change.
 
 ## What This Forbids in AMS
