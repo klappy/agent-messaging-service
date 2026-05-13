@@ -636,6 +636,7 @@ export class AuditGateDO extends DurableObject<Env> {
       const message = err instanceof Error ? err.message : "unknown_stream_error";
       throw new Error(
         `anthropic_stream_reader_failed: ${message} text_blocks_accumulated=${textBlocks.length} buffered_chars=${buffer.length} stop_reason=${stopReason ?? "?"}`,
+        { cause: err },
       );
     } finally {
       try {
