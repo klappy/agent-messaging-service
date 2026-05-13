@@ -12,7 +12,7 @@ date: 2026-05-13
 derives_from: "klappy://canon/constraints/audit-gates-are-spawned-agent-sessions, klappy://canon/methods/persona-shaped-agent-runtime, klappy://canon/methods/spawned-agent-session-runtime-contract, klappy://canon/methods/reference-integrity-audit, klappy://canon/constraints/oddkit-prompt-pattern, klappy://canon/voice/oddie-the-river-guide"
 complements: "klappy://canon/methods/governance-validation-via-agents, ams://canon/constraints/canon-code-sync-via-spawned-agent-session, ams://canon/constraints/output-artifact-format-validation-via-spawned-agent-session"
 governs: "The audit gate that runs the oddkit gauntlet (oddkit_challenge + oddkit_audit) on canon and doc PRs in AMS. The gauntlet is dispatched by a spawned-agent-session so the audit can read canon, pressure-test claims, walk URI references, and report findings in plain language — not buried in a script's exit code."
-status: proposed
+status: active
 ---
 
 ## Summary — The Gauntlet Was Always a Person's Job; Now It's a Persona's Job

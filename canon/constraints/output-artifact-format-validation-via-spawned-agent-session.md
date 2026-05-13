@@ -12,7 +12,7 @@ date: 2026-05-13
 derives_from: "klappy://canon/constraints/audit-gates-are-spawned-agent-sessions, klappy://canon/methods/persona-shaped-agent-runtime, klappy://canon/methods/spawned-agent-session-runtime-contract, klappy://odd/encoding-types/serialization-format, ams://canon/constraints/canon-code-sync-via-spawned-agent-session, klappy://canon/voice/oddie-the-river-guide"
 complements: "klappy://canon/methods/governance-validation-via-agents, klappy://canon/methods/spawned-agent-session-substrate-options"
 governs: "Validation that files matching governed format patterns in any AMS PR diff conform to their canonical format definitions. The validator runs as a spawned-agent-session — not a schema linter — so the same audit substrate that catches code-canon drift catches format drift. Scope is bounded by an explicit allow-list of format patterns. Initial scope: journal/**/*.tsv against the Dolcheo+ serialization-format canon."
-status: proposed
+status: active
 ---
 
 ## Summary — Formats Have Canon Too
