@@ -271,7 +271,7 @@ jobs:
             # contains "Bugbot". Defensive: don't hard-code the exact
             # check-run name in case Cursor renames it.
             BUGBOT=$(printf '%s' "$CHECK_RUNS_JSON" \
-              | jq -c '.check_runs
+              | jq -c '(.check_runs // [])
                   | map(select(.app.name == "Cursor" and (.name | test("Bugbot"; "i"))))
                   | first // null')
 
@@ -315,6 +315,9 @@ jobs:
     name: Canon-Code Sync Audit (Managed Agent)
     needs: [smoke, wait-for-bugbot]
     if: |
+      !cancelled() &&
+      needs.smoke.result == 'success' &&
+      (needs.wait-for-bugbot.result == 'success' || needs.wait-for-bugbot.result == 'skipped' || needs.wait-for-bugbot.result == 'failure') &&
       github.event.pull_request.draft == false &&
       needs.smoke.outputs.legacy_gate_paths == 'true'
     runs-on: ubuntu-latest
@@ -394,6 +397,9 @@ jobs:
     name: Canon-Code Sync Audit (runtime probe)
     needs: [smoke, wait-for-bugbot]
     if: |
+      !cancelled() &&
+      needs.smoke.result == 'success' &&
+      (needs.wait-for-bugbot.result == 'success' || needs.wait-for-bugbot.result == 'skipped' || needs.wait-for-bugbot.result == 'failure') &&
       github.event.pull_request.draft == false &&
       needs.smoke.outputs.legacy_gate_paths == 'true'
     uses: ./.github/workflows/audit-gate-runtime-probe.yml
@@ -405,6 +411,9 @@ jobs:
     name: Oddkit Gauntlet (runtime probe)
     needs: [smoke, wait-for-bugbot]
     if: |
+      !cancelled() &&
+      needs.smoke.result == 'success' &&
+      (needs.wait-for-bugbot.result == 'success' || needs.wait-for-bugbot.result == 'skipped' || needs.wait-for-bugbot.result == 'failure') &&
       github.event.pull_request.draft == false &&
       needs.smoke.outputs.canon_or_writings_or_journal == 'true'
     uses: ./.github/workflows/audit-gate-runtime-probe.yml
@@ -416,6 +425,9 @@ jobs:
     name: Output-Artifact Validation (runtime probe)
     needs: [smoke, wait-for-bugbot]
     if: |
+      !cancelled() &&
+      needs.smoke.result == 'success' &&
+      (needs.wait-for-bugbot.result == 'success' || needs.wait-for-bugbot.result == 'skipped' || needs.wait-for-bugbot.result == 'failure') &&
       github.event.pull_request.draft == false &&
       needs.smoke.outputs.journal_tsv == 'true'
     uses: ./.github/workflows/audit-gate-runtime-probe.yml
