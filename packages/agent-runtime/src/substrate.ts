@@ -199,12 +199,11 @@ function isRetryableError(err: Error): boolean {
   // PR #92) and network errors mid-stream surface as SubstrateStreamError
   // with messages naming the upstream class. Retry once per attempt.
   if (err instanceof SubstrateStreamError) {
-    const m = err.message.toLowerCase();
     return (
-      m.includes("overload") ||
-      m.includes("rate_limit") ||
-      m.includes("network") ||
-      m.includes("timeout")
+      err.errorType === "overloaded" ||
+      err.errorType === "rate_limited" ||
+      err.errorType === "network" ||
+      err.errorType === "timeout"
     );
   }
   return false;
