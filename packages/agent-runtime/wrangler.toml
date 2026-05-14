@@ -1,0 +1,33 @@
+name = "agent-runtime"
+main = "src/index.ts"
+compatibility_date = "2026-05-13"
+compatibility_flags = ["nodejs_compat"]
+
+# Persona-shaped agent runtime per:
+#   klappy://canon/methods/persona-shaped-agent-runtime  (Tier-1 architecture)
+#   klappy://canon/methods/spawned-agent-session-runtime-contract  (Tier-2 spec)
+#
+# Discrete from the AMS worker (worker/) and TinCan worker (packages/tincan/).
+# This Worker does ONE thing: resolve a persona profile, compose its system
+# prompt, dispatch to a substrate, post-process the output. It does not
+# host AMS protocol, it does not host TinCan surfaces, and it does not
+# share code with either.
+#
+# Routes deferred until first deployment is verified. Operator wires a
+# hostname (e.g., agent-runtime.klappy.dev) when ready to cut over from
+# the existing audit-gate path.
+
+# Required secrets (set via `wrangler secret put` after first deploy):
+#   ANTHROPIC_API_KEY — the API key the substrate (Anthropic Messages API)
+#                        authenticates with. This is a NEW secret on this
+#                        worker, distinct from the AMS worker's secret.
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+persist = true
+invocation_logs = true
