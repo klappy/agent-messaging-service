@@ -161,6 +161,15 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+          # For pull_request_target (bugbot:fix label) and PR review/comment
+          # events, actions/checkout@v4 defaults to the base/default branch.
+          # Explicitly check out the PR head so the action's filesystem
+          # tools (Read/Write/Edit/Grep/Glob) and any autofix commits
+          # operate on the PR's code, not the default branch. Falls back
+          # to github.ref/github.repository for issue_comment events,
+          # where github.event.pull_request is unavailable.
+          ref: ${{ github.event.pull_request.head.sha || github.event.pull_request.head.ref || github.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
 
       - name: Verify auth secret is present
         env:
