@@ -175,6 +175,11 @@ function parseInvocation(body: unknown): ParseOk | ParseErr {
 
   const surface = stringField(o, "surface");
   if (!surface) return err("missing required field: surface");
+  if (!isSurface(surface)) {
+    return err(
+      `surface must be one of: real-time-stream, audit, mentorship, sidebar-chat, code-output, synthesis-ledger, conversational, strategic-translation; got ${JSON.stringify(surface)}`,
+    );
+  }
 
   const engagement = stringField(o, "engagement");
   if (!engagement) return err("missing required field: engagement");
@@ -271,6 +276,19 @@ function isRole(s: string): s is Invocation["role"] {
     s === "resolver" ||
     s === "general" ||
     s === "observer"
+  );
+}
+
+function isSurface(s: string): s is Invocation["surface"] {
+  return (
+    s === "real-time-stream" ||
+    s === "audit" ||
+    s === "mentorship" ||
+    s === "sidebar-chat" ||
+    s === "code-output" ||
+    s === "synthesis-ledger" ||
+    s === "conversational" ||
+    s === "strategic-translation"
   );
 }
 

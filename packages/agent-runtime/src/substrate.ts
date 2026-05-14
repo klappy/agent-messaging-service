@@ -39,7 +39,7 @@ import Anthropic, { APIError } from "@anthropic-ai/sdk";
 
 const DEFAULT_MODEL = "claude-sonnet-4-5";
 const DEFAULT_MAX_TOKENS = 16384;
-const MCP_BETA = "mcp-client-2025-04-04";
+const MCP_BETA = "mcp-client-2025-11-20";
 
 // Transient errors get retried with exponential backoff. The set
 // mirrors what the previous handroll retried plus 529 (Anthropic
