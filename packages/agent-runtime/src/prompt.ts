@@ -106,7 +106,9 @@ export async function composeSystemPrompt(
   // --- Task body -------------------------------------------------------
   // The task-definition canon is delimited with explicit BEGIN/END
   // markers so the agent treats it as the authoritative spec for its
-  // session, not as one input among many.
+  // session, not as one input among many. The caller's task statement
+  // itself is sent as the user-turn message (see dispatchToSubstrate)
+  // so it is intentionally NOT duplicated here.
   sections.push(
     ``,
     `The following canon document is your task definition. Read it carefully and follow it strictly. Your output must satisfy the Output contract specified within it.`,
@@ -114,9 +116,6 @@ export async function composeSystemPrompt(
     `--- BEGIN ${profile.system_prompt_uri} ---`,
     taskDoc.body,
     `--- END ${profile.system_prompt_uri} ---`,
-    ``,
-    `Caller's task statement:`,
-    invocation.task,
   );
 
   return {
