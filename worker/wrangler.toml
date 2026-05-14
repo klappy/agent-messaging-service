@@ -34,18 +34,6 @@ class_name = "ConversationDO"
 name = "AMS_MCP"
 class_name = "AmsMcpAgent"
 
-# AuditGateDO — Phase 2 of AUDIT-GATE-RUNTIME-MIGRATION-PLAN.md. Hosts one
-# canon-code-sync audit session per PR head_sha; instantiates the persona-
-# shaped-agent-runtime contract for the ams-canon-code-auditor persona. Per
-# klappy://canon/methods/spawned-agent-session-runtime-contract §Composition
-# Rules, this is session_type=one_shot with role=validator and
-# engagement=agent. Fresh-context guarantee is satisfied by route-layer
-# keying — a new head_sha produces a new DO instance with no inherited state.
-# See worker/src/runtime/audit-gate.ts.
-[[durable_objects.bindings]]
-name = "AUDIT_GATE"
-class_name = "AuditGateDO"
-
 # First DO migration on this Worker. Required the first time DO classes are
 # introduced; tag is the migration identifier (Cloudflare records it on the
 # Worker so future migrations can rename / transfer / delete classes).
@@ -73,24 +61,32 @@ new_sqlite_classes = ["AmsMcpAgent"]
 # Fourth migration: introduce AuditGateDO (Phase 2 of the audit-gate runtime
 # migration). SQLite-backed for forward compatibility — Phase 3 may persist
 # per-invocation session state when the real agent loop lands. No deletions.
+# Retired by the v5 migration below.
 [[migrations]]
 tag = "v4"
 new_sqlite_classes = ["AuditGateDO"]
 
+# Fifth migration: substrate switchover (2026-05-14). The audit gate moved
+# off this Worker entirely and onto GitHub Actions + claude-code-action +
+# subscription OAuth — see .github/workflows/audit-gate-cca.yml and
+# klappy://canon/methods/spawned-agent-session-substrate-options
+# §Mixing Tools Across Vendors. The AuditGateDO class is no longer needed
+# on this Worker. Any in-flight audit DO instance is discarded at deploy
+# time; the GHA workflow on the next PR is the replacement.
+[[migrations]]
+tag = "v5"
+deleted_classes = ["AuditGateDO"]
+
 # Secrets set via `wrangler secret put`:
 #   AMS_CREDENTIAL_PEPPER         (random 32-byte hex; mixed into bearer hash)
 #   AMS_PERMISSIVE_TOKEN_PEPPER   (same idea, for permissive tokens)
-#   ANTHROPIC_API_KEY             (Anthropic API key for the AuditGateDO's
-#                                  agent session. The DO calls /v1/messages
-#                                  with the persona's mcp_servers.operational
-#                                  wired in via the native MCP connector beta.
-#                                  If unset, the audit session fails fast.)
 #
-# Audit-gate /audit-gate-test auth: GitHub Actions OIDC, no secret to set.
-# The Worker fetches https://token.actions.githubusercontent.com/.well-known/jwks
-# at runtime (cached) and verifies JWT signature + claims. The repository
-# allow-list lives in code (worker/src/index.ts) since adding a new repo
-# is intentional, reviewable, and goes through the audit gate itself.
+# ANTHROPIC_API_KEY was previously required for the AuditGateDO's agent
+# session. With the v5 migration the audit gate no longer runs on this
+# Worker; ANTHROPIC_API_KEY can be unset (and the wrangler secret deleted)
+# without consequence. The new substrate (GHA + claude-code-action) reads
+# CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY from repository secrets,
+# not from this Worker.
 
 # Workers Logs — dashboard-toggled, synced here so deploys do not regress the
 # setting. Captures broker-internal request shape (outcome, method, path,

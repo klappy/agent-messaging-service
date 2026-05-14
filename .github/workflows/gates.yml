@@ -1,53 +1,53 @@
 name: Gates
 
-# Single orchestrator workflow that chains every PR validation behind
-# a free smoke job. The motivation is cost: each of the four expensive
-# gates (canon-code-sync Managed Agent, canon-code-sync runtime probe,
-# oddkit-gauntlet runtime probe, output-artifact-validation runtime
-# probe) costs $0.05-0.50 per run in Anthropic API charges. Without
-# chaining, every PR push fires all four in parallel — and Bugbot-
-# driven iteration multiplies the cost across auto-fix commits.
+# Orchestrator workflow that chains every PR audit gate behind a free
+# smoke job. The motivation is cost: pre-2026-05-14, audit gates ran on
+# a Cloudflare Worker that called the Anthropic API at pay-per-token
+# rates (~$0.05-0.50 per gate run). This file's gates now run on GHA
+# runners via anthropics/claude-code-action@v1 authenticated against a
+# Pro/Max/Team/Enterprise subscription via CLAUDE_CODE_OAUTH_TOKEN —
+# inference consumes the subscription's included usage rather than
+# billing per-token, and GHA runner minutes are free for this public
+# repo.
+#
+# Per klappy://canon/methods/spawned-agent-session-substrate-options
+# §Mixing Tools Across Vendors, this is the cost-conscious decision-
+# tree path for GitHub-hosted repos with an Anthropic subscription.
 #
 # Architecture:
 #
 #   smoke (free; runs on every PR push, even drafts)
-#     ├── canon-code-sync legacy gate     (needs smoke + not draft + legacy_gate_paths)
-#     ├── canon-code-sync runtime probe   (needs smoke + not draft + legacy_gate_paths)
-#     ├── oddkit-gauntlet runtime probe   (needs smoke + not draft + canon_or_writings_or_journal)
-#     └── output-artifact runtime probe   (needs smoke + not draft + journal_tsv)
+#     ├── canon-code-sync       (needs smoke + not draft + legacy_gate_paths)
+#     ├── oddkit-gauntlet       (needs smoke + not draft + canon_or_writings_or_journal)
+#     └── output-artifact       (needs smoke + not draft + journal_tsv)
 #
 # Smoke is mechanical (typecheck + YAML frontmatter parse + TSV shape
 # check) and finishes in 1-2 minutes. The expensive gates only fire if
 # smoke passes AND the PR is out of draft AND the changed-paths classifier
 # said this gate's scope is present in the diff. That means: a Bugbot
-# auto-fix that introduces a YAML typo costs nothing (smoke fails, all
-# probes skipped); a PR kept as draft costs nothing in probes (smoke
-# runs as the operator iterates); the legacy gate and its parity twin
-# both gate behind smoke so a single smoke failure stops everything.
+# autofix that introduces a YAML typo costs nothing (smoke fails, all
+# gates skipped); a PR kept as draft costs nothing in gates (smoke runs
+# as the operator iterates).
 #
-# Replaces these files (now deleted in this PR):
-#   .github/workflows/canon-code-sync-audit.yml
-#   .github/workflows/canon-code-sync-audit-runtime-probe.yml
-#   .github/workflows/oddkit-gauntlet-runtime-probe.yml
-#   .github/workflows/output-artifact-validation-runtime-probe.yml
-#
-# Still depends on (unchanged):
-#   .github/workflows/audit-gate-runtime-probe.yml (reusable; called by
-#   the three probe jobs below with different persona_uri)
+# Substrate switchover (2026-05-14):
+#   - The legacy `canon-code-sync-legacy` job (Anthropic Managed Agents
+#     dispatcher via `tools/audit-via-agent.py`) is REMOVED.
+#   - The three runtime-probe jobs that called the CF Worker's
+#     /audit-gate-test endpoint via OIDC are REWIRED to the new
+#     reusable workflow `.github/workflows/audit-gate-cca.yml`, which
+#     dispatches claude-code-action with the same persona URIs.
+#   - The audit task (canon-at-runtime via oddkit, persona-shaped,
+#     structured verdict) is UNCHANGED — only the substrate moved.
+#   - "(runtime probe)" labels removed; these are the only gates now,
+#     not parallel probes.
 
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  # Intentionally not triggering on pull_request_target: per GitHub's
-  # December 2025 change, pull_request_target sets github.sha (and thus
-  # the OIDC token's sha claim) to the default branch HEAD rather than
-  # the PR head commit. The Worker keys the AuditGateDO by claims.sha,
-  # so a pull_request_target run would route to a stale/shared DO
-  # instance and audit the wrong commit. We stay on pull_request only.
 
 # Cancel any in-flight gate run on the same PR when a new commit lands.
-# Bugbot auto-fixes will land new commits frequently; we want only the
-# most recent commit's verdict to matter.
+# Bugbot autofixes land new commits frequently; we want only the most
+# recent commit's verdict to matter.
 concurrency:
   group: gates-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -97,9 +97,9 @@ jobs:
           CHANGED=/tmp/changed.txt
           # Use grep -q with anchored patterns to set per-class booleans.
           # Each class is the union of paths that a downstream gate cares
-          # about. Keep the legacy_gate_paths list in sync with the old
-          # canon-code-sync-audit.yml `paths:` filter — that's the gate
-          # whose scope this replaces.
+          # about. Keep the legacy_gate_paths list in sync with the canon-
+          # code-sync constraint's scope — that's the gate whose scope
+          # this classifies.
 
           classify() {
             local name="$1"; shift
@@ -130,9 +130,8 @@ jobs:
           classify journal_tsv \
             '^journal/.+\.tsv$'
 
-          # Legacy gate + canon-code-sync runtime probe scope. Mirrors the
-          # `paths:` filter from the old canon-code-sync-audit.yml so the
-          # gating semantics don't change at cutover.
+          # Canon-code-sync scope. Mirrors the gating semantics the previous
+          # gate enforced; unchanged across the substrate switch.
           classify legacy_gate_paths \
             '^canon/' \
             '^docs/' \
@@ -147,9 +146,8 @@ jobs:
             '^AGENTS\.md$' \
             '^TINCAN-.*\.md$' \
             '^POC-.*\.md$' \
-            '^tools/audit-via-agent\.py$' \
             '^\.github/workflows/gates\.yml$' \
-            '^\.github/workflows/audit-gate-runtime-probe\.yml$'
+            '^\.github/workflows/audit-gate-cca\.yml$'
 
           # Worker code scope: triggers TypeScript typecheck during smoke.
           classify worker_code \
@@ -202,119 +200,40 @@ jobs:
           echo "  draft=${{ github.event.pull_request.draft }}"
 
   # ----------------------------------------------------------------------
-  # Expensive gates — all chained behind smoke + not-draft + per-gate
-  # path-class match. If any of these conditions are false, the gate
-  # skips (zero Claude cost).
+  # Audit gates — all chained behind smoke + not-draft + per-gate path-
+  # class match. If any of these conditions are false, the gate skips
+  # (zero Claude subscription consumption).
   # ----------------------------------------------------------------------
 
-  canon-code-sync-legacy:
-    name: Canon-Code Sync Audit (Managed Agent)
+  canon-code-sync:
+    name: Canon-Code Sync Audit
     needs: [smoke]
     if: |
       github.event.pull_request.draft == false &&
       needs.smoke.outputs.legacy_gate_paths == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-
-    steps:
-      - name: Check out repo (so the workflow can run the dispatcher script)
-        uses: actions/checkout@v4
-
-      - name: Verify ANTHROPIC_API_KEY is set
-        env:
-          KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          if [ -z "$KEY" ]; then
-            echo "::error::ANTHROPIC_API_KEY repo secret is not set."
-            echo "::error::Add it under Settings → Secrets and variables → Actions, then re-run."
-            exit 1
-          fi
-
-      - name: Dispatch Managed Agent and capture structured result
-        id: dispatch
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          PR_NUMBER:   ${{ github.event.pull_request.number }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
-          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
-          REPO_FULL:   ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          python3 tools/audit-via-agent.py > "${GITHUB_WORKSPACE}/result.json"
-          echo "::group::Dispatcher result"
-          jq '.' "${GITHUB_WORKSPACE}/result.json"
-          echo "::endgroup::"
-          VERDICT=$(jq -r '.verdict' "${GITHUB_WORKSPACE}/result.json")
-          echo "verdict=${VERDICT}" >> "$GITHUB_OUTPUT"
-
-      - name: Post agent's findings as PR comment
-        if: always() && hashFiles('result.json') != ''
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER:    ${{ github.event.pull_request.number }}
-          REPO_FULL:    ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          jq '{body: .comment_body}' "${GITHUB_WORKSPACE}/result.json" > /tmp/comment-payload.json
-          POST_HTTP=$(curl -sS -o /tmp/comment-resp.json -w "%{http_code}" \
-            -X POST \
-            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${REPO_FULL}/issues/${PR_NUMBER}/comments" \
-            --data-binary @/tmp/comment-payload.json || true)
-          echo "PR comment POST: HTTP ${POST_HTTP}"
-          if [ "$POST_HTTP" != "201" ]; then
-            echo "::warning::PR comment POST failed (HTTP ${POST_HTTP}). Response:"
-            cat /tmp/comment-resp.json || true
-          fi
-
-      - name: Exit on verdict
-        env:
-          VERDICT: ${{ steps.dispatch.outputs.verdict }}
-        run: |
-          case "$VERDICT" in
-            PASS)
-              echo "::notice::Canon-code sync audit: PASS"
-              exit 0 ;;
-            FAIL)
-              echo "::error::Canon-code sync audit: FAIL — see PR comment for findings."
-              exit 1 ;;
-            ERROR|*)
-              echo "::error::Canon-code sync audit: ERROR — see PR comment and dispatcher logs."
-              exit 1 ;;
-          esac
-
-  canon-code-sync-probe:
-    name: Canon-Code Sync Audit (runtime probe)
-    needs: [smoke]
-    if: |
-      github.event.pull_request.draft == false &&
-      needs.smoke.outputs.legacy_gate_paths == 'true'
-    uses: ./.github/workflows/audit-gate-runtime-probe.yml
+    uses: ./.github/workflows/audit-gate-cca.yml
     with:
       persona_uri: ams://canon/personas/ams-canon-code-auditor
-      comment_header: Canon-Code Sync Audit (runtime probe)
+      comment_header: Canon-Code Sync Audit
 
-  oddkit-gauntlet-probe:
-    name: Oddkit Gauntlet (runtime probe)
+  oddkit-gauntlet:
+    name: Oddkit Gauntlet
     needs: [smoke]
     if: |
       github.event.pull_request.draft == false &&
       needs.smoke.outputs.canon_or_writings_or_journal == 'true'
-    uses: ./.github/workflows/audit-gate-runtime-probe.yml
+    uses: ./.github/workflows/audit-gate-cca.yml
     with:
       persona_uri: ams://canon/personas/ams-oddkit-gauntlet-runner
-      comment_header: Oddkit Gauntlet (runtime probe)
+      comment_header: Oddkit Gauntlet
 
-  output-artifact-probe:
-    name: Output-Artifact Validation (runtime probe)
+  output-artifact:
+    name: Output-Artifact Validation
     needs: [smoke]
     if: |
       github.event.pull_request.draft == false &&
       needs.smoke.outputs.journal_tsv == 'true'
-    uses: ./.github/workflows/audit-gate-runtime-probe.yml
+    uses: ./.github/workflows/audit-gate-cca.yml
     with:
       persona_uri: ams://canon/personas/ams-output-artifact-validator
-      comment_header: Output-Artifact Validation (runtime probe)
+      comment_header: Output-Artifact Validation
