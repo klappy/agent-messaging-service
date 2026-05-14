@@ -70,8 +70,8 @@ jobs:
           KEY:   ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           if [ -z "$OAUTH" ] && [ -z "$KEY" ]; then
-            echo "::warning::Neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set; bugbot review skipped."
-            exit 0
+            echo "::error::Neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set; bugbot review cannot run."
+            exit 1
           fi
 
       - name: Run review

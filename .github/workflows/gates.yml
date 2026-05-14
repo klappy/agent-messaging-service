@@ -212,6 +212,7 @@ jobs:
       github.event.pull_request.draft == false &&
       needs.smoke.outputs.legacy_gate_paths == 'true'
     uses: ./.github/workflows/audit-gate-cca.yml
+    secrets: inherit
     with:
       persona_uri: ams://canon/personas/ams-canon-code-auditor
       comment_header: Canon-Code Sync Audit
@@ -223,6 +224,7 @@ jobs:
       github.event.pull_request.draft == false &&
       needs.smoke.outputs.canon_or_writings_or_journal == 'true'
     uses: ./.github/workflows/audit-gate-cca.yml
+    secrets: inherit
     with:
       persona_uri: ams://canon/personas/ams-oddkit-gauntlet-runner
       comment_header: Oddkit Gauntlet
@@ -234,6 +236,7 @@ jobs:
       github.event.pull_request.draft == false &&
       needs.smoke.outputs.journal_tsv == 'true'
     uses: ./.github/workflows/audit-gate-cca.yml
+    secrets: inherit
     with:
       persona_uri: ams://canon/personas/ams-output-artifact-validator
       comment_header: Output-Artifact Validation
