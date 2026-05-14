@@ -61,7 +61,7 @@ export function extractProfileYamlBlock(markdown: string): string | null {
     if (start === -1) return null;
     const bodyStart = markdown.indexOf("\n", start);
     if (bodyStart === -1) return null;
-    const end = markdown.indexOf("\n```", bodyStart);
+    const end = findClosingFence(markdown, bodyStart);
     if (end === -1) return null;
     const block = markdown.slice(bodyStart + 1, end);
     // The profile block has a top-level `persona:` key. Other yaml
@@ -73,6 +73,27 @@ export function extractProfileYamlBlock(markdown: string): string | null {
     cursor = end + 4; // skip past the closing fence
   }
   return null;
+}
+
+/**
+ * Find the index of a closing ``` fence after `from`. A real closing
+ * fence is a newline followed by three backticks that are themselves
+ * followed by another newline or the end of the string. This skips
+ * nested opening fences like ```json or ```yaml that begin with a
+ * language identifier on the same line.
+ */
+function findClosingFence(text: string, from: number): number {
+  let i = from;
+  while (i < text.length) {
+    const idx = text.indexOf("\n```", i);
+    if (idx === -1) return -1;
+    const after = idx + 4;
+    if (after >= text.length || text[after] === "\n" || text[after] === "\r") {
+      return idx;
+    }
+    i = after;
+  }
+  return -1;
 }
 
 // --- Validation -------------------------------------------------------------

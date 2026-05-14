@@ -277,9 +277,29 @@ function extractJsonBlock(text: string): string | null {
   }
   const bodyStart = text.indexOf("\n", start);
   if (bodyStart === -1) return null;
-  const end = text.indexOf("\n```", bodyStart);
+  const end = findJsonClosingFence(text, bodyStart);
   if (end === -1) return null;
   return text.slice(bodyStart + 1, end);
+}
+
+/**
+ * Find the closing ``` fence after `from`, skipping nested opening
+ * fences like ```json that include a language identifier on the same
+ * line. A real closing fence is a newline + ``` followed by another
+ * newline or end-of-string.
+ */
+function findJsonClosingFence(text: string, from: number): number {
+  let i = from;
+  while (i < text.length) {
+    const idx = text.indexOf("\n```", i);
+    if (idx === -1) return -1;
+    const after = idx + 4;
+    if (after >= text.length || text[after] === "\n" || text[after] === "\r") {
+      return idx;
+    }
+    i = after;
+  }
+  return -1;
 }
 
 function stringField(o: Record<string, unknown>, key: string): string | null {

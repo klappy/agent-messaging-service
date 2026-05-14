@@ -156,7 +156,13 @@ async function dispatchOnce(
       }
       throw new SubstrateStreamError(err.message, { cause: err });
     }
-    throw err;
+    // Non-APIError exceptions (e.g., TypeError from the Workers
+    // fetch/ReadableStream runtime on a network failure mid-stream)
+    // also need to flow through the retry path. Wrap as
+    // SubstrateStreamError so classifyStreamMessage can decide
+    // retryability from the message text.
+    const message = err instanceof Error ? err.message : String(err);
+    throw new SubstrateStreamError(message, { cause: err });
   }
 }
 
