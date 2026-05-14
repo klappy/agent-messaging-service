@@ -61,7 +61,10 @@ export async function invoke(invocation: Invocation, env: InvokeEnv): Promise<In
   // MCP servers. The runtime MUST NOT strip operational servers as
   // "unrelated to the task" — that would break personas like Oddie
   // who use the methodology on themselves.
-  const mcpServers = composeMcpServers(profile.mcp_servers.operational, invocation.task_relevant_mcps ?? []);
+  const mcpServers = composeMcpServers(profile.mcp_servers.operational, [
+    ...profile.mcp_servers.task_relevant,
+    ...(invocation.task_relevant_mcps ?? []),
+  ]);
 
   // --- 4. Dispatch to substrate -------------------------------------------
   let response;
