@@ -43,7 +43,7 @@ export async function invoke(invocation: Invocation, env: InvokeEnv): Promise<In
   // --- 1. Resolve persona profile -----------------------------------------
   let profile;
   try {
-    profile = await resolvePersona(invocation.persona);
+    profile = await resolvePersona(invocation.persona, invocation.knowledge_base_url);
   } catch (err) {
     return failedResult(invocation, session_id, started_at, "persona_resolution_failed", err);
   }

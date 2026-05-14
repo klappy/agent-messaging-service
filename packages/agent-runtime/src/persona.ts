@@ -19,8 +19,11 @@ import { fetchCanon } from "./canon";
 import type { PersonaProfile, PersonaUri, Role, Surface, SurfaceProfile } from "./types";
 
 /** Resolve a persona URI to a typed profile. */
-export async function resolvePersona(uri: PersonaUri): Promise<PersonaProfile> {
-  const doc = await fetchCanon(uri);
+export async function resolvePersona(
+  uri: PersonaUri,
+  knowledge_base_url?: string,
+): Promise<PersonaProfile> {
+  const doc = await fetchCanon(uri, knowledge_base_url);
   const yamlBlock = extractProfileYamlBlock(doc.body);
   if (!yamlBlock) {
     throw new Error(

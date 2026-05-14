@@ -38,8 +38,12 @@ export async function composeSystemPrompt(
 ): Promise<ComposedPrompt> {
   // Fetch the task-definition canon body. This is what tells the agent
   // what its task is. It is NOT governance; it is the persona's role
-  // specification authored in canon.
-  const taskDoc = await fetchCanon(profile.system_prompt_uri);
+  // specification authored in canon. For non-klappy URIs the runtime
+  // resolves against the invocation's knowledge_base_url.
+  const taskDoc = await fetchCanon(
+    profile.system_prompt_uri,
+    invocation.knowledge_base_url,
+  );
 
   const sections: string[] = [];
 
