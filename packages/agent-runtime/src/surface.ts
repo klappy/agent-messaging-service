@@ -99,7 +99,13 @@ function stripPersonaEmoji(text: string): string {
       i++;
     } else {
       // Handle UTF-16 surrogate pairs as a unit.
-      if (code >= 0xd800 && code <= 0xdbff && i + 1 < text.length) {
+      if (
+        code >= 0xd800 &&
+        code <= 0xdbff &&
+        i + 1 < text.length &&
+        text.charCodeAt(i + 1) >= 0xdc00 &&
+        text.charCodeAt(i + 1) <= 0xdfff
+      ) {
         i += 2;
       } else {
         i++;

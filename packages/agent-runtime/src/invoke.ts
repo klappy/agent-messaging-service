@@ -29,7 +29,7 @@ import {
   SubstrateStreamError,
   type McpServerSpec,
 } from "./substrate";
-import type { Invocation, InvocationResult } from "./types";
+import type { Invocation, InvocationResult, ValidatorOutput } from "./types";
 
 interface InvokeEnv {
   ANTHROPIC_API_KEY: string;
@@ -211,7 +211,7 @@ function failedResult(
 }
 
 function renderValidatorMarkdown(
-  output: { verdict: string; findings: ReadonlyArray<{ kind: string; location: string; severity: string; disposition: string; description: string; evidence_uri?: string }>; summary: { total: number; by_disposition: Record<string, number>; by_severity: Record<string, number> } },
+  output: ValidatorOutput,
   personaName: string,
   attempts: number,
   stopReason: string | null,
