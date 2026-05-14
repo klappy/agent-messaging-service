@@ -1,0 +1,320 @@
+name: Gates
+
+# Single orchestrator workflow that chains every PR validation behind
+# a free smoke job. The motivation is cost: each of the four expensive
+# gates (canon-code-sync Managed Agent, canon-code-sync runtime probe,
+# oddkit-gauntlet runtime probe, output-artifact-validation runtime
+# probe) costs $0.05-0.50 per run in Anthropic API charges. Without
+# chaining, every PR push fires all four in parallel — and Bugbot-
+# driven iteration multiplies the cost across auto-fix commits.
+#
+# Architecture:
+#
+#   smoke (free; runs on every PR push, even drafts)
+#     ├── canon-code-sync legacy gate     (needs smoke + not draft + legacy_gate_paths)
+#     ├── canon-code-sync runtime probe   (needs smoke + not draft + legacy_gate_paths)
+#     ├── oddkit-gauntlet runtime probe   (needs smoke + not draft + canon_or_writings_or_journal)
+#     └── output-artifact runtime probe   (needs smoke + not draft + journal_tsv)
+#
+# Smoke is mechanical (typecheck + YAML frontmatter parse + TSV shape
+# check) and finishes in 1-2 minutes. The expensive gates only fire if
+# smoke passes AND the PR is out of draft AND the changed-paths classifier
+# said this gate's scope is present in the diff. That means: a Bugbot
+# auto-fix that introduces a YAML typo costs nothing (smoke fails, all
+# probes skipped); a PR kept as draft costs nothing in probes (smoke
+# runs as the operator iterates); the legacy gate and its parity twin
+# both gate behind smoke so a single smoke failure stops everything.
+#
+# Replaces these files (now deleted in this PR):
+#   .github/workflows/canon-code-sync-audit.yml
+#   .github/workflows/canon-code-sync-audit-runtime-probe.yml
+#   .github/workflows/oddkit-gauntlet-runtime-probe.yml
+#   .github/workflows/output-artifact-validation-runtime-probe.yml
+#
+# Still depends on (unchanged):
+#   .github/workflows/audit-gate-runtime-probe.yml (reusable; called by
+#   the three probe jobs below with different persona_uri)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  # Intentionally not triggering on pull_request_target: per GitHub's
+  # December 2025 change, pull_request_target sets github.sha (and thus
+  # the OIDC token's sha claim) to the default branch HEAD rather than
+  # the PR head commit. The Worker keys the AuditGateDO by claims.sha,
+  # so a pull_request_target run would route to a stale/shared DO
+  # instance and audit the wrong commit. We stay on pull_request only.
+
+# Cancel any in-flight gate run on the same PR when a new commit lands.
+# Bugbot auto-fixes will land new commits frequently; we want only the
+# most recent commit's verdict to matter.
+concurrency:
+  group: gates-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  smoke:
+    name: Smoke (free; mechanical checks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      canon_or_writings_or_journal: ${{ steps.classify.outputs.canon_or_writings_or_journal }}
+      journal_tsv: ${{ steps.classify.outputs.journal_tsv }}
+      legacy_gate_paths: ${{ steps.classify.outputs.legacy_gate_paths }}
+      worker_code: ${{ steps.classify.outputs.worker_code }}
+
+    steps:
+      - name: Check out PR head
+        uses: actions/checkout@v4
+        with:
+          # Full history so `git diff` against base.sha resolves.
+          fetch-depth: 0
+
+      - name: Compute changed files vs base
+        id: changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "$BASE_SHA" 2>/dev/null || true
+          git diff --name-only "$BASE_SHA" "$HEAD_SHA" > /tmp/changed.txt
+          echo "::group::Changed files vs base"
+          cat /tmp/changed.txt || true
+          echo "::endgroup::"
+          echo "count=$(wc -l < /tmp/changed.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Classify changed paths
+        id: classify
+        run: |
+          set -euo pipefail
+          CHANGED=/tmp/changed.txt
+          # Use grep -q with anchored patterns to set per-class booleans.
+          # Each class is the union of paths that a downstream gate cares
+          # about. Keep the legacy_gate_paths list in sync with the old
+          # canon-code-sync-audit.yml `paths:` filter — that's the gate
+          # whose scope this replaces.
+
+          classify() {
+            local name="$1"; shift
+            local pattern_file
+            pattern_file=$(mktemp)
+            for pat in "$@"; do printf '%s\n' "$pat" >> "$pattern_file"; done
+            if grep -E -f "$pattern_file" "$CHANGED" >/dev/null 2>&1; then
+              echo "${name}=true" >> "$GITHUB_OUTPUT"
+              echo "  ✅ ${name}=true"
+            else
+              echo "${name}=false" >> "$GITHUB_OUTPUT"
+              echo "  ➖ ${name}=false"
+            fi
+            rm -f "$pattern_file"
+          }
+
+          echo "::group::Path classification"
+
+          # Oddkit Gauntlet scope: any governance markdown.
+          classify canon_or_writings_or_journal \
+            '^canon/.+\.md$' \
+            '^writings/.+\.md$' \
+            '^journal/.+\.md$'
+
+          # Output-Artifact scope: journal TSV files (initial scope; the
+          # constraint canon allows-list table is the seam for extending
+          # to other formats).
+          classify journal_tsv \
+            '^journal/.+\.tsv$'
+
+          # Legacy gate + canon-code-sync runtime probe scope. Mirrors the
+          # `paths:` filter from the old canon-code-sync-audit.yml so the
+          # gating semantics don't change at cutover.
+          classify legacy_gate_paths \
+            '^canon/' \
+            '^docs/' \
+            '^proposals/' \
+            '^writings/' \
+            '^packages/[^/]+/wrangler\.toml$' \
+            '^worker/wrangler\.toml$' \
+            '^packages/.*\.ts$' \
+            '^worker/.*\.ts$' \
+            '^SPEC.*\.md$' \
+            '^README\.md$' \
+            '^AGENTS\.md$' \
+            '^TINCAN-.*\.md$' \
+            '^POC-.*\.md$' \
+            '^tools/audit-via-agent\.py$' \
+            '^\.github/workflows/gates\.yml$' \
+            '^\.github/workflows/audit-gate-runtime-probe\.yml$'
+
+          # Worker code scope: triggers TypeScript typecheck during smoke.
+          classify worker_code \
+            '^worker/.*\.ts$' \
+            '^worker/wrangler\.toml$' \
+            '^worker/package\.json$' \
+            '^worker/package-lock\.json$' \
+            '^worker/tsconfig\.json$'
+
+          echo "::endgroup::"
+
+      - name: Set up Node (for worker typecheck)
+        if: steps.classify.outputs.worker_code == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: worker/package-lock.json
+
+      - name: Install worker dependencies
+        if: steps.classify.outputs.worker_code == 'true'
+        working-directory: worker
+        run: npm ci
+
+      - name: TypeScript typecheck (worker)
+        if: steps.classify.outputs.worker_code == 'true'
+        working-directory: worker
+        run: npx tsc --noEmit
+
+      - name: Install pyyaml (for frontmatter validator)
+        if: ${{ !cancelled() && steps.classify.outputs.canon_or_writings_or_journal == 'true' }}
+        run: pip install --quiet pyyaml
+
+      - name: Validate YAML frontmatter on changed canon/writings docs
+        if: ${{ !cancelled() && steps.classify.outputs.canon_or_writings_or_journal == 'true' }}
+        run: python3 .github/scripts/validate-frontmatter.py /tmp/changed.txt
+
+      - name: Validate Dolcheo+ TSV shape on changed journal entries
+        if: ${{ !cancelled() && steps.classify.outputs.journal_tsv == 'true' }}
+        run: python3 .github/scripts/validate-tsv-shape.py /tmp/changed.txt
+
+      - name: Smoke summary
+        if: always()
+        run: |
+          echo "::notice::Smoke complete."
+          echo "  legacy_gate_paths=${{ steps.classify.outputs.legacy_gate_paths }}"
+          echo "  canon_or_writings_or_journal=${{ steps.classify.outputs.canon_or_writings_or_journal }}"
+          echo "  journal_tsv=${{ steps.classify.outputs.journal_tsv }}"
+          echo "  worker_code=${{ steps.classify.outputs.worker_code }}"
+          echo "  draft=${{ github.event.pull_request.draft }}"
+
+  # ----------------------------------------------------------------------
+  # Expensive gates — all chained behind smoke + not-draft + per-gate
+  # path-class match. If any of these conditions are false, the gate
+  # skips (zero Claude cost).
+  # ----------------------------------------------------------------------
+
+  canon-code-sync-legacy:
+    name: Canon-Code Sync Audit (Managed Agent)
+    needs: [smoke]
+    if: |
+      github.event.pull_request.draft == false &&
+      needs.smoke.outputs.legacy_gate_paths == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repo (so the workflow can run the dispatcher script)
+        uses: actions/checkout@v4
+
+      - name: Verify ANTHROPIC_API_KEY is set
+        env:
+          KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::error::ANTHROPIC_API_KEY repo secret is not set."
+            echo "::error::Add it under Settings → Secrets and variables → Actions, then re-run."
+            exit 1
+          fi
+
+      - name: Dispatch Managed Agent and capture structured result
+        id: dispatch
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PR_NUMBER:   ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          REPO_FULL:   ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          python3 tools/audit-via-agent.py > "${GITHUB_WORKSPACE}/result.json"
+          echo "::group::Dispatcher result"
+          jq '.' "${GITHUB_WORKSPACE}/result.json"
+          echo "::endgroup::"
+          VERDICT=$(jq -r '.verdict' "${GITHUB_WORKSPACE}/result.json")
+          echo "verdict=${VERDICT}" >> "$GITHUB_OUTPUT"
+
+      - name: Post agent's findings as PR comment
+        if: always() && hashFiles('result.json') != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER:    ${{ github.event.pull_request.number }}
+          REPO_FULL:    ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          jq '{body: .comment_body}' "${GITHUB_WORKSPACE}/result.json" > /tmp/comment-payload.json
+          POST_HTTP=$(curl -sS -o /tmp/comment-resp.json -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPO_FULL}/issues/${PR_NUMBER}/comments" \
+            --data-binary @/tmp/comment-payload.json || true)
+          echo "PR comment POST: HTTP ${POST_HTTP}"
+          if [ "$POST_HTTP" != "201" ]; then
+            echo "::warning::PR comment POST failed (HTTP ${POST_HTTP}). Response:"
+            cat /tmp/comment-resp.json || true
+          fi
+
+      - name: Exit on verdict
+        env:
+          VERDICT: ${{ steps.dispatch.outputs.verdict }}
+        run: |
+          case "$VERDICT" in
+            PASS)
+              echo "::notice::Canon-code sync audit: PASS"
+              exit 0 ;;
+            FAIL)
+              echo "::error::Canon-code sync audit: FAIL — see PR comment for findings."
+              exit 1 ;;
+            ERROR|*)
+              echo "::error::Canon-code sync audit: ERROR — see PR comment and dispatcher logs."
+              exit 1 ;;
+          esac
+
+  canon-code-sync-probe:
+    name: Canon-Code Sync Audit (runtime probe)
+    needs: [smoke]
+    if: |
+      github.event.pull_request.draft == false &&
+      needs.smoke.outputs.legacy_gate_paths == 'true'
+    uses: ./.github/workflows/audit-gate-runtime-probe.yml
+    with:
+      persona_uri: ams://canon/personas/ams-canon-code-auditor
+      comment_header: Canon-Code Sync Audit (runtime probe)
+
+  oddkit-gauntlet-probe:
+    name: Oddkit Gauntlet (runtime probe)
+    needs: [smoke]
+    if: |
+      github.event.pull_request.draft == false &&
+      needs.smoke.outputs.canon_or_writings_or_journal == 'true'
+    uses: ./.github/workflows/audit-gate-runtime-probe.yml
+    with:
+      persona_uri: ams://canon/personas/ams-oddkit-gauntlet-runner
+      comment_header: Oddkit Gauntlet (runtime probe)
+
+  output-artifact-probe:
+    name: Output-Artifact Validation (runtime probe)
+    needs: [smoke]
+    if: |
+      github.event.pull_request.draft == false &&
+      needs.smoke.outputs.journal_tsv == 'true'
+    uses: ./.github/workflows/audit-gate-runtime-probe.yml
+    with:
+      persona_uri: ams://canon/personas/ams-output-artifact-validator
+      comment_header: Output-Artifact Validation (runtime probe)

@@ -17,7 +17,7 @@ status: proposed
 
 # AMS Canon-Code Auditor — Persona Profile for the Audit-Gate Spawned Agent Session
 
-> The audit gate dispatched by `.github/workflows/canon-code-sync-audit.yml` is not a script and not a free-form agent. It is a validator session shaped by a persona profile. This profile names that persona: `ams-canon-code-auditor`. The profile fixes who the session is — its system-prompt source, its operational tools, the knowledge bases it grounds against, and the structured-output rules its emissions must satisfy. The session's substrate, model, and toolset reference are operating notes elsewhere; the persona is governance.
+> The audit gate dispatched by `.github/workflows/gates.yml` (job `canon-code-sync-legacy`) is not a script and not a free-form agent. It is a validator session shaped by a persona profile. This profile names that persona: `ams-canon-code-auditor`. The profile fixes who the session is — its system-prompt source, its operational tools, the knowledge bases it grounds against, and the structured-output rules its emissions must satisfy. The session's substrate, model, and toolset reference are operating notes elsewhere; the persona is governance.
 
 ## Summary — One Persona, One Job
 
@@ -156,6 +156,6 @@ Substrate changes (model, MCP endpoint, toolset, environment) do not retract the
 ## See Also
 
 - `tools/audit-via-agent.py` — the dispatcher that resolves this profile to substrate configuration.
-- `.github/workflows/canon-code-sync-audit.yml` — the trigger that fires the dispatcher.
+- `.github/workflows/gates.yml` (job `canon-code-sync-legacy`) — the trigger that fires the dispatcher.
 - `klappy://canon/methods/spawned-agent-session-substrate-options` — substrate catalog. AMS's current choice is recorded in the AMS constraint's §Current Implementation.
 - `klappy://canon/voice/oddie-the-river-guide` — example of a persona that does declare brand discipline, for contrast.

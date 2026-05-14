@@ -65,7 +65,7 @@ This section records the AMS substrate choice for this audit. It is an operating
 - **Beta header**: `anthropic-beta: mcp-client-2025-11-20`.
 - **Model**: `claude-sonnet-4-6`.
 - **Trigger surface**: `POST /audit-gate-test` on `ams.klappy.dev`, OIDC-authenticated, with `persona_uri: ams://canon/personas/ams-oddkit-gauntlet-runner` in the body.
-- **Caller workflow**: `.github/workflows/oddkit-gauntlet-runtime-probe.yml`. Fires on PR events touching `canon/**`, `writings/**`, `journal/**`. Runs alongside the canon-code-sync and output-artifact probes.
+- **Caller workflow**: `.github/workflows/gates.yml` (job `oddkit-gauntlet-probe`). Fires on PR events touching `canon/**`, `writings/**`, `journal/**`. Runs alongside the canon-code-sync and output-artifact probes.
 - **Probe / not-gating**: initial deployment posts a non-gating comment. Promotion to gating is a workflow edit once parity with operator expectations is established.
 
 ## What This Forbids in AMS
