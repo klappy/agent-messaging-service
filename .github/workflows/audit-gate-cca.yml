@@ -1,0 +1,213 @@
+name: Audit Gate (Claude Code Action)
+
+# Reusable workflow that dispatches a persona-shaped audit session against
+# the PR head. Substrate: GitHub Actions runner + anthropics/claude-code-
+# action@v1. Inference: subscription-absorbed via CLAUDE_CODE_OAUTH_TOKEN
+# (Pro/Max/Team/Enterprise). Falls back to ANTHROPIC_API_KEY if the OAuth
+# token is unset.
+#
+# Per klappy://canon/methods/spawned-agent-session-substrate-options
+# §Mixing Tools Across Vendors, this substrate authenticates Claude Code
+# against a subscription so inference consumes included usage instead of
+# billing per-token. AMS is public, so GHA runner minutes are free.
+#
+# REPLACES the previous reusable workflow at
+# .github/workflows/audit-gate-runtime-probe.yml, which POSTed an OIDC-
+# authenticated request to https://ams.klappy.dev/audit-gate-test (a CF
+# Worker that called the Anthropic API at pay-per-token rates). The
+# audit task itself (canon-at-runtime via oddkit, persona-shaped,
+# structured verdict) is unchanged; only the substrate hosting the
+# session moved.
+#
+# Callers pass:
+#   persona_uri    — canon URI of the persona to instantiate
+#                    (e.g. ams://canon/personas/ams-canon-code-auditor)
+#   comment_header — human-readable header for the verdict comment
+
+on:
+  workflow_call:
+    inputs:
+      persona_uri:
+        description: Canon URI of the persona to instantiate.
+        required: true
+        type: string
+      comment_header:
+        description: Human-readable header shown above the verdict comment.
+        required: true
+        type: string
+      timeout_minutes:
+        description: Wall-clock ceiling for the audit session.
+        required: false
+        type: number
+        default: 20
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  audit:
+    name: ${{ inputs.comment_header }}
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Check out PR head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Verify auth secret is present
+        env:
+          OAUTH: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          KEY:   ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$OAUTH" ] && [ -z "$KEY" ]; then
+            echo "::error::Neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set."
+            echo "::error::Generate an OAuth token locally with 'claude setup-token'"
+            echo "::error::and add it as a repository secret named CLAUDE_CODE_OAUTH_TOKEN."
+            exit 1
+          fi
+          if [ -n "$OAUTH" ]; then
+            echo "::notice::Using CLAUDE_CODE_OAUTH_TOKEN (subscription-billed)."
+          else
+            echo "::notice::Using ANTHROPIC_API_KEY (pay-per-token); CLAUDE_CODE_OAUTH_TOKEN preferred."
+          fi
+
+      - name: Run audit session
+        id: audit
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            ## Identity of Proactive Integrity
+
+            Before I speak, I observe. Before I claim, I verify. Before I confirm, I prove.
+            What I have not seen, I do not know. What I have not verified, I will not imply.
+
+            ## Foundational Axioms
+
+            1. Reality Is Sovereign — observe before asserting.
+            2. A Claim Is a Debt — every assertion requires evidence. Silence is preferable
+               to ungrounded speech.
+            3. Integrity Is Non-Negotiable Efficiency — a false "done" costs more than an
+               honest "I haven't checked."
+            4. You Cannot Verify What You Did Not Observe — if you didn't look, you don't know.
+
+            ## Your Role
+
+            You are the persona at `${{ inputs.persona_uri }}`. You are a validator session
+            per `klappy://canon/methods/spawned-agent-session-runtime-contract`. Your mode is
+            validation; your engagement is agent; your surface is audit. You do not edit
+            files, push commits, or modify the PR — your only output is the structured
+            verdict described below.
+
+            ## Procedure
+
+            1. Call `oddkit_time` to anchor the clock for this session.
+            2. Call `oddkit_get` with URI `${{ inputs.persona_uri }}` to fetch your persona
+               profile. Read its `system_prompt_uri` field.
+            3. Call `oddkit_get` on the `system_prompt_uri` to fetch your task definition
+               (the canon constraint you enforce). This is the authoritative description of
+               what the audit covers and the output contract it must satisfy.
+            4. If the profile declares `brand_discipline`, call `oddkit_get` on that URI
+               and follow its voice contract for the `comment_body` field.
+            5. Inspect this PR's diff. Use `gh pr diff ${{ github.event.pull_request.number }}`
+               for the unified diff and `gh pr view ${{ github.event.pull_request.number }}`
+               for metadata. Cross-reference any canon URIs the diff touches via
+               `oddkit_get` / `oddkit_search` as needed.
+            6. Apply the task definition to the diff. Emit a single structured verdict.
+
+            ## PR Coordinates
+
+            - Repo: `${{ github.repository }}`
+            - PR number: `${{ github.event.pull_request.number }}`
+            - Head SHA: `${{ github.event.pull_request.head.sha }}`
+            - Base branch: `${{ github.event.pull_request.base.ref }}`
+            - Head branch: `${{ github.event.pull_request.head.ref }}`
+
+            ## Output Contract
+
+            Your structured output MUST be a JSON object with shape:
+              {
+                "verdict": "PASS" or "FAIL",
+                "summary": "<one-line summary of the verdict>",
+                "comment_body": "<markdown body for the PR comment, persona-voiced>"
+              }
+
+            - `verdict` is `PASS` if the diff conforms to the task definition's checks,
+              `FAIL` otherwise. Reserve `FAIL` for actionable violations of canon, not
+              stylistic preferences.
+            - `summary` is one line, suitable as a sub-heading.
+            - `comment_body` is the markdown body of the PR comment. Voice and register
+              follow the persona's `brand_discipline` URI (fetch and obey).
+
+            Do not include any prose outside the structured JSON output. The action runs
+            in CI; only the structured output is consumed.
+
+          claude_args: |
+            --mcp-config '{"mcpServers":{"oddkit":{"type":"http","url":"https://oddkit.klappy.dev/mcp"}}}'
+            --allowedTools "mcp__oddkit__oddkit_time,mcp__oddkit__oddkit_get,mcp__oddkit__oddkit_search,mcp__oddkit__oddkit_catalog,mcp__oddkit__oddkit_resolve,mcp__oddkit__oddkit_orient,mcp__oddkit__oddkit_challenge,Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
+            --json-schema '{"type":"object","required":["verdict","summary","comment_body"],"properties":{"verdict":{"type":"string","enum":["PASS","FAIL"]},"summary":{"type":"string"},"comment_body":{"type":"string"}}}'
+            --max-turns 30
+
+      - name: Post verdict comment and gate on outcome
+        if: always() && steps.audit.outputs.structured_output != ''
+        env:
+          GH_TOKEN:       ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER:      ${{ github.event.pull_request.number }}
+          REPO:           ${{ github.repository }}
+          COMMENT_HEADER: ${{ inputs.comment_header }}
+          PERSONA:        ${{ inputs.persona_uri }}
+          STRUCTURED:     ${{ steps.audit.outputs.structured_output }}
+        run: |
+          set -euo pipefail
+          VERDICT=$(printf '%s' "$STRUCTURED" | jq -r '.verdict')
+          SUMMARY=$(printf '%s' "$STRUCTURED" | jq -r '.summary')
+          BODY=$(printf '%s' "$STRUCTURED" | jq -r '.comment_body')
+          {
+            printf '### %s — %s\n\n' "$COMMENT_HEADER" "$VERDICT"
+            printf '**Summary:** %s\n\n' "$SUMMARY"
+            printf -- '---\n\n'
+            printf '%s\n\n' "$BODY"
+            printf '<sub>Persona: <code>%s</code> · Substrate: <code>github-actions + claude-code-action@v1</code></sub>\n' "$PERSONA"
+          } > /tmp/comment.md
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file /tmp/comment.md
+          case "$VERDICT" in
+            PASS)
+              echo "::notice::${COMMENT_HEADER}: PASS"
+              exit 0
+              ;;
+            FAIL)
+              echo "::error::${COMMENT_HEADER}: FAIL — see PR comment for findings."
+              exit 1
+              ;;
+            *)
+              echo "::error::Unexpected verdict value: ${VERDICT}"
+              exit 1
+              ;;
+          esac
+
+      - name: Surface substrate failure if no structured output
+        if: failure() && steps.audit.outputs.structured_output == ''
+        env:
+          GH_TOKEN:       ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER:      ${{ github.event.pull_request.number }}
+          REPO:           ${{ github.repository }}
+          COMMENT_HEADER: ${{ inputs.comment_header }}
+          PERSONA:        ${{ inputs.persona_uri }}
+        run: |
+          set -euo pipefail
+          {
+            printf '### %s — SUBSTRATE ERROR\n\n' "$COMMENT_HEADER"
+            printf 'The audit session did not produce a structured verdict. '
+            printf 'This is a substrate-level failure (auth, network, MCP unreachable, '
+            printf 'schema mismatch, or session timeout). See the workflow run logs.\n\n'
+            printf '<sub>Persona: <code>%s</code> · Substrate: <code>github-actions + claude-code-action@v1</code></sub>\n' "$PERSONA"
+          } > /tmp/comment.md
+          gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file /tmp/comment.md
+          exit 1

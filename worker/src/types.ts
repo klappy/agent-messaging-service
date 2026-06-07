@@ -8,18 +8,6 @@ export interface Env {
   // session; (account_id, conversation_id) is threaded as construction props
   // per D0019, kept opaque to the SDK's session id.
   AMS_MCP: DurableObjectNamespace;
-  // AuditGateDO — generalized persona-shaped agent runtime, instantiated
-  // per persona_uri in the request body. One DO instance per audit
-  // invocation, keyed by PR head_sha at the route layer. See
-  // worker/src/runtime/audit-gate.ts and the canon constraint
-  // canon-code-sync-via-spawned-agent-session.
-  AUDIT_GATE: DurableObjectNamespace;
-  // Anthropic API key for the audit-gate agent session. The AuditGateDO
-  // calls the Anthropic Messages API with the persona's
-  // mcp_servers.operational wired in via the native MCP connector
-  // (anthropic-beta: mcp-client-2025-11-20). Set via `wrangler secret
-  // put ANTHROPIC_API_KEY`. If unset, the audit session fails fast.
-  ANTHROPIC_API_KEY?: string;
 }
 
 export interface AccountRecord {

@@ -6,8 +6,6 @@ import { homepageHeadResponse, homepageResponse } from "./homepage";
 // Homepage and portal surfaces will move to the TinCan Worker per
 // ams://canon/decisions/D0026 once tincan.klappy.dev is live.
 import { AmsMcpAgent, handleMcp } from "./mcp";
-import { ALLOWED_PERSONA_URIS, AuditGateDO } from "./runtime/audit-gate";
-import { verifyGitHubOidcJwt } from "./runtime/oidc";
 import type { ConversationRecord, Env } from "./types";
 import {
   base64ToUtf8,
@@ -20,20 +18,9 @@ import {
   utf8ToBase64,
 } from "./util";
 
-// Audit-gate runtime config. OIDC audience is the string callers must
-// pass as `audience` when requesting an ID token from GitHub; the
-// allow-list closes the "any GitHub workflow could call us" hole per
-// the canon constraint canon-code-sync-via-spawned-agent-session
-// §Current Implementation.
-const AUDIT_GATE_OIDC_AUDIENCE = "ams-audit-gate";
-const REPOSITORY_ALLOW_LIST: ReadonlyArray<string> = [
-  "klappy/agent-messaging-service",
-  "klappy/klappy.dev",
-];
-
 // Re-export the DO classes so wrangler's [[migrations]] / [[durable_objects.bindings]]
 // can find them on the Worker module entrypoint.
-export { AmsMcpAgent, ConversationDO, AuditGateDO };
+export { AmsMcpAgent, ConversationDO };
 
 // CORS for the read-only liveness endpoint /healthz. The homepage embeds a
 // status-pill that polls both ams.klappy.dev and ams.truthkit.ai from a single
@@ -51,7 +38,7 @@ const HEALTHZ_CORS: Record<string, string> = {
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     // Global safety net. Without this, any uncaught throw in any sub-handler
-    // (route resolver, OIDC verifier, DO stub.fetch transport-layer rejection,
+    // (route resolver, MCP transport hand-off, DO stub.fetch transport-layer rejection,
     // etc.) escapes to Cloudflare and surfaces to the caller as a raw
     // `error code: 1101` page rather than a structured JSON envelope.
     //
@@ -59,13 +46,12 @@ export default {
     // (2026-05-13): the workflow received HTTP 500 with body `error code:
     // 1101`, indicating the worker threw without my own try/catch catching
     // it. The structural cause is the absence of an outer envelope here;
-    // the route handlers each have local try/catch for their domain
-    // (handleAuditGateTest validates input, AuditGateDO wraps the audit
-    // session), but a throw between layers — for instance, `stub.fetch()`
-    // rejecting because the DO failed to hydrate on cold-start — has
-    // nowhere to land. This wrapper converts every such throw to a
-    // structured 500 with a diagnostic message, which Cloudflare Logpush
-    // and `wrangler tail` will also see via console.error.
+    // route handlers each have local try/catch for their domain, but a
+    // throw between layers — for instance, `stub.fetch()` rejecting because
+    // a DO failed to hydrate on cold-start — has nowhere to land. This
+    // wrapper converts every such throw to a structured 500 with a
+    // diagnostic message, which Cloudflare Logpush and `wrangler tail`
+    // will also see via console.error.
     //
     // Per ams://canon/constraints/validators-cannot-self-validate-their-own-fix-prs,
     // this fix cannot be exercised by the PR that contains it; the runtime
@@ -171,17 +157,6 @@ async function routeRequest(req: Request, env: Env, ctx: ExecutionContext): Prom
       return handleConnect(req, env, ns, alias, url);
     }
 
-    // Audit-gate runtime — generalized persona-shaped agent runtime
-    // endpoint per AUDIT-GATE-RUNTIME-MIGRATION-PLAN.md (Phase 4/5).
-    // OIDC-authenticated; persona_uri in the body picks which canon
-    // persona to instantiate. Forwards to AuditGateDO keyed by
-    // head_sha for the fresh-context guarantee. Endpoint name kept
-    // as /audit-gate-test for continuity with the Phase 2/3 PoC
-    // surface; the test- prefix becomes a misnomer as this stabilizes.
-    if (method === "POST" && path === "/audit-gate-test") {
-      return handleAuditGateTest(req, env);
-    }
-
     // Magic-link route — MCP transport only per ams://canon/decisions/D0023.
     // Browser GETs are handled by the TinCan Worker (D0026) which proxies
     // MCP POST/SSE/DELETE/OPTIONS here via service binding. AMS serves no
@@ -248,137 +223,6 @@ async function getConversation(env: Env, ns: string, alias: string, permissive: 
 
 // Lazy import to avoid a circular dep (conversations.ts pulls util.ts which is fine).
 import { createConversation } from "./conversations";
-
-// Audit-gate runtime handler — Phase 4/5 of the migration plan.
-//
-// Auth: GitHub Actions OIDC. The Authorization header carries a JWT
-// signed by https://token.actions.githubusercontent.com; the token's
-// claims (repository, sha, ref) are the audit context. Body carries
-// the persona_uri to instantiate and an optional github_token for
-// private-repo diff fetching.
-//
-// Per the canon constraint canon-code-sync-via-spawned-agent-session,
-// the route enforces:
-//   - JWT signature, iss, aud, exp validity
-//   - repository claim in REPOSITORY_ALLOW_LIST (closes the "any GH
-//     workflow can call us" hole)
-//   - persona_uri in ALLOWED_PERSONA_URIS (closes the "caller points
-//     at an attacker-controlled persona doc" hole)
-//
-// PR coordinates come from the JWT (repository, sha) — not from the
-// request body — so a workflow cannot audit a repo it doesn't
-// represent. The pr_number is the only PR-identity field passed in
-// the body, since the JWT doesn't carry it.
-async function handleAuditGateTest(req: Request, env: Env): Promise<Response> {
-  const authHeader = req.headers.get("authorization") ?? "";
-  const m = authHeader.match(/^Bearer\s+(.+)$/i);
-  if (!m) {
-    return errorResponse(
-      401,
-      "missing_credential",
-      "Authorization: Bearer <github-oidc-jwt> required.",
-    );
-  }
-  const jwt = m[1]!.trim();
-
-  const verifyResult = await verifyGitHubOidcJwt(jwt, {
-    audience: AUDIT_GATE_OIDC_AUDIENCE,
-    allowedRepositories: REPOSITORY_ALLOW_LIST,
-  });
-  if (!verifyResult.ok) {
-    return errorResponse(401, verifyResult.code, verifyResult.message);
-  }
-  const claims = verifyResult.claims;
-
-  let body: Record<string, unknown>;
-  try {
-    body = await req.json();
-  } catch {
-    return errorResponse(400, "invalid_json", "body must be JSON");
-  }
-
-  const personaUri = body.persona_uri;
-  if (typeof personaUri !== "string" || !ALLOWED_PERSONA_URIS.includes(personaUri)) {
-    return errorResponse(
-      400,
-      "persona_uri_not_allowed",
-      `body.persona_uri must be in the allow-list: ${ALLOWED_PERSONA_URIS.join(", ")}.`,
-    );
-  }
-
-  const prNumberRaw = body.pr_number;
-  const prNumber =
-    typeof prNumberRaw === "number" && Number.isInteger(prNumberRaw) && prNumberRaw > 0
-      ? prNumberRaw
-      : null;
-  if (prNumber === null) {
-    return errorResponse(400, "missing_pr_number", "body.pr_number is required (positive integer).");
-  }
-
-  const githubToken =
-    typeof body.github_token === "string" && body.github_token.length > 0
-      ? body.github_token
-      : undefined;
-
-  // Derive owner/repo from the JWT's repository claim, sha from the
-  // JWT's sha claim. Body-supplied owner/repo/sha values are ignored
-  // on the OIDC path: the JWT is the source of truth.
-  const [prOwner, prRepo] = claims.repository.split("/");
-  if (!prOwner || !prRepo) {
-    return errorResponse(400, "repository_claim_malformed", `repository claim '${claims.repository}' is not owner/repo.`);
-  }
-  const headSha = claims.sha;
-  if (typeof headSha !== "string" || !/^[0-9a-f]{40}$/i.test(headSha)) {
-    return errorResponse(400, "sha_claim_invalid", "sha claim must be a 40-character hex string.");
-  }
-
-  // Forward the resolved invocation to the AuditGateDO. The DO is
-  // keyed by head_sha to satisfy the fresh-context guarantee per
-  // klappy://canon/methods/spawned-agent-session-runtime-contract.
-  const invocation = {
-    pr_owner: prOwner,
-    pr_repo: prRepo,
-    pr_number: prNumber,
-    head_sha: headSha,
-    persona_uri: personaUri,
-    knowledge_base_url: `https://github.com/${prOwner}/${prRepo}`,
-    ...(githubToken ? { github_token: githubToken } : {}),
-  };
-  const stub = env.AUDIT_GATE.get(env.AUDIT_GATE.idFromName(headSha));
-  // Re-marshal the invocation into a new Request so the DO sees the
-  // resolved shape (rather than the un-validated original body).
-  const forwarded = new Request(req.url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(invocation),
-  });
-  // Wrap stub.fetch in its own try/catch. The DO's own fetch handler has
-  // an internal try/catch that returns 500 with `{"error":"audit_failed",
-  // ...}` for everything that goes wrong INSIDE the DO. But that envelope
-  // can't catch rejections from the DO transport itself: cold-start
-  // hydration failures, DO storage faults, RPC-layer transport errors.
-  // Those rejections propagate up here as a `stub.fetch()` rejection. Per
-  // ams://canon/constraints/validators-cannot-self-validate-their-own-fix-prs,
-  // a transport-layer 1101 was first observed in PR #88's Oddkit Gauntlet
-  // probe (2026-05-13); the raw `error code: 1101` body (rather than the
-  // DO's JSON envelope) confirmed the throw escaped the DO and that
-  // there was no catch here. This wrapper converts any such rejection to
-  // a structured response and logs it for forensics.
-  try {
-    return await stub.fetch(forwarded);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "unknown_error";
-    const stack = err instanceof Error ? err.stack ?? "" : "";
-    console.error("audit_gate_do_transport_throw", {
-      head_sha: headSha,
-      persona_uri: personaUri,
-      pr_number: prNumber,
-      message,
-      stack: stack.split("\n").slice(0, 8).join("\n"),
-    });
-    return errorResponse(500, "audit_gate_do_transport_failed", message);
-  }
-}
 
 async function handleConnect(
   req: Request,
