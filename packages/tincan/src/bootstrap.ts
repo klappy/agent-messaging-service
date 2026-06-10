@@ -132,23 +132,60 @@ async function oddkitGetSection(sectionName: string): Promise<string> {
   const innerText = rpc.result?.content?.[0]?.text;
   if (!innerText) throw new Error("oddkit_empty_tool_result");
 
+  const body = parseOddkitSectionEnvelope(innerText, sectionName);
+
+  sectionCache.set(sectionName, { fetchedAt: Date.now(), body });
+  return body;
+}
+
+// Parse the inner oddkit envelope (the JSON string inside the MCP tool
+// result) and return the prescribed blockquote body with `> ` markers
+// peeled. Pure function, exported for tests.
+//
+// Oddkit's Retrieval Disclosure Contract
+// (klappy://canon/constraints/retrieval-disclosure-contract) changed the
+// default get envelope:
+//
+//   contract shape (current default):
+//     success: { result: { status: "FOUND", data: { body } } }
+//     miss:    { result: { status: "NOT_FOUND", error, available_sections } }
+//
+//   legacy shape (pre-contract; still reachable via
+//   include_legacy_envelope=true during the transition window):
+//     success: { result: { content } }
+//     miss:    { result: { error, available_sections } }
+//
+// We read contract-shape first and fall back to legacy, so the parser
+// survives the transition window in both directions. Incident: the
+// 2026-06 tincan 503s ("oddkit_no_section_content") were this exact
+// drift — oddkit flipped its default to the contract shape while this
+// module still read only `result.content`.
+export function parseOddkitSectionEnvelope(
+  innerText: string,
+  sectionName: string,
+): string {
   const envelope = JSON.parse(innerText) as {
     result?: {
+      // Contract shape
+      status?: string;
+      data?: { body?: string };
+      // Legacy shape
       content?: string;
+      // Shared miss fields (same nesting level in both shapes)
       error?: string;
       available_sections?: string[];
     };
   };
-  if (envelope.result?.error) {
+  if (envelope.result?.error || envelope.result?.status === "NOT_FOUND") {
     // Section not found — canon shape drifted (heading renamed/removed).
     // Surface loudly with the available-sections list so the operator can
     // see the divergence in logs.
-    const avail = envelope.result.available_sections?.join(", ") ?? "(none)";
+    const avail = envelope.result?.available_sections?.join(", ") ?? "(none)";
     throw new Error(
       `oddkit_section_missing:"${sectionName}":available=[${avail}]`,
     );
   }
-  const sectionMd = envelope.result?.content;
+  const sectionMd = envelope.result?.data?.body ?? envelope.result?.content;
   if (!sectionMd) throw new Error("oddkit_no_section_content");
 
   const body = peelBlockquote(sectionMd);
@@ -156,7 +193,6 @@ async function oddkitGetSection(sectionName: string): Promise<string> {
     throw new Error(`oddkit_section_no_blockquote:"${sectionName}"`);
   }
 
-  sectionCache.set(sectionName, { fetchedAt: Date.now(), body });
   return body;
 }
 
