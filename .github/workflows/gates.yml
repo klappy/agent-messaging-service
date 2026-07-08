@@ -161,7 +161,7 @@ jobs:
 
       - name: Set up Node (for worker typecheck)
         if: steps.classify.outputs.worker_code == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '20'
           cache: 'npm'
