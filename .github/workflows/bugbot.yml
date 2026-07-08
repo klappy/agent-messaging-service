@@ -60,7 +60,7 @@ jobs:
 
     steps:
       - name: Check out PR head
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
@@ -158,11 +158,11 @@ jobs:
 
     steps:
       - name: Check out PR head
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
           # For pull_request_target (bugbot:fix label) and PR review/comment
-          # events, actions/checkout@v4 defaults to the base/default branch.
+          # events, actions/checkout@v7 defaults to the base/default branch.
           # Explicitly check out the PR head so the action's filesystem
           # tools (Read/Write/Edit/Grep/Glob) and any autofix commits
           # operate on the PR's code, not the default branch. Falls back
