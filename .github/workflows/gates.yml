@@ -149,6 +149,11 @@ jobs:
             '^\.github/workflows/gates\.yml$' \
             '^\.github/workflows/audit-gate-cca\.yml$'
 
+          # Tincan portal scope: triggers typecheck + bootstrap regression
+          # tests (including the live oddkit contract test) during smoke.
+          classify tincan_code \
+            '^packages/tincan/'
+
           # Worker code scope: triggers TypeScript typecheck during smoke.
           classify worker_code \
             '^worker/.*\.ts$' \
@@ -176,6 +181,38 @@ jobs:
         if: steps.classify.outputs.worker_code == 'true'
         working-directory: worker
         run: npx tsc --noEmit
+
+      - name: Set up Node (for tincan checks)
+        if: ${{ !cancelled() && steps.classify.outputs.tincan_code == 'true' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: packages/tincan/package-lock.json
+
+      - name: Install tincan dependencies
+        if: ${{ !cancelled() && steps.classify.outputs.tincan_code == 'true' }}
+        working-directory: packages/tincan
+        run: npm ci
+
+      - name: TypeScript typecheck (tincan)
+        if: ${{ !cancelled() && steps.classify.outputs.tincan_code == 'true' }}
+        working-directory: packages/tincan
+        run: npm run typecheck
+
+      # Bootstrap envelope regression tests. ODDKIT_LIVE_TEST=1 enables the
+      # live contract test: all six prescribed sections fetched through the
+      # real oddkit MCP endpoint with the production parser. This is the
+      # check that catches oddkit envelope drift or canon heading renames
+      # BEFORE the portal serves 503s (incident 2026-06:
+      # oddkit_no_section_content after the Retrieval Disclosure Contract
+      # changed the default get envelope shape).
+      - name: Tincan bootstrap tests (incl. live oddkit contract)
+        if: ${{ !cancelled() && steps.classify.outputs.tincan_code == 'true' }}
+        working-directory: packages/tincan
+        env:
+          ODDKIT_LIVE_TEST: '1'
+        run: npm test
 
       - name: Install pyyaml (for frontmatter validator)
         if: ${{ !cancelled() && steps.classify.outputs.canon_or_writings_or_journal == 'true' }}
