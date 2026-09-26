@@ -1,10 +1,9 @@
 // AI-readable bootstrap rendering per
 // ams://canon/constraints/portal-bootstrap-content.
 //
-// Implementation choice: oddkit MCP client (one of the three options the
-// constraint's §Render-Time Composition explicitly endorses). Each prescribed
-// section is resolved by URI + section name through oddkit's tools/call —
-// section addressing is oddkit's responsibility, not the portal's. The portal
+// Implementation choice: canon bundled at build time (one of the options the
+// constraint's §Render-Time Composition endorses). Each prescribed section is
+// resolved locally by `## <heading>` from the bundled canon file. The portal
 // peels the leading blockquote markers (canon's universal shape for
 // prescribed text), substitutes per-conversation values, and concatenates.
 //
@@ -29,22 +28,17 @@
 import type { ConvRecord } from "./types";
 export type { ConvRecord };
 
-const ODDKIT_MCP_URL = "https://oddkit.klappy.dev/mcp";
-const CONSTRAINT_URI = "ams://canon/constraints/portal-bootstrap-content";
-const KNOWLEDGE_BASE_URL = "https://github.com/klappy/agent-messaging-service";
+import { PORTAL_BOOTSTRAP_CANON } from "./canon-bundle.generated";
 
-// Canon-recommended freshness budget per §Render-Time Composition.
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-
-// Oddkit timeout — generous so cold-canon fetches (which themselves walk a
-// GitHub zip) complete, but bounded so a hung oddkit doesn't pin a request.
-const ODDKIT_TIMEOUT_MS = 15_000;
+// Canon is BUNDLED at build time (scripts/bundle-canon.mjs) — no runtime
+// dependency on oddkit. Borrowed from ptxprint-mcp's bundled progressive docs
+// (klappy/kitchen rail/6-learned/2026-09-05-ptxprint-docs-v2-progressive-disclosure).
+// Canon edits ship by regenerating the bundle and deploying; `--check` flags drift.
 
 // The six section names the constraint enumerates. These strings ARE canon's
 // addressing surface — they are the `## <heading>` text in
-// canon/constraints/portal-bootstrap-content.md, and oddkit's section= param
-// resolves them. If canon renames a heading, oddkit returns "section not
-// found" and this module throws loudly; the operator hears about it.
+// canon/constraints/portal-bootstrap-content.md, resolved from the bundle.
+// If canon renames a heading, lookup fails and this module throws loudly; the operator hears about it.
 const SECTION_IDENTITY = "Prescribed Text — Identity";
 const SECTION_HOW_TO_JOIN = "Prescribed Text — How to Join";
 const SECTION_PRE_BOUND = "Prescribed Text — Pre-bound Conversation";
@@ -52,115 +46,51 @@ const SECTION_REQUIRED_BEFORE_JOINING = "Prescribed Text — Required Before Joi
 const SECTION_IF_JOINING_DOESNT_WORK = "Prescribed Text — If Joining Doesn't Work";
 const SECTION_FOR_HUMANS = "Prescribed Text — For Humans";
 
-interface CacheEntry {
-  fetchedAt: number;
-  body: string;
-}
-const sectionCache = new Map<string, CacheEntry>();
-
 export interface BootstrapInputs {
   record: ConvRecord;
   amsMagicLink: string;
   tincanUrl: string;
 }
 
-// --- oddkit MCP client ---------------------------------------------------
+// --- bundled canon section lookup ---------------------------------------
 
-// Single tools/call to oddkit_get for one section. Returns the prescribed
-// blockquote body with `> ` markers peeled. Cached in-isolate for 24h.
-// Throws on any oddkit failure or canon shape mismatch — caller serves 503.
-async function oddkitGetSection(sectionName: string): Promise<string> {
-  const cached = sectionCache.get(sectionName);
-  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) return cached.body;
-
-  const rpcBody = JSON.stringify({
-    jsonrpc: "2.0",
-    id: 1,
-    method: "tools/call",
-    params: {
-      name: "oddkit_get",
-      arguments: {
-        input: CONSTRAINT_URI,
-        section: sectionName,
-        knowledge_base_url: KNOWLEDGE_BASE_URL,
-      },
-    },
-  });
-
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), ODDKIT_TIMEOUT_MS);
-  let res: Response;
-  try {
-    res = await fetch(ODDKIT_MCP_URL, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-      },
-      body: rpcBody,
-      signal: ac.signal,
-    });
-  } catch (err) {
-    // Transient network/timeout failure. If we have any prior cached body,
-    // serve it (stale beats 503 for a one-off blip); otherwise throw.
-    if (cached) return cached.body;
-    throw new Error(`oddkit_fetch_failed:${(err as Error).message}`);
-  } finally {
-    clearTimeout(timer);
+// Split the bundled canon into `## <heading>` sections once per isolate.
+let sectionIndex: Map<string, string> | null = null;
+function sections(): Map<string, string> {
+  if (sectionIndex) return sectionIndex;
+  const idx = new Map<string, string>();
+  let name: string | null = null;
+  let buf: string[] = [];
+  for (const line of PORTAL_BOOTSTRAP_CANON.split("\n")) {
+    const m = /^## (.+?)\s*$/.exec(line);
+    if (m) {
+      if (name) idx.set(name, buf.join("\n"));
+      name = m[1]!;
+      buf = [line];
+    } else if (name) {
+      buf.push(line);
+    }
   }
+  if (name) idx.set(name, buf.join("\n"));
+  sectionIndex = idx;
+  return idx;
+}
 
-  if (!res.ok) {
-    if (cached) return cached.body;
-    throw new Error(`oddkit_http_${res.status}`);
+// Returns the prescribed blockquote body for one section with `> ` peeled.
+// Throws loudly if canon shape drifted (heading renamed/removed) — the
+// caller serves 503 and the operator hears about it.
+async function getSection(sectionName: string): Promise<string> {
+  const sectionMd = sections().get(sectionName);
+  if (!sectionMd) {
+    const avail = [...sections().keys()].join(", ");
+    throw new Error(`canon_section_missing:"${sectionName}":available=[${avail}]`);
   }
-
-  // oddkit's Streamable HTTP response is a single SSE message frame:
-  //   event: message
-  //   data: <jsonrpc-response>
-  // We don't need a streaming parser — just pluck the data line.
-  const text = await res.text();
-  const dataLine = text.split("\n").find((l) => l.startsWith("data: "));
-  if (!dataLine) throw new Error("oddkit_no_data_frame");
-
-  const rpc = JSON.parse(dataLine.slice("data: ".length)) as {
-    result?: { content?: Array<{ type: string; text: string }> };
-    error?: { code?: number; message?: string };
-  };
-  if (rpc.error) {
-    throw new Error(`oddkit_rpc_error:${rpc.error.message ?? "unknown"}`);
-  }
-  const innerText = rpc.result?.content?.[0]?.text;
-  if (!innerText) throw new Error("oddkit_empty_tool_result");
-
-  const envelope = JSON.parse(innerText) as {
-    result?: {
-      content?: string;
-      error?: string;
-      available_sections?: string[];
-    };
-  };
-  if (envelope.result?.error) {
-    // Section not found — canon shape drifted (heading renamed/removed).
-    // Surface loudly with the available-sections list so the operator can
-    // see the divergence in logs.
-    const avail = envelope.result.available_sections?.join(", ") ?? "(none)";
-    throw new Error(
-      `oddkit_section_missing:"${sectionName}":available=[${avail}]`,
-    );
-  }
-  const sectionMd = envelope.result?.content;
-  if (!sectionMd) throw new Error("oddkit_no_section_content");
-
   const body = peelBlockquote(sectionMd);
-  if (body === "") {
-    throw new Error(`oddkit_section_no_blockquote:"${sectionName}"`);
-  }
-
-  sectionCache.set(sectionName, { fetchedAt: Date.now(), body });
+  if (body === "") throw new Error(`canon_section_no_blockquote:"${sectionName}"`);
   return body;
 }
 
-// Strip the leading blockquote out of an oddkit-returned section body.
+// Strip the leading blockquote out of a canon section body.
 // Canon's shape: `## <heading>`, optional commentary paragraph, then the
 // prescribed text in a single contiguous `>`-prefixed block. We capture the
 // first contiguous `>` block and peel the prefix. If canon ever changes to
@@ -193,9 +123,7 @@ interface Sections {
 }
 
 async function loadAllSections(): Promise<Sections> {
-  // Parallel fan-out — six independent oddkit calls. With the 24h in-isolate
-  // cache, only cold isolates pay this cost; subsequent renders in the same
-  // isolate hit memory.
+  // Six local section lookups against the bundled canon.
   const [
     identity,
     howToJoin,
@@ -204,12 +132,12 @@ async function loadAllSections(): Promise<Sections> {
     ifJoiningDoesntWork,
     forHumans,
   ] = await Promise.all([
-    oddkitGetSection(SECTION_IDENTITY),
-    oddkitGetSection(SECTION_HOW_TO_JOIN),
-    oddkitGetSection(SECTION_PRE_BOUND),
-    oddkitGetSection(SECTION_REQUIRED_BEFORE_JOINING),
-    oddkitGetSection(SECTION_IF_JOINING_DOESNT_WORK),
-    oddkitGetSection(SECTION_FOR_HUMANS),
+    getSection(SECTION_IDENTITY),
+    getSection(SECTION_HOW_TO_JOIN),
+    getSection(SECTION_PRE_BOUND),
+    getSection(SECTION_REQUIRED_BEFORE_JOINING),
+    getSection(SECTION_IF_JOINING_DOESNT_WORK),
+    getSection(SECTION_FOR_HUMANS),
   ]);
   return {
     identity,
@@ -281,11 +209,11 @@ export async function renderBootstrapJson(
   // Only fetch the three sections this shape needs (sections 1, 2, and 4 per
   // the constraint's §Content Negotiation). Avoids coupling JSON availability
   // to sections it never renders (Pre-bound, If Joining Doesn't Work, For
-  // Humans), and skips three unnecessary MCP round-trips on cold isolates.
+  // Humans), and skips three unnecessary lookups.
   const [identity, howToJoin, requiredBeforeJoining] = await Promise.all([
-    oddkitGetSection(SECTION_IDENTITY),
-    oddkitGetSection(SECTION_HOW_TO_JOIN),
-    oddkitGetSection(SECTION_REQUIRED_BEFORE_JOINING),
+    getSection(SECTION_IDENTITY),
+    getSection(SECTION_HOW_TO_JOIN),
+    getSection(SECTION_REQUIRED_BEFORE_JOINING),
   ]);
   const instructions =
     [identity, howToJoin, requiredBeforeJoining].join("\n\n").trim() + "\n";

@@ -13,7 +13,7 @@
 //   "Governance is fetched at runtime, never hardcoded."
 //
 // The brand_discipline URI is named in the prompt; the agent has
-// oddkit MCP wired in (operational) and calls oddkit_get on the URI
+// the canon MCP wired in (operational) and fetches the URI (execute{get}/docs)
 // when it needs to ground a register or palette decision. The runtime
 // does not pre-fetch governance bodies.
 //
@@ -79,7 +79,7 @@ export async function composeSystemPrompt(
       ``,
       `Voice & brand discipline:`,
       `- Your voice register, banned moves, signature moves, emoji palette, and machine-vs-human surface rules are governed by ${profile.brand_discipline}.`,
-      `- Before emitting any output that contains emoji, river vocabulary, or stylistic register choices, call oddkit_get on that URI and follow its canonical palette and discipline.`,
+      `- Before emitting any output that contains emoji, river vocabulary, or stylistic register choices, fetch that URI via the canon MCP (`execute` with action `get`, or `docs`) and follow its canonical palette and discipline.`,
       `- Do NOT improvise emoji or register choices that are not derivable from that canon body.`,
     );
   }
@@ -90,7 +90,7 @@ export async function composeSystemPrompt(
       ``,
       `Knowledge bases you may ground observations against:`,
       ...profile.knowledge_bases.map((kb) => `- ${kb}`),
-      `Use oddkit_search and oddkit_get to retrieve canon documents from these knowledge bases. You may also call oddkit_resolve to walk supersession.`,
+      `Use the canon MCP's `execute` tool (actions `search`, `get`, `resolve`) and its `docs` tool to retrieve canon documents from these knowledge bases and walk supersession.`,
     );
   }
 
