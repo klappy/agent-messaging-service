@@ -89,7 +89,7 @@ export default {
           req.headers.get("user-agent") ?? "",
         );
 
-        // All three render shapes pull prescribed text from canon via oddkit.
+        // All three render shapes pull prescribed text from bundled canon (no oddkit runtime dependency).
         // If canon is unreachable AND no in-isolate cache exists, the renderer
         // throws — per ams://canon/constraints/portal-bootstrap-content §The
         // Living-Canon Posture, frozen prose in source is forbidden. Loud 503

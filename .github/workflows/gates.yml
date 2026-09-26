@@ -177,6 +177,9 @@ jobs:
         working-directory: worker
         run: npx tsc --noEmit
 
+      - name: Canon bundle drift check (tincan)
+        run: node packages/tincan/scripts/bundle-canon.mjs --check
+
       - name: Install pyyaml (for frontmatter validator)
         if: ${{ !cancelled() && steps.classify.outputs.canon_or_writings_or_journal == 'true' }}
         run: pip install --quiet pyyaml

@@ -2,11 +2,13 @@
   "name": "ams-worker",
   "private": true,
   "version": "0.0.1",
-  "description": "AMS — token stream routing. Day 1 PoC slice (control plane only).",
+  "description": "AMS \u2014 token stream routing. Day 1 PoC slice (control plane only).",
   "scripts": {
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
-    "tail": "wrangler tail"
+    "tail": "wrangler tail",
+    "canon:bundle": "node scripts/bundle-canon.mjs",
+    "canon:check": "node scripts/bundle-canon.mjs --check"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250501.0",

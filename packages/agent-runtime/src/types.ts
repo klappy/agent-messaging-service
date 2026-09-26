@@ -129,7 +129,7 @@ export interface PersonaProfile {
    * URI pointing at the persona's voice canon. Per
    * klappy://canon/constraints/oddkit-prompt-pattern, the runtime
    * MUST NOT fetch this and inject its body into the system prompt.
-   * The agent dereferences via oddkit_get if it needs to ground a
+   * The agent dereferences via the canon MCP (execute{get}/docs) if it needs to ground a
    * register call during the session.
    */
   brand_discipline: string | null;
