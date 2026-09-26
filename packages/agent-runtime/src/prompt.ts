@@ -79,7 +79,7 @@ export async function composeSystemPrompt(
       ``,
       `Voice & brand discipline:`,
       `- Your voice register, banned moves, signature moves, emoji palette, and machine-vs-human surface rules are governed by ${profile.brand_discipline}.`,
-      `- Before emitting any output that contains emoji, river vocabulary, or stylistic register choices, fetch that URI via the canon MCP (`execute` with action `get`, or `docs`) and follow its canonical palette and discipline.`,
+      `- Before emitting any output that contains emoji, river vocabulary, or stylistic register choices, fetch that URI via the canon MCP (its get/resolve action; tool names may be oddkit_get today or execute{get} after the surface refactor) and follow its canonical palette and discipline.`,
       `- Do NOT improvise emoji or register choices that are not derivable from that canon body.`,
     );
   }
@@ -90,7 +90,7 @@ export async function composeSystemPrompt(
       ``,
       `Knowledge bases you may ground observations against:`,
       ...profile.knowledge_bases.map((kb) => `- ${kb}`),
-      `Use the canon MCP's `execute` tool (actions `search`, `get`, `resolve`) and its `docs` tool to retrieve canon documents from these knowledge bases and walk supersession.`,
+      `Use the canon MCP's search/get/resolve actions (oddkit_search/get/resolve today; execute{search|get|resolve} + docs after the oddkit surface refactor) to retrieve canon documents from these knowledge bases and walk supersession.`,
     );
   }
 
